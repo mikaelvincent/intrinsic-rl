@@ -186,3 +186,4 @@ cython_debug/
 pylint_report.json
 
 internal_documents
+presentation
