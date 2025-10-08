@@ -51,6 +51,21 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
     _atomic_replace(tmp, path)
 
 
+def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
+    """Load a checkpoint payload across torch versions.
+
+    PyTorch 2.6+ defaults to weights_only=True which restricts pickle content. Our checkpoints intentionally store
+    general Python objects (e.g., numpy arrays), so we request weights_only=False. Older torch versions don't support
+    this kwarg.
+    """
+    try:
+        # torch >= 2.6
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        # torch < 2.6 (no weights_only kwarg)
+        return torch.load(path, map_location=map_location)
+
+
 @dataclass
 class CheckpointManager:
     run_dir: Path
@@ -97,7 +112,7 @@ class CheckpointManager:
         """Load latest checkpoint (returns payload, step)."""
         if not self.latest_path.exists():
             raise FileNotFoundError(f"No latest checkpoint at {self.latest_path}")
-        payload = torch.load(self.latest_path, map_location=map_location)
+        payload = _torch_load_compat(self.latest_path, map_location=map_location)
         step = int(payload.get("step", self._infer_step_from_name(self.latest_path.name) or -1))
         return payload, step
 
@@ -134,4 +149,4 @@ class CheckpointManager:
 
 def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
     """Convenience free function."""
-    return torch.load(path, map_location=map_location)
+    return _torch_load_compat(path, map_location=map_location)
