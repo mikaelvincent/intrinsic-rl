@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import sys
+import types as _types
 from dataclasses import MISSING, asdict, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence, Type, Union, get_args, get_origin
+from typing import (
+    Any,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    Literal,
+)
+from collections.abc import Sequence as ABCSequence, Mapping as ABCMapping
 
 import yaml  # PyYAML
 
@@ -25,6 +39,15 @@ from .schema import (
 
 class ConfigError(ValueError):
     """Raised when configuration parsing or validation fails."""
+
+
+# For robust Union checks (supports PEP 604 `X | Y`)
+try:  # Python 3.10+
+    from types import UnionType as _UnionType  # type: ignore
+except Exception:  # pragma: no cover - older Python
+    _UnionType = None
+
+_UNION_TYPES = (Union,) + ((_UnionType,) if _UnionType is not None else ())
 
 
 # ----- Public API ------------------------------------------------------------
@@ -134,6 +157,13 @@ def to_dict(cfg: Config) -> dict:
 
 
 def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
+    """Recursively coerce a Mapping into the dataclass `cls`.
+
+    Important:
+        Works correctly even when dataclasses were defined with
+        `from __future__ import annotations` (PEP 563), by resolving field types
+        via `typing.get_type_hints`.
+    """
     if not is_dataclass(cls):
         raise ConfigError(f"Internal error: target {cls!r} is not a dataclass")
 
@@ -144,11 +174,20 @@ def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
         pretty = ", ".join(sorted(unknown))
         raise ConfigError(f"Unknown field(s) at {path}: {pretty}")
 
+    # Resolve real (non-deferred) field types
+    mod = sys.modules.get(cls.__module__)
+    gns = mod.__dict__ if mod is not None else None
+    try:
+        type_hints = get_type_hints(cls, globalns=gns, localns=None)  # robust across Py3.10+
+    except Exception:  # pragma: no cover - very defensive
+        type_hints = {}
+
     kwargs: MutableMapping[str, Any] = {}
     for f in fields(cls):
         key = f.name
+        target_type = type_hints.get(key, f.type)
         if key in data:
-            kwargs[key] = _coerce_value_to_type(data[key], f.type, f"{path}.{key}")
+            kwargs[key] = _coerce_value_to_type(data[key], target_type, f"{path}.{key}")
         else:
             # Allow dataclass defaults / factories to apply; error only if neither exists.
             if f.default is not MISSING or f.default_factory is not MISSING:  # type: ignore[attr-defined]
@@ -172,14 +211,13 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
             raise ConfigError(f"Expected mapping at {path}, got {type(value).__name__}")
         return _from_mapping(typ, value, path)
 
-    # Optional / Union
-    if origin is Union:
+    # Optional / Union (supports typing.Union and PEP 604 unions)
+    if origin in _UNION_TYPES:
         # Optional[T] case
         if type(None) in args:
             if value is None:
                 return None
             non_none = [a for a in args if a is not type(None)]
-            # Try coercion against each alternative
             last_err: Exception | None = None
             for a in non_none:
                 try:
@@ -196,7 +234,7 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
         raise ConfigError(f"Value at {path!r} does not match any allowed union types.")
 
     # Literals (e.g., method choices)
-    if origin is not None and str(origin).endswith("typing.Literal"):
+    if origin is Literal:
         literals = set(args)
         if value not in literals:
             raise ConfigError(
@@ -204,15 +242,15 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
             )
         return value
 
-    # Sequences (Lists/Tuples) — we accept generic sequences but not strings
-    if origin in (list, tuple, Sequence):
+    # Sequences (Lists/Tuples) — accept generic sequences but not strings
+    if origin in (list, tuple, ABCSequence):
         elem_type = args[0] if args else Any
         if isinstance(value, str) or not isinstance(value, Sequence):
             raise ConfigError(f"Expected sequence at {path}, got {type(value).__name__}")
         return [_coerce_value_to_type(v, elem_type, f"{path}[{i}]") for i, v in enumerate(value)]
 
     # Mappings (Dict-like) — shallow accept; keys/values left as-is
-    if origin in (dict, Mapping):
+    if origin in (dict, ABCMapping):
         if not isinstance(value, Mapping):
             raise ConfigError(f"Expected mapping at {path}, got {type(value).__name__}")
         return dict(value)
