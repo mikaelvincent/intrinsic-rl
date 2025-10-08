@@ -99,7 +99,16 @@ class PolicyNetwork(nn.Module):
     def distribution(self, obs: Tensor) -> Union[CategoricalDist, DiagGaussianDist]:
         x = obs
         if not torch.is_tensor(x):
-            x = torch.as_tensor(x, dtype=torch.float32, device=self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device)  # type: ignore[union-attr]
+            x = torch.as_tensor(
+                x,
+                dtype=torch.float32,
+                device=self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device,  # type: ignore[union-attr]
+            )
+        else:
+            x = x.to(device=self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device)  # type: ignore[union-attr]
+        # Expect 2D [batch, obs_dim]; callers should reshape if needed.
+        if x.dim() > 2:
+            x = x.view(-1, self.obs_dim)
         feats = self.backbone(x)
         if self.is_discrete:
             logits = self.policy_head(feats)
@@ -123,7 +132,7 @@ class PolicyNetwork(nn.Module):
 
 
 class ValueNetwork(nn.Module):
-    """State-value network (MLP → scalar)."""
+    """State-value network (MLP -> scalar)."""
 
     def __init__(self, obs_space: gym.Space, hidden_sizes: Iterable[int] = (256, 256)) -> None:
         super().__init__()
@@ -136,8 +145,13 @@ class ValueNetwork(nn.Module):
         self.net = mlp(self.obs_dim, tuple(hidden_sizes), out_dim=1)
 
     def forward(self, obs: Tensor) -> Tensor:
+        # Accept [N, obs_dim] or [T, B, obs_dim]; reshape to 2D batch then restore 1D outputs.
         x = obs
         if not torch.is_tensor(x):
             x = torch.as_tensor(x, dtype=torch.float32, device=next(self.parameters()).device)
+        else:
+            x = x.to(device=next(self.parameters()).device, dtype=torch.float32)
+        if x.dim() > 2:
+            x = x.view(-1, self.obs_dim)
         v = self.net(x).squeeze(-1)
         return v
