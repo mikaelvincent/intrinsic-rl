@@ -18,10 +18,7 @@ import torch
 import typer
 
 from irl.envs import EnvManager
-from irl.models import (
-    PolicyNetwork,
-    ValueNetwork,
-)  # Value not used, but kept for parity
+from irl.models import PolicyNetwork, ValueNetwork  # Value kept for parity
 from irl.utils.checkpoint import load_checkpoint
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -31,6 +28,17 @@ def _single_spaces(env) -> tuple:
     obs_space = getattr(env, "single_observation_space", None) or env.observation_space
     act_space = getattr(env, "single_action_space", None) or env.action_space
     return obs_space, act_space
+
+
+def _build_normalizer(payload) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """Return (mean, std) if obs_norm is present in checkpoint payload."""
+    on = payload.get("obs_norm")
+    if on is None:
+        return None
+    mean = np.asarray(on.get("mean"), dtype=np.float64)
+    var = np.asarray(on.get("var"), dtype=np.float64)
+    std = np.sqrt(var + 1e-8)
+    return mean, std
 
 
 @app.command("eval")
@@ -61,6 +69,14 @@ def cli_eval(
     policy.load_state_dict(payload["policy"])
     policy.eval()
 
+    norm = _build_normalizer(payload)
+
+    def _normalize(x: np.ndarray) -> np.ndarray:
+        if norm is None:
+            return x
+        mean, std = norm
+        return (x - mean) / std
+
     returns: list[float] = []
 
     for ep in range(int(episodes)):
@@ -68,8 +84,13 @@ def cli_eval(
         done = False
         ep_ret = 0.0
         while not done:
+            x = _normalize(
+                obs
+                if isinstance(obs, np.ndarray)
+                else np.asarray(obs, dtype=np.float32)
+            )
             with torch.no_grad():
-                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).view(
+                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device).view(
                     1, -1
                 )
                 dist = policy.distribution(obs_t)
