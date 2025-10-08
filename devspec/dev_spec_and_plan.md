@@ -19,9 +19,9 @@ This document specifies, end‑to‑end, how to implement, evaluate, and operate
 
 ### 1.1 Goals
 * Implement a unified intrinsic reward:
-  - **Impact:** embedding change per step (RIDE‑like) with episodic de‑duplication.
-  - **Learning Progress:** region‑wise decrease in forward‑model error (R‑IAC‑like).
-  - **Partial Randomness Filter:** down‑weight regions with persistently high error and negligible progress.
+  * **Impact:** embedding change per step (RIDE‑like) with episodic de‑duplication.
+  * **Learning Progress:** region‑wise decrease in forward‑model error (R‑IAC‑like).
+  * **Partial Randomness Filter:** down‑weight regions with persistently high error and negligible progress.
 * Provide **baseline** algorithms for fair comparison.
 * Support **six environments** spanning discrete/continuous control with optional domain randomization.
 * Deliver **robust evaluation**: learning curves, seed variance, sample efficiency, coverage proxies.
@@ -36,34 +36,34 @@ This document specifies, end‑to‑end, how to implement, evaluate, and operate
 ## 2) Functional Requirements
 
 1. **Training Orchestrator**
-   - Start/stop training for a method–environment pair, single or multiple seeds.
-   - Parallel rollouts; PPO updates; intrinsic computation on‑the‑fly.
-   - Periodic evaluation episodes **without** intrinsic rewards.
+   * Start/stop training for a method–environment pair, single or multiple seeds.
+   * Parallel rollouts; PPO updates; intrinsic computation on‑the‑fly.
+   * Periodic evaluation episodes **without** intrinsic rewards.
 
 2. **Intrinsic Modules (Pluggable)**
-   - `vanilla` (no intrinsic).
-   - `icm` (inverse/forward error).
-   - `rnd` (predictor vs fixed target MSE).
-   - `ride` (embedding Δ with episodic visitation penalty).
-   - `riac` (region learning progress).
-   - `proposed` (RIDE + R‑IAC + randomness filter + adaptive weighting).
+   * `vanilla` (no intrinsic).
+   * `icm` (inverse/forward error).
+   * `rnd` (predictor vs fixed target MSE).
+   * `ride` (embedding Δ with episodic visitation penalty).
+   * `riac` (region learning progress).
+   * `proposed` (RIDE + R‑IAC + randomness filter + adaptive weighting).
 
 3. **Environment Layer**
-   - Gymnasium wrappers for normalization, frame‑skip (where applicable), domain randomization toggles.
-   - Headless rendering support; deterministic seed routing.
+   * Gymnasium wrappers for normalization, frame‑skip (where applicable), domain randomization toggles.
+   * Headless rendering support; deterministic seed routing.
 
 4. **Configuration & CLI**
-   - YAML config per run; CLI commands for train/eval/plot/reproduce.
-   - All hyperparameters declared in config; no hidden defaults.
+   * YAML config per run; CLI commands for train/eval/plot/reproduce.
+   * All hyperparameters declared in config; no hidden defaults.
 
 5. **Logging & Checkpointing**
-   - TensorBoard + CSV for metrics; JSON summaries at key milestones.
-   - Periodic checkpoints; resumable runs; artifact hashing of configs.
+   * TensorBoard + CSV for metrics; JSON summaries at key milestones.
+   * Periodic checkpoints; resumable runs; artifact hashing of configs.
 
 6. **Evaluation & Reporting**
-   - Multi‑seed aggregation (mean ± std).
-   - Plots: returns, success rate, sample efficiency, intrinsic trends, forward‑model error.
-   - CSV/JSON exports for tables; optional bootstrapped CIs.
+   * Multi‑seed aggregation (mean ± std).
+   * Plots: returns, success rate, sample efficiency, intrinsic trends, forward‑model error.
+   * CSV/JSON exports for tables; optional bootstrapped CIs.
 
 ---
 
@@ -120,8 +120,8 @@ v
 * PyTorch `>=2.1`
 * Stable‑Baselines3 `>=2.3`
 * Gymnasium `>=0.29` with extras:
-  - `gymnasium[box2d]` (BipedalWalker, CarRacing)
-  - `gymnasium[mujoco]` (Ant, HalfCheetah, Humanoid)
+  * `gymnasium[box2d]` (BipedalWalker, CarRacing)
+  * `gymnasium[mujoco]` (Ant, HalfCheetah, Humanoid)
 * mujoco (python) `>=3.0` (EGL headless support)
 * numpy, pandas, matplotlib, tensorboard
 * scikit‑learn (KD‑tree, quantiles for analysis)
@@ -143,8 +143,8 @@ pip install "torch>=2.1" "gymnasium[box2d,mujoco]>=0.29" "stable-baselines3>=2.3
 * Separate policy/value nets; MLP (256, 256, ReLU).
 * Continuous actions: Gaussian with state‑indep. log‑std; Discrete: categorical.
 * Hyperparams (defaults):
-  - LR `3e-4`, γ `0.99`, λ (GAE) `0.95`, clip ε `0.2`, steps per update `2048`,
-  - minibatches `32`, epochs `3–10` (default 10), entropy coef `0.0–0.01`.
+  * LR `3e-4`, γ `0.99`, λ (GAE) `0.95`, clip ε `0.2`, steps per update `2048`,
+  * minibatches `32`, epochs `3–10` (default 10), entropy coef `0.0–0.01`.
 * Vectorized envs: 8–32.
 
 ### 5.2 Common Preprocessing
@@ -177,7 +177,7 @@ pip install "torch>=2.1" "gymnasium[box2d,mujoco]>=0.29" "stable-baselines3>=2.3
   \[
   r_{\text{impact}} = \frac{\|\phi(s_{t+1}) - \phi(s_t)\|_2}{1 + N_{\text{ep}}(b(\phi(s_{t+1})))}
   \]
-  - `N_ep`: per‑episode count of **binned** embedding (see §5.5).
+  * `N_ep`: per‑episode count of **binned** embedding (see §5.5).
 * Intrinsic: `η * α_impact * r_impact`.
 
 #### 5.3.5 R‑IAC
@@ -222,9 +222,9 @@ Default thresholds: `τ_LP = 0.01 * median_LP_global`, `τ_S = 2.0`.
 #### 5.4.2 Adaptive Weighting (Simple Policy‑Aware Schedule)
 Every `T_global = 50k` env steps:
 * If **policy entropy** < `H_low` (e.g., 30% of initial) and **extrinsic return** has plateaued (<1% gain over last 3 evals):
-  - Increase `α_LP ← 1.2·α_LP`, decrease `α_impact ← 0.9·α_impact` (cap within `[0.05, 2.0]`).
+  * Increase `α_LP ← 1.2·α_LP`, decrease `α_impact ← 0.9·α_impact` (cap within `[0.05, 2.0]`).
 * If entropy high but progress low:
-  - Increase `α_impact ← 1.1·α_impact` (more exploration).
+  * Increase `α_impact ← 1.1·α_impact` (more exploration).
 
 #### 5.4.3 Normalization & Clipping
 * Maintain running RMS for `r_impact` and `LP_i`; normalize each before combination.
@@ -232,7 +232,7 @@ Every `T_global = 50k` env steps:
 
 ### 5.5 Embedding Binning & Episodic Counts
 * Compute coarse bin key:
-  - `key = tuple(floor(φ / bin_size))` with `bin_size=0.25` (configurable).
+  * `key = tuple(floor(φ / bin_size))` with `bin_size=0.25` (configurable).
 * Per episode, `counts[key]++`. Reset counts on env reset.
 * Used only in RIDE and Proposed (denominator term).
 
@@ -240,7 +240,7 @@ Every `T_global = 50k` env steps:
 * **Structure:** Balanced binary KD‑tree over φ‑space.
 * **Capacity:** `m=200` samples per region; `depth_max=12`.
 * **Split:** When capacity exceeded:
-  - Pick dim with largest variance; split at median of that dim.
+  * Pick dim with largest variance; split at median of that dim.
 * Maintain per‑region: sample count, last refresh time, EMA stats, gate flag, bounding box (for diagnostics).
 
 ### 5.7 Networks & Losses (Proposed)
