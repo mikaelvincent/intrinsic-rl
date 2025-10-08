@@ -67,9 +67,64 @@ def _default_run_dir(cfg: Config) -> Path:
 def _ensure_device(dev_str: str) -> torch.device:
     d = dev_str.strip().lower()
     if d.startswith("cuda") and not torch.cuda.is_available():
-        typer.echo("[yellow]CUDA requested but not available; falling back to CPU.[/yellow]")
+        typer.echo(
+            "[yellow]CUDA requested but not available; falling back to CPU.[/yellow]"
+        )
         return torch.device("cpu")
     return torch.device(dev_str)
+
+
+# ----------------------------- running obs norm -----------------------------
+
+
+class RunningObsNorm:
+    """Per-dimension running mean/variance with batch updates."""
+
+    def __init__(self, shape: int):
+        self.count = 0.0
+        self.mean = np.zeros((shape,), dtype=np.float64)
+        self.var = np.ones((shape,), dtype=np.float64)
+
+    def update(self, x: np.ndarray) -> None:
+        """x: [B, obs_dim] batch."""
+        x = np.asarray(x, dtype=np.float64)
+        if x.ndim == 1:
+            x = x[None, :]
+        b = float(x.shape[0])
+        if b == 0:
+            return
+        batch_mean = x.mean(axis=0)
+        batch_var = x.var(axis=0)  # population variance
+
+        if self.count == 0.0:
+            self.mean = batch_mean
+            self.var = batch_var
+            self.count = b
+            return
+
+        delta = batch_mean - self.mean
+        tot = self.count + b
+        new_mean = self.mean + delta * (b / tot)
+
+        # Combine variances (Chan et al.)
+        m_a = self.var * self.count
+        m_b = batch_var * b
+        new_var = (m_a + m_b + (delta**2) * (self.count * b / tot)) / tot
+
+        self.mean = new_mean
+        self.var = np.maximum(new_var, 1e-12)  # numeric safety
+        self.count = tot
+
+    def normalize(self, x: np.ndarray) -> np.ndarray:
+        std = np.sqrt(self.var + 1e-8)
+        return (x - self.mean) / std
+
+    def state_dict(self) -> dict:
+        return {
+            "count": float(self.count),
+            "mean": self.mean.astype(np.float64),
+            "var": self.var.astype(np.float64),
+        }
 
 
 # ----------------------------- CLI -----------------------------
@@ -87,10 +142,15 @@ def cli_train(
         readable=True,
     ),
     total_steps: int = typer.Option(
-        10_000, "--total-steps", "-n", help="Total environment steps to run (across all envs)."
+        10_000,
+        "--total-steps",
+        "-n",
+        help="Total environment steps to run (across all envs).",
     ),
     run_dir: Optional[Path] = typer.Option(
-        None, "--run-dir", help="Run directory for logs and checkpoints (auto if omitted)."
+        None,
+        "--run-dir",
+        help="Run directory for logs and checkpoints (auto if omitted).",
     ),
     method: Optional[str] = typer.Option(
         None,
@@ -141,14 +201,20 @@ def cli_train(
     run_dir = Path(run_dir) if run_dir is not None else _default_run_dir(cfg)
     ml = MetricLogger(run_dir, cfg.logging)
     ml.log_hparams(to_dict(cfg))
-    ckpt = CheckpointManager(run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3)
+    ckpt = CheckpointManager(
+        run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3
+    )
 
     # --- Reset env(s) ---
     obs, _ = env.reset()
-    # shape helpers
     vec_envs = int(getattr(env, "num_envs", 1))
     obs_dim = int(obs_space.shape[0])  # Box flat observations (Sprint 0 scope)
     is_discrete = hasattr(act_space, "n")
+
+    # Observation normalization
+    obs_norm = RunningObsNorm(shape=obs_dim)
+    first_batch = obs if vec_envs > 1 else obs[None, :]
+    obs_norm.update(first_batch)
 
     global_step = 0
     update_idx = 0
@@ -158,12 +224,15 @@ def cli_train(
             # Steps per update (per-env); cap to remaining steps
             per_env_steps = min(
                 int(cfg.ppo.steps_per_update),
-                max(1, (int(total_steps) - int(global_step) + vec_envs - 1) // vec_envs),
+                max(
+                    1, (int(total_steps) - int(global_step) + vec_envs - 1) // vec_envs
+                ),
             )
 
             # --- Rollout buffers (T, B, ...) ---
             T, B = per_env_steps, vec_envs
             obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
+            next_obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
             acts_seq = (
                 np.zeros((T, B), dtype=np.int64)
                 if is_discrete
@@ -173,43 +242,65 @@ def cli_train(
             done_seq = np.zeros((T, B), dtype=np.float32)
 
             for t in range(T):
-                # Store current obs
-                if B == 1 and isinstance(obs, np.ndarray) and obs.ndim == 1:
-                    obs_b = obs[None, :]
-                else:
-                    obs_b = obs
-                obs_seq[t] = obs_b
+                # Ensure [B, obs_dim]
+                obs_b = obs if B > 1 else obs[None, :]
+                # Update running stats and normalize
+                obs_norm.update(obs_b)
+                obs_b_norm = obs_norm.normalize(obs_b)
+
+                # Store normalized obs
+                obs_seq[t] = obs_b_norm.astype(np.float32)
 
                 # Sample actions
                 with torch.no_grad():
-                    obs_tensor = torch.as_tensor(obs_b, device=device, dtype=torch.float32)
+                    obs_tensor = torch.as_tensor(
+                        obs_b_norm, device=device, dtype=torch.float32
+                    )
                     a_tensor, _ = policy.act(obs_tensor)
                 a_np = a_tensor.detach().cpu().numpy()
                 if is_discrete:
-                    a_np = a_np.astype(np.int64).reshape(B,)
+                    a_np = a_np.astype(np.int64).reshape(
+                        B,
+                    )
                 else:
                     a_np = a_np.reshape(B, -1).astype(np.float32)
 
                 # Step env(s)
-                next_obs, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
-                done_flags = np.asarray(terms, dtype=bool) | np.asarray(truncs, dtype=bool)
+                next_obs, rewards, terms, truncs, infos = env.step(
+                    a_np if B > 1 else a_np[0]
+                )
+                done_flags = np.asarray(terms, dtype=bool) | np.asarray(
+                    truncs, dtype=bool
+                )
+
+                # Prepare normalized next_obs for GAE bootstrapping
+                next_obs_b = next_obs if B > 1 else next_obs[None, :]
+                obs_norm.update(next_obs_b)
+                next_obs_b_norm = obs_norm.normalize(next_obs_b)
 
                 # Record step
-                acts_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[None, :])
+                acts_seq[t] = (
+                    a_np if B > 1 else (a_np if is_discrete else a_np[None, :])
+                )
                 rew_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
                 done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
+                next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
 
                 obs = next_obs
                 global_step += B
 
-            # --- GAE (time-major) ---
+            # --- GAE (time-major) with proper bootstrap from v(s_{t+1}) ---
             gae_batch = {
-                "obs": obs_seq,  # (T, B, obs_dim)
+                "obs": obs_seq,  # (T, B, obs_dim) normalized
+                "next_observations": next_obs_seq,
                 "rewards": rew_seq,  # (T, B)
                 "dones": done_seq,  # (T, B)
             }
             adv, v_targets = compute_gae(
-                gae_batch, value, gamma=float(cfg.ppo.gamma), lam=float(cfg.ppo.gae_lambda)
+                gae_batch,
+                value,
+                gamma=float(cfg.ppo.gamma),
+                lam=float(cfg.ppo.gae_lambda),
             )
 
             # --- PPO update (flatten to N = T*B) ---
@@ -219,13 +310,20 @@ def cli_train(
             else:
                 acts_flat = acts_seq.reshape(T * B, -1)
 
-            batch = {"obs": obs_flat, "actions": acts_flat, "rewards": rew_seq.reshape(T * B), "dones": done_seq.reshape(T * B)}
+            batch = {
+                "obs": obs_flat,
+                "actions": acts_flat,
+                "rewards": rew_seq.reshape(T * B),
+                "dones": done_seq.reshape(T * B),
+            }
             ppo_update(policy, value, batch, adv, v_targets, cfg.ppo)
             update_idx += 1
 
             # --- Logging ---
             with torch.no_grad():
-                last_obs = torch.as_tensor(obs_seq[-1], device=device, dtype=torch.float32).view(B, -1)
+                last_obs = torch.as_tensor(
+                    obs_seq[-1], device=device, dtype=torch.float32
+                ).view(B, -1)
                 ent = policy.entropy(last_obs).mean().item()
             ml.log(
                 step=int(global_step),
@@ -240,6 +338,11 @@ def cli_train(
                     "policy": policy.state_dict(),
                     "value": value.state_dict(),
                     "cfg": to_dict(cfg),
+                    "obs_norm": {
+                        "count": obs_norm.count,
+                        "mean": obs_norm.mean,
+                        "var": obs_norm.var,
+                    },
                     "meta": {"updates": update_idx},
                 }
                 ckpt.save(step=int(global_step), payload=payload)
@@ -250,6 +353,11 @@ def cli_train(
             "policy": policy.state_dict(),
             "value": value.state_dict(),
             "cfg": to_dict(cfg),
+            "obs_norm": {
+                "count": obs_norm.count,
+                "mean": obs_norm.mean,
+                "var": obs_norm.var,
+            },
             "meta": {"updates": update_idx},
         }
         ckpt.save(step=int(global_step), payload=payload)
@@ -258,7 +366,9 @@ def cli_train(
         ml.close()
         env.close()
 
-    typer.echo(f"[green]Training finished[/green] — steps={global_step}, updates={update_idx}\nRun dir: {run_dir}")
+    typer.echo(
+        f"[green]Training finished[/green] — steps={global_step}, updates={update_idx}\nRun dir: {run_dir}"
+    )
 
 
 def main() -> None:
