@@ -1,7 +1,13 @@
-"""Intrinsic reward modules (skeleton).
+"""Intrinsic reward modules (skeleton + implemented baselines).
 
-Concrete modules (ICM, RND, RIDE, R-IAC, Proposed) are provided as empty stubs in this package and will be implemented
-in later sprints.
+Concrete modules:
+- ICM (implemented)
+- RND (implemented)
+- RIDE (stub)
+- R-IAC (stub)
+- Proposed unified method (stub)
+
+Base protocol and simple output container are provided here.
 """
 
 from __future__ import annotations
@@ -25,10 +31,10 @@ class IntrinsicOutput:
 
 
 class BaseIntrinsicModule:
-    """Base class for all intrinsic modules (stub)."""
+    """Base class for all intrinsic modules."""
 
     def compute(
         self, tr: Transition
-    ) -> IntrinsicOutput:  # pragma: no cover - to be implemented later
+    ) -> IntrinsicOutput:  # pragma: no cover - to be implemented by modules
         """Compute intrinsic reward contribution for a single transition."""
         raise NotImplementedError
