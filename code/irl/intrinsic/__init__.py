@@ -49,6 +49,9 @@ from .factory import (  # noqa: E402
     update_module,
 )
 
+# Normalization utility (global intrinsic scaler)
+from .normalization import RunningRMS  # noqa: E402
+
 __all__ = [
     # Base protocol & output
     "Transition",
@@ -59,4 +62,6 @@ __all__ = [
     "create_intrinsic_module",
     "compute_intrinsic_batch",
     "update_module",
+    # Normalization utility
+    "RunningRMS",
 ]
