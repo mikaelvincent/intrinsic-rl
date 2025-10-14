@@ -21,6 +21,8 @@ Notes
 * A checkpoint is saved at the end of training and at configured intervals.
 * If `cfg.method` is "icm" or "rnd" and `intrinsic.eta > 0`, intrinsic rewards
   are computed and added to extrinsic rewards prior to advantage estimation.
+* Intrinsic rewards are globally normalized online by a running RMS (EMA)
+  to stabilize scales across modules.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from irl.intrinsic import (  # type: ignore
     create_intrinsic_module,
     compute_intrinsic_batch,
     update_module,
+    RunningRMS,
 )
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -229,6 +232,9 @@ def cli_train(
             intrinsic_module = None
             use_intrinsic = False
 
+    # --- Global intrinsic RMS normalizer ---
+    int_rms = RunningRMS(beta=0.99, eps=1e-8)
+
     # --- Run directory, logging, checkpoints ---
     run_dir = Path(run_dir) if run_dir is not None else _default_run_dir(cfg)
     ml = MetricLogger(run_dir, cfg.logging)
@@ -327,9 +333,11 @@ def cli_train(
                 )
                 r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-                # Scale and clip for total reward
+                # Global RMS normalization, then scale and clip
+                int_rms.update(r_int_raw_flat)
+                r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                 r_clip = float(cfg.intrinsic.r_clip)
-                r_int_scaled_flat = eta * np.clip(r_int_raw_flat, -r_clip, r_clip)
+                r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
 
                 # Optionally train intrinsic module on the same batch
                 try:
@@ -391,7 +399,8 @@ def cli_train(
                 log_payload.update(
                     {
                         "r_int_raw_mean": float(np.mean(r_int_raw_flat)),
-                        "r_int_mean": float(np.mean(r_int_scaled_flat)),
+                        "r_int_mean": float(np.mean(r_int_scaled_flat)),  # normalized + scaled
+                        "r_int_rms": float(int_rms.rms),
                     }
                 )
                 # Prefix module metrics by method to avoid collisions across methods
@@ -415,6 +424,7 @@ def cli_train(
                         "mean": obs_norm.mean,
                         "var": obs_norm.var,
                     },
+                    "intrinsic_norm": int_rms.state_dict(),
                     "meta": {"updates": update_idx},
                 }
                 # Save intrinsic module weights if present
@@ -439,6 +449,7 @@ def cli_train(
                 "mean": obs_norm.mean,
                 "var": obs_norm.var,
             },
+            "intrinsic_norm": int_rms.state_dict(),
             "meta": {"updates": update_idx},
         }
         if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
