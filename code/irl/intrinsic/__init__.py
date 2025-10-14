@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 
+# Public base API
 class Transition(Protocol):  # minimal protocol for type hints
     s: Any
     a: Any
@@ -38,3 +39,24 @@ class BaseIntrinsicModule:
     ) -> IntrinsicOutput:  # pragma: no cover - to be implemented by modules
         """Compute intrinsic reward contribution for a single transition."""
         raise NotImplementedError
+
+
+# Factory & helpers to integrate modules into the trainer
+from .factory import (  # noqa: E402
+    is_intrinsic_method,
+    create_intrinsic_module,
+    compute_intrinsic_batch,
+    update_module,
+)
+
+__all__ = [
+    # Base protocol & output
+    "Transition",
+    "IntrinsicOutput",
+    "BaseIntrinsicModule",
+    # Factory helpers
+    "is_intrinsic_method",
+    "create_intrinsic_module",
+    "compute_intrinsic_batch",
+    "update_module",
+]
