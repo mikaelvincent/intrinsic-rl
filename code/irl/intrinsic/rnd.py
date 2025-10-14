@@ -76,6 +76,8 @@ class RNDConfig:
         Epsilon for RMS denominator numerical stability.
     normalize_intrinsic : bool
         If True, returned intrinsic is divided by running RMS.
+        NOTE: Default is False because the trainer now provides a global
+        RMS normalizer for intrinsic rewards. You can re-enable locally if needed.
     """
 
     feature_dim: int = 128
@@ -84,7 +86,7 @@ class RNDConfig:
     grad_clip: float = 5.0
     rms_beta: float = 0.99
     rms_eps: float = 1e-8
-    normalize_intrinsic: bool = True
+    normalize_intrinsic: bool = False  # global normalizer handles default scaling
 
 
 # ------------------------------ Module ----------------------------------
