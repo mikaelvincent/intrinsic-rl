@@ -1,8 +1,9 @@
 """Training entry point (minimal PPO CLI via Typer).
 
 This implements a *small* but functional training loop for Vanilla PPO on vector
-Gymnasium environments (default: MountainCar-v0). It intentionally avoids any
-intrinsic reward modules for Sprint 0.
+Gymnasium environments (default: MountainCar-v0). It now supports plugging in
+Sprint‑1 intrinsic modules (`icm`, `rnd`) via a tiny factory. Intrinsic rewards
+are computed on collected batches and added to extrinsic rewards before GAE/PPO.
 
 Usage examples
 --------------
@@ -18,6 +19,8 @@ Notes
 * Vector envs are created via `irl.envs.EnvManager` with RecordEpisodeStatistics.
 * Logging is handled by MetricLogger (CSV every `csv_interval`; TB if enabled).
 * A checkpoint is saved at the end of training and at configured intervals.
+* If `cfg.method` is "icm" or "rnd" and `intrinsic.eta > 0`, intrinsic rewards
+  are computed and added to extrinsic rewards prior to advantage estimation.
 """
 
 from __future__ import annotations
@@ -39,6 +42,14 @@ from irl.envs import EnvManager
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.checkpoint import CheckpointManager
 from irl.utils.loggers import MetricLogger
+
+# Intrinsic factory & helpers (Sprint 1)
+from irl.intrinsic import (  # type: ignore
+    is_intrinsic_method,
+    create_intrinsic_module,
+    compute_intrinsic_batch,
+    update_module,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -67,9 +78,7 @@ def _default_run_dir(cfg: Config) -> Path:
 def _ensure_device(dev_str: str) -> torch.device:
     d = dev_str.strip().lower()
     if d.startswith("cuda") and not torch.cuda.is_available():
-        typer.echo(
-            "[yellow]CUDA requested but not available; falling back to CPU.[/yellow]"
-        )
+        typer.echo("[yellow]CUDA requested but not available; falling back to CPU.[/yellow]")
         return torch.device("cpu")
     return torch.device(dev_str)
 
@@ -158,13 +167,13 @@ def cli_train(
         help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
     ),
 ) -> None:
-    """Run a minimal PPO training loop (Vanilla only for Sprint 0)."""
+    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND)."""
     # --- Load or synthesize config ---
     if config is not None:
         cfg = load_config(str(config))
     else:
         cfg = Config()  # use defaults from schema
-    # If no config was supplied and no method override, force vanilla for Sprint 0
+    # If no config was supplied and no method override, force vanilla for Sprint 0/1
     if config is None and method is None:
         method = "vanilla"
     if method is not None:
@@ -197,18 +206,39 @@ def cli_train(
     policy = PolicyNetwork(obs_space, act_space).to(device)
     value = ValueNetwork(obs_space).to(device)
 
+    # --- Intrinsic module (optional) ---
+    method_l = str(cfg.method).lower()
+    eta = float(cfg.intrinsic.eta)
+    use_intrinsic = is_intrinsic_method(method_l) and eta > 0.0
+    intrinsic_module = None
+    if is_intrinsic_method(method_l):
+        try:
+            intrinsic_module = create_intrinsic_module(
+                method_l, obs_space, act_space, device=device
+            )
+            if not use_intrinsic:
+                typer.echo(
+                    f"[yellow]Method '{method_l}' selected but intrinsic.eta={eta:.3g};"
+                    " intrinsic will be computed but ignored in total reward.[/yellow]"
+                )
+        except Exception as exc:
+            typer.echo(
+                f"[yellow]Failed to create intrinsic module '{method_l}': {exc}. "
+                "Continuing without intrinsic.[/yellow]"
+            )
+            intrinsic_module = None
+            use_intrinsic = False
+
     # --- Run directory, logging, checkpoints ---
     run_dir = Path(run_dir) if run_dir is not None else _default_run_dir(cfg)
     ml = MetricLogger(run_dir, cfg.logging)
     ml.log_hparams(to_dict(cfg))
-    ckpt = CheckpointManager(
-        run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3
-    )
+    ckpt = CheckpointManager(run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3)
 
     # --- Reset env(s) ---
     obs, _ = env.reset()
     vec_envs = int(getattr(env, "num_envs", 1))
-    obs_dim = int(obs_space.shape[0])  # Box flat observations (Sprint 0 scope)
+    obs_dim = int(obs_space.shape[0])  # Box flat observations (Sprint 0/1 scope)
     is_discrete = hasattr(act_space, "n")
 
     # Observation normalization
@@ -224,9 +254,7 @@ def cli_train(
             # Steps per update (per-env); cap to remaining steps
             per_env_steps = min(
                 int(cfg.ppo.steps_per_update),
-                max(
-                    1, (int(total_steps) - int(global_step) + vec_envs - 1) // vec_envs
-                ),
+                max(1, (int(total_steps) - int(global_step) + vec_envs - 1) // vec_envs),
             )
 
             # --- Rollout buffers (T, B, ...) ---
@@ -238,7 +266,7 @@ def cli_train(
                 if is_discrete
                 else np.zeros((T, B, int(act_space.shape[0])), dtype=np.float32)
             )
-            rew_seq = np.zeros((T, B), dtype=np.float32)
+            rew_ext_seq = np.zeros((T, B), dtype=np.float32)
             done_seq = np.zeros((T, B), dtype=np.float32)
 
             for t in range(T):
@@ -253,9 +281,7 @@ def cli_train(
 
                 # Sample actions
                 with torch.no_grad():
-                    obs_tensor = torch.as_tensor(
-                        obs_b_norm, device=device, dtype=torch.float32
-                    )
+                    obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
                     a_tensor, _ = policy.act(obs_tensor)
                 a_np = a_tensor.detach().cpu().numpy()
                 if is_discrete:
@@ -266,12 +292,8 @@ def cli_train(
                     a_np = a_np.reshape(B, -1).astype(np.float32)
 
                 # Step env(s)
-                next_obs, rewards, terms, truncs, infos = env.step(
-                    a_np if B > 1 else a_np[0]
-                )
-                done_flags = np.asarray(terms, dtype=bool) | np.asarray(
-                    truncs, dtype=bool
-                )
+                next_obs, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
+                done_flags = np.asarray(terms, dtype=bool) | np.asarray(truncs, dtype=bool)
 
                 # Prepare normalized next_obs for GAE bootstrapping
                 next_obs_b = next_obs if B > 1 else next_obs[None, :]
@@ -279,21 +301,55 @@ def cli_train(
                 next_obs_b_norm = obs_norm.normalize(next_obs_b)
 
                 # Record step
-                acts_seq[t] = (
-                    a_np if B > 1 else (a_np if is_discrete else a_np[None, :])
-                )
-                rew_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
+                acts_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[None, :])
+                rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
                 done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
                 next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
 
                 obs = next_obs
                 global_step += B
 
+            # --- Intrinsic rewards (optional) ---
+            r_int_raw_flat = None
+            r_int_scaled_flat = None
+            if intrinsic_module is not None:
+                # Flatten
+                obs_flat = obs_seq.reshape(T * B, obs_dim)
+                next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
+                if is_discrete:
+                    acts_flat = acts_seq.reshape(T * B)
+                else:
+                    acts_flat = acts_seq.reshape(T * B, -1)
+
+                # Compute *unscaled* intrinsic per-sample [N]
+                r_int_raw_t = compute_intrinsic_batch(
+                    intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
+                )
+                r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
+
+                # Scale and clip for total reward
+                r_clip = float(cfg.intrinsic.r_clip)
+                r_int_scaled_flat = eta * np.clip(r_int_raw_flat, -r_clip, r_clip)
+
+                # Optionally train intrinsic module on the same batch
+                try:
+                    mod_metrics = update_module(
+                        intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
+                    )
+                except Exception:
+                    mod_metrics = {}
+
+            # --- Rewards for GAE: extrinsic + (optional) intrinsic ---
+            if r_int_scaled_flat is not None:
+                rew_total_seq = rew_ext_seq + r_int_scaled_flat.reshape(T, B)
+            else:
+                rew_total_seq = rew_ext_seq
+
             # --- GAE (time-major) with proper bootstrap from v(s_{t+1}) ---
             gae_batch = {
                 "obs": obs_seq,  # (T, B, obs_dim) normalized
                 "next_observations": next_obs_seq,
-                "rewards": rew_seq,  # (T, B)
+                "rewards": rew_total_seq,  # (T, B)
                 "dones": done_seq,  # (T, B)
             }
             adv, v_targets = compute_gae(
@@ -313,7 +369,7 @@ def cli_train(
             batch = {
                 "obs": obs_flat,
                 "actions": acts_flat,
-                "rewards": rew_seq.reshape(T * B),
+                "rewards": rew_total_seq.reshape(T * B),
                 "dones": done_seq.reshape(T * B),
             }
             ppo_update(policy, value, batch, adv, v_targets, cfg.ppo)
@@ -321,15 +377,31 @@ def cli_train(
 
             # --- Logging ---
             with torch.no_grad():
-                last_obs = torch.as_tensor(
-                    obs_seq[-1], device=device, dtype=torch.float32
-                ).view(B, -1)
+                last_obs = torch.as_tensor(obs_seq[-1], device=device, dtype=torch.float32).view(
+                    B, -1
+                )
                 ent = policy.entropy(last_obs).mean().item()
-            ml.log(
-                step=int(global_step),
-                policy_entropy=float(ent),
-                reward_mean=float(rew_seq.mean()),
-            )
+
+            log_payload = {
+                "policy_entropy": float(ent),
+                "reward_mean": float(rew_ext_seq.mean()),
+                "reward_total_mean": float(rew_total_seq.mean()),
+            }
+            if r_int_raw_flat is not None and r_int_scaled_flat is not None:
+                log_payload.update(
+                    {
+                        "r_int_raw_mean": float(np.mean(r_int_raw_flat)),
+                        "r_int_mean": float(np.mean(r_int_scaled_flat)),
+                    }
+                )
+                # Prefix module metrics by method to avoid collisions across methods
+                for k, v in (mod_metrics or {}).items():
+                    try:
+                        log_payload[f"{method_l}_{k}"] = float(v)
+                    except Exception:
+                        pass
+
+            ml.log(step=int(global_step), **log_payload)
 
             # --- Checkpoint cadence ---
             if ckpt.should_save(int(global_step)):
@@ -345,6 +417,15 @@ def cli_train(
                     },
                     "meta": {"updates": update_idx},
                 }
+                # Save intrinsic module weights if present
+                if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
+                    try:
+                        payload["intrinsic"] = {
+                            "method": method_l,
+                            "state_dict": intrinsic_module.state_dict(),
+                        }
+                    except Exception:
+                        pass
                 ckpt.save(step=int(global_step), payload=payload)
 
         # Final checkpoint
@@ -360,6 +441,14 @@ def cli_train(
             },
             "meta": {"updates": update_idx},
         }
+        if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
+            try:
+                payload["intrinsic"] = {
+                    "method": method_l,
+                    "state_dict": intrinsic_module.state_dict(),
+                }
+            except Exception:
+                pass
         ckpt.save(step=int(global_step), payload=payload)
 
     finally:
