@@ -4,9 +4,9 @@ This module implements a *balanced-ish* binary KD‑tree over an embedding space
 It is designed for R‑IAC / Proposed intrinsic methods to maintain **regions** of the
 latent space with a simple capacity‑based split policy:
 
-* Each **leaf** holds up to `capacity` samples; when exceeded and `depth < depth_max`,
-  it **splits** on the dimension with the largest sample variance, at the **median**
-  of that dimension. Points with value `<= median` go left; `> median` go right.
+* Each **leaf** holds up to `capacity` samples; when **capacity is reached** (`count >= capacity`)
+  and `depth < depth_max`, it **splits** on the dimension with the largest sample variance,
+  at the **median** of that dimension. Points with value `<= median` go left; `> median` go right.
 * If no split produces non‑empty children (e.g., all points identical), the node
   remains a leaf (no further splitting), and it may continue to accumulate samples.
 
@@ -14,7 +14,8 @@ Design notes
 ------------
 * **Region IDs** are assigned **only to leaves**. When a leaf splits, the **left child
   inherits** the parent's region_id; the right child receives a **new** region_id.
-  This ensures existing region_id references remain valid.
+  This ensures existing region_id references remain valid for points that remain
+  on the left side of the split and stabilizes IDs earlier.
 * Leaf nodes keep a small list of their raw samples (NumPy arrays) to support split
   statistics. With default `capacity=200`, memory remains modest and well‑bounded.
 * Bounding boxes (lo/hi) are maintained per leaf for diagnostics/visualization.
@@ -31,7 +32,7 @@ Typical usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple, List
 
 import numpy as np
 
@@ -123,17 +124,7 @@ class RegionNode:
 
 
 class KDTreeRegionStore:
-    """KD‑tree region store with capacity‑based splitting.
-
-    Parameters
-    ----------
-    dim : int
-        Dimensionality of the embedding space φ.
-    capacity : int
-        Maximum samples per leaf before splitting is attempted.
-    depth_max : int
-        Maximum tree depth (root depth = 0). Leaves at depth >= depth_max will not split.
-    """
+    """KD‑tree region store with capacity‑based splitting."""
 
     def __init__(self, dim: int, capacity: int = 200, depth_max: int = 12) -> None:
         if dim <= 0:
@@ -155,10 +146,14 @@ class KDTreeRegionStore:
     # ------------------- basic API -------------------
 
     def insert(self, p: Array) -> int:
-        """Insert a single point; return the (leaf) region_id it belongs to **after** any split."""
+        """Insert a single point; return the (leaf) region_id it belongs to **after** any split.
+
+        We attempt a split as soon as the leaf reaches `capacity` (>=), which improves the
+        stability of returned region IDs under future insertions.
+        """
         leaf = self.root.route(p)
         leaf.add_point(p)
-        if leaf.count > self.capacity and leaf.depth < self.depth_max:
+        if leaf.count >= self.capacity and leaf.depth < self.depth_max:
             self._split_leaf(leaf)
         # Route again after potential split to return final region id
         final_leaf = self.root.route(p)
