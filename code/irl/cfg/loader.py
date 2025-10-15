@@ -121,6 +121,12 @@ def validate_config(cfg: Config) -> None:
     if cfg.intrinsic.r_clip <= 0.0:
         raise ConfigError("intrinsic.r_clip must be > 0")
 
+    # NEW: RIDE/Proposed knob sanity checks (applies generally; harmless for other methods)
+    if cfg.intrinsic.bin_size <= 0.0:
+        raise ConfigError("intrinsic.bin_size must be > 0")
+    if cfg.intrinsic.alpha_impact <= 0.0:
+        raise ConfigError("intrinsic.alpha_impact must be > 0")
+
     # Batch divisibility rule (supporting both 'total steps' and 'per-env steps' interpretations)
     # Accept if either interpretation yields an integer minibatch size.
     total_transitions_variant_a = cfg.ppo.steps_per_update  # interpreted as global total per update
