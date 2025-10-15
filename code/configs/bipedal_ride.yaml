@@ -1,0 +1,39 @@
+# RIDE on BipedalWalker — short smoke config.
+seed: 1
+device: "cpu"
+method: "ride"
+
+env:
+  id: "BipedalWalker-v3"
+  vec_envs: 8
+  frame_skip: 1
+  domain_randomization: false
+  # discrete_actions ignored for continuous-control envs
+
+ppo:
+  steps_per_update: 128     # total per update = 128 * 8 = 1024 (divisible by 32)
+  minibatches: 32
+  epochs: 4
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  entropy_coef: 0.0
+
+intrinsic:
+  eta: 0.1                  # typically smaller for continuous control
+  alpha_impact: 1.0         # NEW knob (RIDE impact multiplier)
+  bin_size: 0.25            # NEW knob (episodic binning size)
+  r_clip: 5.0
+
+adaptation:
+  enabled: false
+
+evaluation:
+  interval_steps: 50000
+  episodes: 5
+
+logging:
+  tb: false
+  csv_interval: 1000
+  checkpoint_interval: 10000
