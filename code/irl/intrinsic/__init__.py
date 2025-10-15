@@ -4,7 +4,7 @@ Concrete modules:
 - ICM (implemented)
 - RND (implemented)
 - RIDE (impact-only; reuses ICM encoder; episodic binning arrives next)
-- R-IAC (stub)
+- R-IAC (LP via per-region EMAs; implemented Sprint 3 Step 2)
 - Proposed unified method (stub)
 
 Base protocol and simple output container are provided here.
@@ -54,6 +54,7 @@ from .normalization import RunningRMS  # noqa: E402
 
 # Export handy concrete classes where useful
 from .ride import RIDE  # noqa: E402
+from .riac import RIAC  # noqa: E402
 
 __all__ = [
     # Base protocol & output
@@ -67,6 +68,7 @@ __all__ = [
     "update_module",
     # Normalization utility
     "RunningRMS",
-    # Concrete (impact-only) module
+    # Concrete modules
     "RIDE",
+    "RIAC",
 ]
