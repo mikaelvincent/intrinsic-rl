@@ -221,8 +221,14 @@ def cli_train(
     intrinsic_module = None
     if is_intrinsic_method(method_l):
         try:
+            # For RIDE, plumb bin_size and alpha_impact from config.
             intrinsic_module = create_intrinsic_module(
-                method_l, obs_space, act_space, device=device
+                method_l,
+                obs_space,
+                act_space,
+                device=device,
+                bin_size=float(cfg.intrinsic.bin_size),
+                alpha_impact=float(cfg.intrinsic.alpha_impact),
             )
             if not use_intrinsic:
                 typer.echo(
@@ -342,7 +348,7 @@ def cli_train(
             mod_metrics = {}
             if intrinsic_module is not None:
                 if method_l == "ride":
-                    # Flatten the per-step raw values (already binned)
+                    # Flatten the per-step raw values (already binned, includes alpha_impact)
                     r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)
                 else:
                     # ICM / RND path: compute on flattened batch
@@ -433,7 +439,7 @@ def cli_train(
                 log_payload.update(
                     {
                         "r_int_raw_mean": float(np.mean(r_int_raw_flat)),
-                        "r_int_mean": float(np.mean(r_int_scaled_flat)),  # normalized + scaled
+                        "r_int_mean": float(np.mean(r_int_scaled_flat)),  # normalized + scaled (η)
                         "r_int_rms": float(int_rms.rms),
                     }
                 )
