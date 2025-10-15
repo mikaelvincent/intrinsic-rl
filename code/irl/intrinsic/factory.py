@@ -7,6 +7,12 @@ Supported methods (Sprint 1+2):
 - "icm" : Intrinsic Curiosity Module (requires obs + next_obs + actions)
 - "rnd" : Random Network Distillation (prefers next_obs; actions unused)
 - "ride": Impact-only RIDE; reuses ICM encoder & training (requires next_obs)
+
+Notes
+-----
+* For "ride", optional kwargs are accepted to wire method-local settings:
+    - bin_size: float (episodic embedding binning size)
+    - alpha_impact: float (scaling factor for impact reward before global RMS/η)
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ def create_intrinsic_module(
     obs_space: gym.Space,
     act_space: Optional[gym.Space],
     device: str | torch.device = "cpu",
+    **kwargs: Any,
 ):
     """Instantiate the intrinsic module for the given method.
 
@@ -41,6 +48,10 @@ def create_intrinsic_module(
         obs_space: Gymnasium observation space.
         act_space: Gymnasium action space (required for ICM and RIDE).
         device: torch device (string or torch.device).
+        **kwargs: Optional method-specific settings.
+            For "ride":
+              - bin_size: float
+              - alpha_impact: float
 
     Returns:
         A module instance (ICM, RND, or RIDE).
@@ -52,14 +63,22 @@ def create_intrinsic_module(
     if m == "icm":
         if act_space is None:
             raise ValueError("ICM requires an action space.")
+        # Ignore ride-specific kwargs if passed by caller
         return ICM(obs_space, act_space, device=device)
     if m == "rnd":
+        # Ignore ride-specific kwargs if passed by caller
         return RND(obs_space, device=device)
     if m == "ride":
         if act_space is None:
             # RIDE uses ICM's inverse/forward for training the shared encoder
             raise ValueError("RIDE requires an action space (via ICM).")
-        return RIDE(obs_space, act_space, device=device)
+        # Only pick supported ride-specific kwargs; ignore the rest for safety
+        ride_kwargs: dict[str, Any] = {}
+        if "bin_size" in kwargs and kwargs["bin_size"] is not None:
+            ride_kwargs["bin_size"] = float(kwargs["bin_size"])
+        if "alpha_impact" in kwargs and kwargs["alpha_impact"] is not None:
+            ride_kwargs["alpha_impact"] = float(kwargs["alpha_impact"])
+        return RIDE(obs_space, act_space, device=device, **ride_kwargs)
     raise ValueError(f"Unsupported intrinsic method: {method!r}")
 
 
