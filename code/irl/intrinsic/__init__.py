@@ -3,7 +3,7 @@
 Concrete modules:
 - ICM (implemented)
 - RND (implemented)
-- RIDE (stub)
+- RIDE (impact-only; reuses ICM encoder; episodic binning arrives next)
 - R-IAC (stub)
 - Proposed unified method (stub)
 
@@ -52,6 +52,9 @@ from .factory import (  # noqa: E402
 # Normalization utility (global intrinsic scaler)
 from .normalization import RunningRMS  # noqa: E402
 
+# Export handy concrete classes where useful
+from .ride import RIDE  # noqa: E402
+
 __all__ = [
     # Base protocol & output
     "Transition",
@@ -64,4 +67,6 @@ __all__ = [
     "update_module",
     # Normalization utility
     "RunningRMS",
+    # Concrete (impact-only) module
+    "RIDE",
 ]
