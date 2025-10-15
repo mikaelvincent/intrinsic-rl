@@ -1,8 +1,286 @@
-"""R-IAC intrinsic module (skeleton)."""
+"""R-IAC intrinsic module (per-region EMAs and Learning Progress).
+
+Implements the core of Sprint 3 — Step 2:
+* Maintain **per-region** exponential moving averages (EMAs) of forward-model
+  error in the learned embedding space φ(s).
+* Compute region-wise **Learning Progress**:
+      LP_i = max(0, EMA_long_i - EMA_short_i)
+  which is positive when the error trends downward (recent < long-term).
+
+Design
+------
+- We reuse the ICM encoder and forward head to obtain φ(s), φ(s') and a
+  forward prediction φ̂(s') given (φ(s), a). Error is computed as the mean
+  squared difference between φ̂(s') and φ(s').
+- Regions are maintained by a KD-tree (`KDTreeRegionStore`) over φ-space.
+  Each inserted φ(s_t) returns a (leaf) region id; we update that region's
+  EMAs with the current transition's error.
+- Intrinsic for a transition equals `alpha_lp * LP(region_of(φ(s_t)))`.
+  (Global η scaling and RMS normalization are handled in the trainer.)
+
+Public API (aligned with other intrinsic modules)
+------------------------------------------------
+- compute(tr) -> IntrinsicOutput
+- compute_batch(obs, next_obs, actions, reduction="none") -> Tensor[[B] or scalar]
+- loss(obs, next_obs, actions) -> dict(total, icm_forward, icm_inverse, intrinsic_mean)
+- update(obs, next_obs, actions, steps=1) -> dict(loss_total, loss_forward, loss_inverse, intrinsic_mean)
+
+Notes
+-----
+- Gating and adaptive weighting are *not* implemented here (Sprint 4).
+- Region stats are kept in Python dicts and are not part of the state_dict
+  (lightweight; fine for this sprint).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable, Optional, Tuple, Union
+
+import numpy as np
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
+
+import gymnasium as gym
 
 from . import BaseIntrinsicModule, IntrinsicOutput, Transition
+from .icm import ICM, ICMConfig
+from .regions import KDTreeRegionStore
 
 
-class RIAC(BaseIntrinsicModule):  # pragma: no cover - placeholder
+# ------------------------------ Small helpers ------------------------------
+
+
+def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
+    if torch.is_tensor(x):
+        return x.to(device=device, dtype=dtype or x.dtype)
+    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
+
+
+def _ensure_2d(x: Tensor) -> Tensor:
+    """Ensure shape [B, D]; if [D], add batch dim; if [T,B,D], flatten to [T*B, D]."""
+    if x.dim() == 1:
+        return x.view(1, -1)
+    if x.dim() == 2:
+        return x
+    return x.view(-1, x.size(-1))
+
+
+@dataclass
+class _RegionStats:
+    """Per-region EMA container."""
+
+    ema_long: float = 0.0
+    ema_short: float = 0.0
+    count: int = 0
+
+
+def simulate_lp_emas(errors: Iterable[float], beta_long: float = 0.995, beta_short: float = 0.90):
+    """Utility for tests/diagnostics: run EMAs over a sequence of errors.
+
+    Returns:
+        (ema_long_seq, ema_short_seq, lp_seq) — lists of floats.
+    """
+    el, es, lp = [], [], []
+    l = s = None
+    for e in errors:
+        x = float(e)
+        if l is None:
+            l = x
+            s = x
+        else:
+            l = beta_long * l + (1.0 - beta_long) * x
+            s = beta_short * s + (1.0 - beta_short) * x
+        el.append(l)
+        es.append(s)
+        lp.append(max(0.0, l - s))
+    return el, es, lp
+
+
+# ---------------------------------- RIAC ------------------------------------
+
+
+class RIAC(BaseIntrinsicModule, nn.Module):
+    """R‑IAC: region-wise learning progress intrinsic reward.
+
+    Args:
+        obs_space: Box observation space (vector states).
+        act_space: Discrete or Box action space (for ICM inverse/forward).
+        device: torch device string or device.
+        icm: Optionally supply an external ICM to share encoder/forward.
+        icm_cfg: Optional ICMConfig for internal ICM if `icm` is None.
+        region_capacity: KD-tree leaf capacity before split.
+        depth_max: Maximum KD-tree depth.
+        ema_beta_long / ema_beta_short: EMA coefficients.
+        alpha_lp: Scaling applied to LP before trainer-level η / RMS.
+
+    Notes:
+        * This module keeps *no* learnable parameters besides the underlying ICM.
+        * Region stats are Python data structures; persistence is not required
+          by the current checkpointing scheme (state_dict keeps ICM weights).
+    """
+
+    def __init__(
+        self,
+        obs_space: gym.Space,
+        act_space: gym.Space,
+        device: Union[str, torch.device] = "cpu",
+        icm: Optional[ICM] = None,
+        icm_cfg: Optional[ICMConfig] = None,
+        *,
+        region_capacity: int = 200,
+        depth_max: int = 12,
+        ema_beta_long: float = 0.995,
+        ema_beta_short: float = 0.90,
+        alpha_lp: float = 0.5,
+    ) -> None:
+        super().__init__()
+        if not isinstance(obs_space, gym.spaces.Box):
+            raise TypeError("RIAC currently supports Box observation spaces (vector states).")
+        self.device = torch.device(device)
+
+        # Backing ICM (provides encoder φ and forward head)
+        self.icm = icm if icm is not None else ICM(obs_space, act_space, device=device, cfg=icm_cfg)
+        self.encoder = self.icm.encoder  # shared weights
+        self.is_discrete = self.icm.is_discrete
+        self.obs_dim = int(obs_space.shape[0])
+        self.phi_dim = int(self.icm.cfg.phi_dim)
+
+        # Regionization in φ-space
+        self.store = KDTreeRegionStore(
+            dim=self.phi_dim, capacity=int(region_capacity), depth_max=int(depth_max)
+        )
+        self._stats: dict[int, _RegionStats] = {}
+
+        # EMA/scale knobs
+        self.beta_long = float(ema_beta_long)
+        self.beta_short = float(ema_beta_short)
+        self.alpha_lp = float(alpha_lp)
+
+        self.to(self.device)
+
+    # ----------------------- internal: per-region stats -----------------------
+
+    def _update_region(self, rid: int, error: float) -> float:
+        """Update EMAs for the region and return its current LP (>=0)."""
+        st = self._stats.get(rid)
+        if st is None or st.count == 0:
+            self._stats[rid] = _RegionStats(ema_long=error, ema_short=error, count=1)
+            return 0.0  # first sample: LP=0 by definition
+        # EMA updates
+        st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * error
+        st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * error
+        st.count += 1
+        return max(0.0, st.ema_long - st.ema_short)
+
+    # -------------------------- intrinsic computation -------------------------
+
+    @torch.no_grad()
+    def _forward_error_per_sample(self, obs: Tensor, next_obs: Tensor, actions: Tensor) -> Tensor:
+        """Return per-sample forward error in φ space (mean over dims), shape [B]."""
+        o = _ensure_2d(obs)
+        op = _ensure_2d(next_obs)
+        a = actions
+        phi_t = self.icm._phi(o)
+        phi_tp1 = self.icm._phi(op)
+        a_fwd = self.icm._act_for_forward(a)
+        pred = self.icm.forward_head(torch.cat([phi_t, a_fwd], dim=-1))
+        per_dim = F.mse_loss(pred, phi_tp1, reduction="none")  # [B, D]
+        return per_dim.mean(dim=-1), phi_t  # [B], [B, D]
+
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        raise NotImplementedError("R-IAC will be implemented in a later sprint.")
+        """Compute α_LP * LP(region(φ(s))) for a single transition (no RMS/η here)."""
+        with torch.no_grad():
+            s = _as_tensor(tr.s, self.device)
+            sp = _as_tensor(tr.s_next, self.device)
+            a = _as_tensor(tr.a, self.device)
+            err, phi_t = self._forward_error_per_sample(
+                s.view(1, -1), sp.view(1, -1), a.view(1, -1 if not self.is_discrete else 1)
+            )
+            # Insert φ(s) to update regionization and stats
+            rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
+            lp = self._update_region(rid, float(err.item()))
+            r = self.alpha_lp * lp
+            return IntrinsicOutput(r_int=float(r))
+
+    @torch.no_grad()
+    def compute_batch(
+        self,
+        obs: Any,
+        next_obs: Any,
+        actions: Any,
+        reduction: str = "none",
+    ) -> Tensor:
+        """Vectorized α_LP * LP(region(φ(s))) for a batch (updates EMAs)."""
+        o = _as_tensor(obs, self.device)
+        op = _as_tensor(next_obs, self.device)
+        a = _as_tensor(actions, self.device)
+
+        # Forward-model error in φ-space
+        err, phi_t = self._forward_error_per_sample(o, op, a)  # [B], [B,D]
+
+        # Determine regions for φ(s) and update per-region EMAs
+        phi_np = phi_t.detach().cpu().numpy()
+        rids = self.store.bulk_insert(phi_np)  # np.ndarray [B]
+        out = torch.empty_like(err)
+        for i in range(err.shape[0]):
+            lp = self._update_region(int(rids[i]), float(err[i].item()))
+            out[i] = self.alpha_lp * float(lp)
+
+        if reduction == "mean":
+            return out.mean()
+        return out
+
+    # ----------------------------- losses & update ----------------------------
+
+    def loss(self, obs: Any, next_obs: Any, actions: Any) -> dict[str, Tensor]:
+        """Return ICM training loss + R‑IAC intrinsic mean (diagnostic only)."""
+        icm_losses = self.icm.loss(obs, next_obs, actions)
+        with torch.no_grad():
+            o = _as_tensor(obs, self.device)
+            op = _as_tensor(next_obs, self.device)
+            a = _as_tensor(actions, self.device)
+            err, phi_t = self._forward_error_per_sample(o, op, a)
+            # Use current per-region LPs without mutating state (locate only)
+            rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
+            lp_vals = []
+            for rid in rids:
+                st = self._stats.get(int(rid))
+                if st is None or st.count == 0:
+                    lp_vals.append(0.0)
+                else:
+                    lp_vals.append(max(0.0, st.ema_long - st.ema_short))
+            r_mean = float(np.mean(lp_vals)) if lp_vals else 0.0
+
+        return {
+            "total": icm_losses["total"],
+            "icm_forward": icm_losses["forward"],
+            "icm_inverse": icm_losses["inverse"],
+            "intrinsic_mean": torch.as_tensor(r_mean, dtype=torch.float32, device=self.device),
+        }
+
+    def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
+        """Train encoder/heads via ICM; report ICM losses + current LP mean."""
+        # Measure current LP mean (non-mutating)
+        with torch.no_grad():
+            o = _as_tensor(obs, self.device)
+            op = _as_tensor(next_obs, self.device)
+            a = _as_tensor(actions, self.device)
+            err, phi_t = self._forward_error_per_sample(o, op, a)
+            rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
+            vals = []
+            for rid in rids:
+                st = self._stats.get(int(rid))
+                vals.append(
+                    0.0 if st is None or st.count == 0 else max(0.0, st.ema_long - st.ema_short)
+                )
+            lp_mean = float(np.mean(vals)) if vals else 0.0
+
+        metrics = self.icm.update(obs, next_obs, actions, steps=steps)
+        return {
+            "loss_total": float(metrics["loss_total"]),
+            "loss_forward": float(metrics["loss_forward"]),
+            "loss_inverse": float(metrics["loss_inverse"]),
+            "intrinsic_mean": float(lp_mean),
+        }
