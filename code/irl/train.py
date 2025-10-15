@@ -23,6 +23,11 @@ Notes
   are computed and added to extrinsic rewards prior to advantage estimation.
 * Intrinsic rewards are globally normalized online by a running RMS (EMA)
   to stabilize scales across modules.
+
+Sprint‑2 addition
+-----------------
+* For method `"ride"`, intrinsic rewards are computed **per step** using
+  `RIDE.compute_impact_binned(...)` with episodic binning & counts (§5.5).
 """
 
 from __future__ import annotations
@@ -123,7 +128,7 @@ class RunningObsNorm:
         m_b = batch_var * b
         new_var = (m_a + m_b + (delta**2) * (self.count * b / tot)) / tot
 
-        self.mean = new_mean
+        self.mean = np.maximum(new_mean, -1e12)  # clamp extremely for safety (theoretical)
         self.var = np.maximum(new_var, 1e-12)  # numeric safety
         self.count = tot
 
@@ -170,7 +175,7 @@ def cli_train(
         help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
     ),
 ) -> None:
-    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND)."""
+    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND/RIDE)."""
     # --- Load or synthesize config ---
     if config is not None:
         cfg = load_config(str(config))
@@ -275,6 +280,11 @@ def cli_train(
             rew_ext_seq = np.zeros((T, B), dtype=np.float32)
             done_seq = np.zeros((T, B), dtype=np.float32)
 
+            # For RIDE episodic binning: store raw intrinsic per step
+            r_int_raw_seq = None
+            if intrinsic_module is not None and method_l == "ride":
+                r_int_raw_seq = np.zeros((T, B), dtype=np.float32)
+
             for t in range(T):
                 # Ensure [B, obs_dim]
                 obs_b = obs if B > 1 else obs[None, :]
@@ -312,35 +322,59 @@ def cli_train(
                 done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
                 next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
 
+                # --- Intrinsic (RIDE episodic binning computed per step) ---
+                if intrinsic_module is not None and method_l == "ride":
+                    # Compute raw (un-normalized/un-scaled) impact with episodic counts
+                    r_step = intrinsic_module.compute_impact_binned(
+                        obs_b_norm,
+                        next_obs_b_norm,
+                        dones=done_flags,
+                        reduction="none",
+                    )
+                    r_int_raw_seq[t] = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
+
                 obs = next_obs
                 global_step += B
 
             # --- Intrinsic rewards (optional) ---
             r_int_raw_flat = None
             r_int_scaled_flat = None
+            mod_metrics = {}
             if intrinsic_module is not None:
-                # Flatten
-                obs_flat = obs_seq.reshape(T * B, obs_dim)
-                next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
-                if is_discrete:
-                    acts_flat = acts_seq.reshape(T * B)
+                if method_l == "ride":
+                    # Flatten the per-step raw values (already binned)
+                    r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)
                 else:
-                    acts_flat = acts_seq.reshape(T * B, -1)
+                    # ICM / RND path: compute on flattened batch
+                    obs_flat = obs_seq.reshape(T * B, obs_dim)
+                    next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
+                    if is_discrete:
+                        acts_flat = acts_seq.reshape(T * B)
+                    else:
+                        acts_flat = acts_seq.reshape(T * B, -1)
 
-                # Compute *unscaled* intrinsic per-sample [N]
-                r_int_raw_t = compute_intrinsic_batch(
-                    intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
-                )
-                r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
+                    # Compute *unscaled* intrinsic per-sample [N]
+                    r_int_raw_t = compute_intrinsic_batch(
+                        intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
+                    )
+                    r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-                # Global RMS normalization, then scale and clip
+                # Global RMS normalization, then scale and clip (shared across methods)
                 int_rms.update(r_int_raw_flat)
                 r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                 r_clip = float(cfg.intrinsic.r_clip)
                 r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
 
-                # Optionally train intrinsic module on the same batch
+                # Optionally train intrinsic module on the same batch (ICM/RND/RIDE encoder)
                 try:
+                    # Reuse flattened obs/next_obs/actions; rebuild if we took the RIDE path
+                    if method_l == "ride":
+                        obs_flat = obs_seq.reshape(T * B, obs_dim)
+                        next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
+                        if is_discrete:
+                            acts_flat = acts_seq.reshape(T * B)
+                        else:
+                            acts_flat = acts_seq.reshape(T * B, -1)
                     mod_metrics = update_module(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
                     )
