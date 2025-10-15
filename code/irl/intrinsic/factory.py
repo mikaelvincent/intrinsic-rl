@@ -3,16 +3,10 @@
 This module provides a small, explicit switchboard for constructing intrinsic
 reward modules and interacting with them in a unified way from the training loop.
 
-Supported methods (Sprint 1):
+Supported methods (Sprint 1+2):
 - "icm" : Intrinsic Curiosity Module (requires obs + next_obs + actions)
 - "rnd" : Random Network Distillation (prefers next_obs; actions unused)
-
-Public API
-----------
-- is_intrinsic_method(method: str) -> bool
-- create_intrinsic_module(method: str, obs_space, act_space, device) -> nn.Module
-- compute_intrinsic_batch(module, method, obs, next_obs, actions=None) -> torch.Tensor
-- update_module(module, method, obs, next_obs, actions=None, steps: int = 1) -> dict
+- "ride": Impact-only RIDE; reuses ICM encoder & training (requires next_obs)
 """
 
 from __future__ import annotations
@@ -24,8 +18,9 @@ import torch
 
 from .icm import ICM
 from .rnd import RND
+from .ride import RIDE
 
-_SUPPORTED = {"icm", "rnd"}
+_SUPPORTED = {"icm", "rnd", "ride"}
 
 
 def is_intrinsic_method(method: str) -> bool:
@@ -42,13 +37,13 @@ def create_intrinsic_module(
     """Instantiate the intrinsic module for the given method.
 
     Args:
-        method: one of {"icm", "rnd"}.
+        method: one of {"icm", "rnd", "ride"}.
         obs_space: Gymnasium observation space.
-        act_space: Gymnasium action space (required for ICM; ignored by RND).
+        act_space: Gymnasium action space (required for ICM and RIDE).
         device: torch device (string or torch.device).
 
     Returns:
-        A module instance (ICM or RND).
+        A module instance (ICM, RND, or RIDE).
 
     Raises:
         ValueError: if the method is unsupported or required arguments are missing.
@@ -60,6 +55,11 @@ def create_intrinsic_module(
         return ICM(obs_space, act_space, device=device)
     if m == "rnd":
         return RND(obs_space, device=device)
+    if m == "ride":
+        if act_space is None:
+            # RIDE uses ICM's inverse/forward for training the shared encoder
+            raise ValueError("RIDE requires an action space (via ICM).")
+        return RIDE(obs_space, act_space, device=device)
     raise ValueError(f"Unsupported intrinsic method: {method!r}")
 
 
@@ -83,6 +83,10 @@ def compute_intrinsic_batch(
     if m == "rnd":
         # Prefer next_obs if provided; actions unused.
         return module.compute_batch(obs, next_obs=next_obs, reduction="none")
+    if m == "ride":
+        if next_obs is None:
+            raise ValueError("RIDE.compute_batch requires next_obs.")
+        return module.compute_batch(obs, next_obs, actions=None, reduction="none")
     raise ValueError(f"Unsupported intrinsic method for compute: {method!r}")
 
 
@@ -107,4 +111,8 @@ def update_module(
         # Train predictor on preferred target input (next_obs if present).
         x = next_obs if next_obs is not None else obs
         return dict(module.update(x, steps=int(steps)))
+    if m == "ride":
+        if actions is None or next_obs is None:
+            raise ValueError("RIDE.update requires next_obs and actions (for ICM training).")
+        return dict(module.update(obs, next_obs, actions, steps=int(steps)))
     raise ValueError(f"Unsupported intrinsic method for update: {method!r}")
