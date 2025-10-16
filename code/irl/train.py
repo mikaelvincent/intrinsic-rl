@@ -234,13 +234,21 @@ def cli_train(
     if is_intrinsic_method(method_l):
         try:
             # For RIDE, plumb bin_size and alpha_impact from config.
+            # For RIAC, also pass LP/regionization knobs (others ignore them).
             intrinsic_module = create_intrinsic_module(
                 method_l,
                 obs_space,
                 act_space,
                 device=device,
+                # RIDE knobs
                 bin_size=float(cfg.intrinsic.bin_size),
                 alpha_impact=float(cfg.intrinsic.alpha_impact),
+                # RIAC knobs (ignored by non-RIAC modules)
+                alpha_lp=float(cfg.intrinsic.alpha_lp),
+                region_capacity=int(cfg.intrinsic.region_capacity),
+                depth_max=int(cfg.intrinsic.depth_max),
+                ema_beta_long=float(cfg.intrinsic.ema_beta_long),
+                ema_beta_short=float(cfg.intrinsic.ema_beta_short),
             )
             if not use_intrinsic:
                 typer.echo(
