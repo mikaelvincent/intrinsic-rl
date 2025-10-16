@@ -7,6 +7,13 @@ Implements the core of Sprint 3 — Step 2:
       LP_i = max(0, EMA_long_i - EMA_short_i)
   which is positive when the error trends downward (recent < long-term).
 
+**Sprint 3 — Step 3 (this change):**
+* Intrinsic is now *normalized* online via a per-module running RMS over LP:
+      r_int = α_LP * normalize(LP_i)
+  Normalization uses a simple exponential running RMS (EMA of r^2). The module
+  advertises `outputs_normalized=True` so higher-level trainers can skip an
+  additional global normalization to avoid double normalization.
+
 Design
 ------
 - We reuse the ICM encoder and forward head to obtain φ(s), φ(s') and a
@@ -15,8 +22,8 @@ Design
 - Regions are maintained by a KD-tree (`KDTreeRegionStore`) over φ-space.
   Each inserted φ(s_t) returns a (leaf) region id; we update that region's
   EMAs with the current transition's error.
-- Intrinsic for a transition equals `alpha_lp * LP(region_of(φ(s_t)))`.
-  (Global η scaling and RMS normalization are handled in the trainer.)
+- Intrinsic for a transition equals `alpha_lp * normalize(LP(region_of(φ(s_t))))`.
+  (Trainer-level η scaling and clipping are still applied outside this module.)
 
 Public API (aligned with other intrinsic modules)
 ------------------------------------------------
@@ -47,6 +54,7 @@ import gymnasium as gym
 from . import BaseIntrinsicModule, IntrinsicOutput, Transition
 from .icm import ICM, ICMConfig
 from .regions import KDTreeRegionStore
+from .normalization import RunningRMS
 
 
 # ------------------------------ Small helpers ------------------------------
@@ -102,7 +110,7 @@ def simulate_lp_emas(errors: Iterable[float], beta_long: float = 0.995, beta_sho
 
 
 class RIAC(BaseIntrinsicModule, nn.Module):
-    """R‑IAC: region-wise learning progress intrinsic reward.
+    """R‑IAC: region-wise learning progress intrinsic reward (normalized).
 
     Args:
         obs_space: Box observation space (vector states).
@@ -113,12 +121,12 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         region_capacity: KD-tree leaf capacity before split.
         depth_max: Maximum KD-tree depth.
         ema_beta_long / ema_beta_short: EMA coefficients.
-        alpha_lp: Scaling applied to LP before trainer-level η / RMS.
+        alpha_lp: Scaling applied to **normalized** LP before trainer-level η / clip.
 
     Notes:
         * This module keeps *no* learnable parameters besides the underlying ICM.
-        * Region stats are Python data structures; persistence is not required
-          by the current checkpointing scheme (state_dict keeps ICM weights).
+        * Outputs are **already normalized** via a per-module running RMS over LP.
+          Trainers should check `outputs_normalized` and avoid renormalizing.
     """
 
     def __init__(
@@ -158,6 +166,11 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         self.beta_short = float(ema_beta_short)
         self.alpha_lp = float(alpha_lp)
 
+        # NEW: per-module running RMS over LP values (for normalization)
+        self._lp_rms = RunningRMS(beta=0.99, eps=1e-8)
+        # Signal to trainers that this module returns normalized outputs
+        self.outputs_normalized: bool = True
+
         self.to(self.device)
 
     # ----------------------- internal: per-region stats -----------------------
@@ -177,7 +190,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     # -------------------------- intrinsic computation -------------------------
 
     @torch.no_grad()
-    def _forward_error_per_sample(self, obs: Tensor, next_obs: Tensor, actions: Tensor) -> Tensor:
+    def _forward_error_per_sample(
+        self, obs: Tensor, next_obs: Tensor, actions: Tensor
+    ) -> Tuple[Tensor, Tensor]:
         """Return per-sample forward error in φ space (mean over dims), shape [B]."""
         o = _ensure_2d(obs)
         op = _ensure_2d(next_obs)
@@ -190,7 +205,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         return per_dim.mean(dim=-1), phi_t  # [B], [B, D]
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        """Compute α_LP * LP(region(φ(s))) for a single transition (no RMS/η here)."""
+        """Compute α_LP * normalize(LP(region(φ(s)))) for a single transition."""
         with torch.no_grad():
             s = _as_tensor(tr.s, self.device)
             sp = _as_tensor(tr.s_next, self.device)
@@ -201,7 +216,11 @@ class RIAC(BaseIntrinsicModule, nn.Module):
             # Insert φ(s) to update regionization and stats
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
             lp = self._update_region(rid, float(err.item()))
-            r = self.alpha_lp * lp
+
+            # Normalize LP via running RMS, then scale by α_LP
+            self._lp_rms.update([lp])
+            lp_norm = self._lp_rms.normalize([lp])[0]
+            r = self.alpha_lp * float(lp_norm)
             return IntrinsicOutput(r_int=float(r))
 
     @torch.no_grad()
@@ -212,7 +231,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized α_LP * LP(region(φ(s))) for a batch (updates EMAs)."""
+        """Vectorized α_LP * normalize(LP(region(φ(s)))) for a batch (updates EMAs)."""
         o = _as_tensor(obs, self.device)
         op = _as_tensor(next_obs, self.device)
         a = _as_tensor(actions, self.device)
@@ -223,11 +242,17 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         # Determine regions for φ(s) and update per-region EMAs
         phi_np = phi_t.detach().cpu().numpy()
         rids = self.store.bulk_insert(phi_np)  # np.ndarray [B]
-        out = torch.empty_like(err)
+        lp_vals: list[float] = []
         for i in range(err.shape[0]):
             lp = self._update_region(int(rids[i]), float(err[i].item()))
-            out[i] = self.alpha_lp * float(lp)
+            lp_vals.append(lp)
 
+        # Normalize LP via per-module RMS, then apply α_LP
+        lp_arr = np.asarray(lp_vals, dtype=np.float32)
+        self._lp_rms.update(lp_arr)
+        lp_norm = self._lp_rms.normalize(lp_arr)  # np.ndarray [B]
+
+        out = torch.as_tensor(self.alpha_lp * lp_norm, dtype=torch.float32, device=self.device)
         if reduction == "mean":
             return out.mean()
         return out
@@ -251,7 +276,10 @@ class RIAC(BaseIntrinsicModule, nn.Module):
                     lp_vals.append(0.0)
                 else:
                     lp_vals.append(max(0.0, st.ema_long - st.ema_short))
-            r_mean = float(np.mean(lp_vals)) if lp_vals else 0.0
+            # Report normalized mean for diagnostics
+            lp_arr = np.asarray(lp_vals, dtype=np.float32)
+            lp_norm = self._lp_rms.normalize(lp_arr)
+            r_mean = float(np.mean(self.alpha_lp * lp_norm)) if lp_norm.size > 0 else 0.0
 
         return {
             "total": icm_losses["total"],
@@ -261,8 +289,8 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train encoder/heads via ICM; report ICM losses + current LP mean."""
-        # Measure current LP mean (non-mutating)
+        """Train encoder/heads via ICM; report ICM losses + current normalized LP mean."""
+        # Measure current normalized LP mean (non-mutating)
         with torch.no_grad():
             o = _as_tensor(obs, self.device)
             op = _as_tensor(next_obs, self.device)
@@ -272,15 +300,25 @@ class RIAC(BaseIntrinsicModule, nn.Module):
             vals = []
             for rid in rids:
                 st = self._stats.get(int(rid))
-                vals.append(
+                raw_lp = (
                     0.0 if st is None or st.count == 0 else max(0.0, st.ema_long - st.ema_short)
                 )
-            lp_mean = float(np.mean(vals)) if vals else 0.0
+                vals.append(raw_lp)
+            lp_arr = np.asarray(vals, dtype=np.float32)
+            lp_norm = self._lp_rms.normalize(lp_arr)
+            lp_mean = float(np.mean(lp_norm)) if lp_norm.size > 0 else 0.0
 
         metrics = self.icm.update(obs, next_obs, actions, steps=steps)
         return {
             "loss_total": float(metrics["loss_total"]),
             "loss_forward": float(metrics["loss_forward"]),
             "loss_inverse": float(metrics["loss_inverse"]),
-            "intrinsic_mean": float(lp_mean),
+            "intrinsic_mean": float(self.alpha_lp * lp_mean),
         }
+
+    # ----------------------------- diagnostics ----------------------------
+
+    @property
+    def lp_rms(self) -> float:
+        """Current RMS used to normalize LP values (for logging/diagnostics)."""
+        return self._lp_rms.rms
