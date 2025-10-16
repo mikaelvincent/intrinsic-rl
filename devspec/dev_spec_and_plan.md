@@ -587,135 +587,189 @@ runs/                        # generated
 ### Sprint 1 — Baselines ICM & RND
 
 **Steps**
-
 1. Implement ICM module (φ, f_fw, f_inv; losses; intrinsic forward MSE).
 2. Implement RND (target/predictor; intrinsic = MSE).
 3. Add module factory & plug into PPO loop.
 4. Add RMS normalization utility for intrinsic.
-   **Dependencies:** Sprint 0.
-   **Inputs:** configs for `icm`, `rnd`.
-   **Outputs:** Runs on MountainCar, BipedalWalker (short smoke).
-   **Testing**
 
+**Dependencies:**
+Sprint 0.
+
+**Inputs:**
+configs for `icm`, `rnd`.
+
+**Outputs:**
+Runs on MountainCar, BipedalWalker (short smoke).
+
+**Testing**
 * Unit: loss finiteness; predictor learning curve decreases on fixed dataset.
 * Integration: 50k‑step smoke runs; intrinsic > 0 and decays over time when revisiting.
-  **Completion Criteria:** Stable learning; logs include `r_int_mean`, module losses.
+
+**Completion Criteria:**
+Stable learning; logs include `r_int_mean`, module losses.
 
 ### Sprint 2 — RIDE
 
 **Steps**
-
 1. Implement RIDE embedding reuse (share with ICM nets).
 2. Implement episodic binning & counts (§5.5).
 3. Compute impact reward and integrate scaling.
 4. Add configuration knobs: `bin_size`, `alpha_impact`.
-   **Dependencies:** Sprint 1.
-   **Inputs:** RIDE config.
-   **Outputs:** RIDE run on MountainCar, Walker.
-   **Testing**
 
+**Dependencies:**
+Sprint 1.
+
+**Inputs:**
+RIDE config.
+
+**Outputs:**
+RIDE run on MountainCar, Walker.
+
+**Testing**
 * Unit: per‑episode counts reset; repeated state reduces reward.
 * Integration: `r_int_impact_mean` positive early, decays on toggling.
-  **Completion Criteria:** RIDE curves/logs sane; no crashes.
+
+**Completion Criteria:**
+RIDE curves/logs sane; no crashes.
 
 ### Sprint 3 — R‑IAC (Regions & LP)
 
 **Steps**
-
 1. Implement KD‑tree region store with split logic.
 2. Track per‑region EMA_short/long; compute LP.
 3. Intrinsic = `α_LP * LP_i` (normalized).
 4. Diagnostics export (`regions.jsonl`, `gates.csv` with all gates=1 initially).
-   **Dependencies:** Sprint 2.
-   **Inputs:** region capacity, depths, βs.
-   **Outputs:** R‑IAC run on MountainCar, Walker.
-   **Testing**
 
+**Dependencies:**
+Sprint 2.
+
+**Inputs:**
+region capacity, depths, βs.
+
+**Outputs:**
+R‑IAC run on MountainCar, Walker.
+
+**Testing**
 * Unit: split triggers at capacity; EMAs monotone to inputs.
 * Integration: LP decreases when model stabilizes; intrinsic shifts to new regions.
-  **Completion Criteria:** Regions formed; LP logged; stable training.
+
+**Completion Criteria:**
+Regions formed; LP logged; stable training.
 
 ### Sprint 4 — Proposed Method (Combine + Gate)
 
 **Steps**
-
 1. Combine RIDE + R‑IAC: `r_int = α_imp * r_impact + α_LP * LP_i`.
 2. Implement gate metrics (I_i, S_i) and gating rule (§5.4.1).
 3. Add hysteresis; metrics: gate_rate (% gated).
 4. Normalize/clipping pipeline; module unit tests.
-   **Dependencies:** Sprint 3.
-   **Inputs:** thresholds; hysteresis; mins.
-   **Outputs:** Proposed runs on MountainCar, Walker (100k steps).
-   **Testing**
 
+**Dependencies:**
+Sprint 3.
+
+**Inputs:**
+thresholds; hysteresis; mins.
+
+**Outputs:**
+Proposed runs on MountainCar, Walker (100k steps).
+
+**Testing**
 * Unit: gate flips only under criteria; hysteresis respected.
 * Integration: compare ungated vs gated; gated shows reduced reward in random subregions (simulate with injected noise env wrapper).
-  **Completion Criteria:** Proposed runs stable; gate_rate non‑zero under noise; logs clean.
+
+**Completion Criteria:** Proposed runs stable; gate_rate non‑zero under noise; logs clean.
 
 ### Sprint 5 — CNN Encoder & CarRacing
 
 **Steps**
-
 1. Implement CNN encoder (configurable) and image preprocess.
 2. Integrate with ICM/RIDE/Proposed embeddings.
 3. Add optional frame‑skip=2 wrapper.
-   **Dependencies:** Sprint 4.
-   **Inputs:** CarRacing config.
-   **Outputs:** Short smoke run; GPU pathway validated.
-   **Testing**
 
+**Dependencies:**
+Sprint 4.
+
+**Inputs:**
+CarRacing config.
+
+**Outputs:**
+Short smoke run; GPU pathway validated.
+
+**Testing**
 * Unit: CNN output shape; gradient flow.
 * Integration: 100k steps; TB shows learning; throughput acceptable.
-  **Completion Criteria:** CarRacing runs without OOM; intrinsic logged.
+
+**Completion Criteria:** CarRacing runs without OOM; intrinsic logged.
 
 ### Sprint 6 — MuJoCo Set (Ant, HalfCheetah, Humanoid)
 
 **Steps**
-
 1. Add MuJoCo env configs; confirm `MUJOCO_GL=egl`.
 2. Validate action/obs adapters; reward scales.
 3. Run smoke tests (100k steps) for baselines + proposed.
-   **Dependencies:** Sprints 4–5.
-   **Inputs:** mujoco installed.
-   **Outputs:** Logs and ckpts for all three envs (short runs).
-   **Testing**
 
+**Dependencies:**
+Sprints 4–5.
+
+**Inputs:**
+mujoco installed.
+
+**Outputs:**
+Logs and ckpts for all three envs (short runs).
+
+**Testing**
 * Integration: steps/sec acceptable; no rendering crashes; metrics present.
-  **Completion Criteria:** All three run headless; stable.
+
+**Completion Criteria:**
+All three run headless; stable.
 
 ### Sprint 7 — Evaluation Harness & Plots
 
 **Steps**
-
 1. Implement evaluator: runs `episodes` without intrinsic; returns aggregated stats.
 2. Multi‑seed sweeps & aggregation; export `summary.csv`.
 3. Plotting scripts (learning curves, shaded std, bar charts).
 4. Statistical tests (MWU; bootstrap optional).
-   **Dependencies:** Sprint 6.
-   **Inputs:** run glob patterns.
-   **Outputs:** `results/*.png`, `summary.csv`.
-   **Testing**
 
+**Dependencies:**
+Sprint 6.
+
+**Inputs:**
+run glob patterns.
+
+**Outputs:**
+`results/*.png`, `summary.csv`.
+
+**Testing**
 * Unit: eval excludes intrinsic; deterministic with seed.
 * Integration: produce plots for MountainCar & Walker across baselines.
-  **Completion Criteria:** Reproducible plots; CSV summary complete.
+
+**Completion Criteria:**
+Reproducible plots; CSV summary complete.
 
 ### Sprint 8 — Robustness, Resume & Docs
 
 **Steps**
-
 1. Implement checkpoint resume (config hash check).
 2. Fault‑tolerant writes; atomic tmp→final move.
 3. Determinism checks; CI smoke tests.
 4. Document configs; update examples; finalize this spec’s alignment.
-   **Dependencies:** Sprint 7.
-   **Inputs:** interrupted runs.
-   **Outputs:** Successful resume; determinism report.
-   **Testing**
 
+**Dependencies:**
+Sprint 7.
+
+**Inputs:**
+interrupted runs.
+
+**Outputs:**
+Successful resume; determinism report.
+
+**Testing**
 * Kill process mid‑run; resume from last ckpt and continue.
 * Repeatability within tolerance.
-  **Completion Criteria:** Resume works; determinism acceptable.
+
+**Completion Criteria:**
+Resume works; determinism acceptable.
 
 ---
 
