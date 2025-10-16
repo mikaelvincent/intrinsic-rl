@@ -35,6 +35,11 @@ Sprint‑3 update
   Sprint 3 — Step 3), we **skip** the global RMS normalization to avoid double
   normalization. Such modules expose `outputs_normalized=True` and (optionally)
   `lp_rms` for logging.
+
+Sprint‑3 — Step 4 (this change)
+-------------------------------
+* When method is `"riac"`, export diagnostics at the CSV logging cadence:
+  `diagnostics/regions.jsonl` (JSONL) and `diagnostics/gates.csv` (CSV).
 """
 
 from __future__ import annotations
@@ -474,6 +479,20 @@ def cli_train(
                         pass
 
             ml.log(step=int(global_step), **log_payload)
+
+            # --- Diagnostics export for RIAC (regions.jsonl & gates.csv) ---
+            try:
+                if (
+                    intrinsic_module is not None
+                    and method_l == "riac"
+                    and int(global_step) % int(cfg.logging.csv_interval) == 0
+                    and hasattr(intrinsic_module, "export_diagnostics")
+                ):
+                    diag_dir = run_dir / "diagnostics"
+                    intrinsic_module.export_diagnostics(diag_dir, step=int(global_step))
+            except Exception:
+                # Diagnostics must never break training; ignore any I/O issues.
+                pass
 
             # --- Checkpoint cadence ---
             if ckpt.should_save(int(global_step)):
