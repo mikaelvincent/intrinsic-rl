@@ -28,6 +28,13 @@ Sprint‑2 addition
 -----------------
 * For method `"ride"`, intrinsic rewards are computed **per step** using
   `RIDE.compute_impact_binned(...)` with episodic binning & counts (§5.5).
+
+Sprint‑3 update
+---------------
+* For modules that already **return normalized** intrinsic (e.g., RIAC after
+  Sprint 3 — Step 3), we **skip** the global RMS normalization to avoid double
+  normalization. Such modules expose `outputs_normalized=True` and (optionally)
+  `lp_rms` for logging.
 """
 
 from __future__ import annotations
@@ -175,7 +182,7 @@ def cli_train(
         help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
     ),
 ) -> None:
-    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND/RIDE)."""
+    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND/RIDE/RIAC)."""
     # --- Load or synthesize config ---
     if config is not None:
         cfg = load_config(str(config))
@@ -351,7 +358,7 @@ def cli_train(
                     # Flatten the per-step raw values (already binned, includes alpha_impact)
                     r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)
                 else:
-                    # ICM / RND path: compute on flattened batch
+                    # ICM / RND / RIAC path: compute on flattened batch
                     obs_flat = obs_seq.reshape(T * B, obs_dim)
                     next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
                     if is_discrete:
@@ -359,21 +366,25 @@ def cli_train(
                     else:
                         acts_flat = acts_seq.reshape(T * B, -1)
 
-                    # Compute *unscaled* intrinsic per-sample [N]
+                    # Compute per-sample intrinsic [N]; module may already normalize
                     r_int_raw_t = compute_intrinsic_batch(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
                     )
                     r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-                # Global RMS normalization, then scale and clip (shared across methods)
-                int_rms.update(r_int_raw_flat)
-                r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
+                # Scale & (maybe) normalize
                 r_clip = float(cfg.intrinsic.r_clip)
-                r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
+                outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
+                if outputs_norm:
+                    # Module already normalized (e.g., RIAC). Skip global RMS to avoid double normalization.
+                    r_int_scaled_flat = eta * np.clip(r_int_raw_flat, -r_clip, r_clip)
+                else:
+                    int_rms.update(r_int_raw_flat)
+                    r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
+                    r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
 
-                # Optionally train intrinsic module on the same batch (ICM/RND/RIDE encoder)
+                # Optionally train intrinsic module on the same batch (ICM/RND/RIDE encoder/RIAC ICM)
                 try:
-                    # Reuse flattened obs/next_obs/actions; rebuild if we took the RIDE path
                     if method_l == "ride":
                         obs_flat = obs_seq.reshape(T * B, obs_dim)
                         next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
@@ -436,11 +447,23 @@ def cli_train(
                 "reward_total_mean": float(rew_total_seq.mean()),
             }
             if r_int_raw_flat is not None and r_int_scaled_flat is not None:
+                # Prefer module-provided RMS if outputs are pre-normalized (e.g., RIAC)
+                outputs_norm = (
+                    bool(getattr(intrinsic_module, "outputs_normalized", False))
+                    if intrinsic_module is not None
+                    else False
+                )
+                if outputs_norm and hasattr(intrinsic_module, "lp_rms"):
+                    r_int_rms_val = float(getattr(intrinsic_module, "lp_rms"))
+                else:
+                    r_int_rms_val = float(int_rms.rms)
                 log_payload.update(
                     {
                         "r_int_raw_mean": float(np.mean(r_int_raw_flat)),
-                        "r_int_mean": float(np.mean(r_int_scaled_flat)),  # normalized + scaled (η)
-                        "r_int_rms": float(int_rms.rms),
+                        "r_int_mean": float(
+                            np.mean(r_int_scaled_flat)
+                        ),  # normalized (module or global) + scaled (η)
+                        "r_int_rms": r_int_rms_val,
                     }
                 )
                 # Prefix module metrics by method to avoid collisions across methods
