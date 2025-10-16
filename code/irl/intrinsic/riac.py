@@ -14,6 +14,12 @@ Implements the core of Sprint 3 — Step 2:
   advertises `outputs_normalized=True` so higher-level trainers can skip an
   additional global normalization to avoid double normalization.
 
+**Sprint 3 — Step 4 (this change):**
+* Diagnostics export helpers:
+    - `export_diagnostics(out_dir: Path, step: int)` appends:
+        • `regions.jsonl` — one JSON object per region with stats and bbox
+        • `gates.csv`     — rows (step, region_id, gate); gates=1 initially
+
 Design
 ------
 - We reuse the ICM encoder and forward head to obtain φ(s), φ(s') and a
@@ -31,6 +37,7 @@ Public API (aligned with other intrinsic modules)
 - compute_batch(obs, next_obs, actions, reduction="none") -> Tensor[[B] or scalar]
 - loss(obs, next_obs, actions) -> dict(total, icm_forward, icm_inverse, intrinsic_mean)
 - update(obs, next_obs, actions, steps=1) -> dict(loss_total, loss_forward, loss_inverse, intrinsic_mean)
+- export_diagnostics(out_dir: Path, step: int) -> None   [new in Sprint 3 — Step 4]
 
 Notes
 -----
@@ -42,7 +49,10 @@ Notes
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple, Union
+import csv
+import json
 
 import numpy as np
 import torch
@@ -322,3 +332,63 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def lp_rms(self) -> float:
         """Current RMS used to normalize LP values (for logging/diagnostics)."""
         return self._lp_rms.rms
+
+    def _region_records(self, step: int) -> list[dict]:
+        """Build a list of JSON-serializable records for current regions."""
+        recs: list[dict] = []
+        for leaf in self.store.iter_leaves():
+            rid = int(leaf.region_id) if leaf.region_id is not None else -1
+            st = self._stats.get(rid)
+            ema_l = None if st is None else float(st.ema_long)
+            ema_s = None if st is None else float(st.ema_short)
+            lp = 0.0
+            if st is not None and st.count > 0:
+                lp = max(0.0, float(st.ema_long - st.ema_short))
+            recs.append(
+                {
+                    "step": int(step),
+                    "region_id": rid,
+                    "depth": int(leaf.depth),
+                    "count_leaf": int(leaf.count),
+                    "ema_long": ema_l,
+                    "ema_short": ema_s,
+                    "lp": float(lp),
+                    "gate": 1,  # Sprint 4 will implement gating; all enabled for now
+                    "bbox_lo": None if leaf.bbox_lo is None else [float(x) for x in leaf.bbox_lo.tolist()],
+                    "bbox_hi": None if leaf.bbox_hi is None else [float(x) for x in leaf.bbox_hi.tolist()],
+                }
+            )
+        return recs
+
+    def export_diagnostics(self, out_dir: Path, step: int) -> None:
+        """Append region stats to `regions.jsonl` and gate states to `gates.csv`.
+
+        Files:
+            - regions.jsonl: one JSON object per region per call (includes LP, EMAs, bbox, depth).
+            - gates.csv:     rows of "step,region_id,gate" (gate=1 for all, until gating exists).
+
+        Notes:
+            * This function is I/O-friendly: creates directories/files if needed and appends lines.
+            * Call at a modest cadence (e.g., CSV logging interval) to avoid large files.
+        """
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        regions_path = out_dir / "regions.jsonl"
+        gates_path = out_dir / "gates.csv"
+
+        recs = self._region_records(step=int(step))
+
+        # JSONL append
+        with regions_path.open("a", encoding="utf-8") as f_jsonl:
+            for r in recs:
+                json.dump(r, f_jsonl, ensure_ascii=False)
+                f_jsonl.write("\n")
+
+        # CSV append (header once)
+        write_header = not gates_path.exists() or gates_path.stat().st_size == 0
+        with gates_path.open("a", newline="", encoding="utf-8") as f_csv:
+            writer = csv.writer(f_csv)
+            if write_header:
+                writer.writerow(["step", "region_id", "gate"])
+            for r in recs:
+                writer.writerow([int(r["step"]), int(r["region_id"]), int(r["gate"])])
