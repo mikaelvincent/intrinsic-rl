@@ -40,6 +40,10 @@ Sprint‑3 — Step 4 (this change)
 -------------------------------
 * When method is `"riac"`, export diagnostics at the CSV logging cadence:
   `diagnostics/regions.jsonl` (JSONL) and `diagnostics/gates.csv` (CSV).
+
+Sprint‑4 — Step 3 (this change)
+-------------------------------
+* Log **gate_rate** for the Proposed method (fraction of regions gated-off).
 """
 
 from __future__ import annotations
@@ -491,6 +495,20 @@ def cli_train(
                         log_payload[f"{method_l}_{k}"] = float(v)
                     except Exception:
                         pass
+
+            # --- NEW: Proposed-specific gate metric ---
+            try:
+                if intrinsic_module is not None and method_l == "proposed" and hasattr(
+                    intrinsic_module, "gate_rate"
+                ):
+                    # gate_rate is fraction of regions currently gated-off
+                    gr = float(getattr(intrinsic_module, "gate_rate"))
+                    log_payload["gate_rate"] = gr
+                    # Also provide a percentage for dashboards (optional)
+                    log_payload["gate_rate_pct"] = 100.0 * gr
+            except Exception:
+                # Never let logging errors break the training loop
+                pass
 
             ml.log(step=int(global_step), **log_payload)
 
