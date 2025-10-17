@@ -3,23 +3,12 @@
 This module provides a small, explicit switchboard for constructing intrinsic
 reward modules and interacting with them in a unified way from the training loop.
 
-Supported methods (Sprint 1+2+3):
+Supported methods (Sprint 1+2+3+4 Step 1):
 - "icm" : Intrinsic Curiosity Module (requires obs + next_obs + actions)
 - "rnd" : Random Network Distillation (prefers next_obs; actions unused)
 - "ride": Impact-only RIDE; reuses ICM encoder; episodic binning supported
-- "riac": Region-wise Learning Progress using ICM encoder/forward (new in S3)
-
-Notes
------
-* For "ride", optional kwargs are accepted:
-    - bin_size: float (episodic embedding binning size)
-    - alpha_impact: float (scaling factor for impact reward before global RMS/η)
-* For "riac", optional kwargs are accepted:
-    - alpha_lp: float
-    - region_capacity: int
-    - depth_max: int
-    - ema_beta_long: float
-    - ema_beta_short: float
+- "riac": Region-wise Learning Progress using ICM encoder/forward
+- "proposed": α_impact·impact + α_LP·LP (Step 1; no gating/normalization here)
 """
 
 from __future__ import annotations
@@ -33,8 +22,9 @@ from .icm import ICM
 from .rnd import RND
 from .ride import RIDE
 from .riac import RIAC
+from .proposed import Proposed
 
-_SUPPORTED = {"icm", "rnd", "ride", "riac"}
+_SUPPORTED = {"icm", "rnd", "ride", "riac", "proposed"}
 
 
 def is_intrinsic_method(method: str) -> bool:
@@ -52,23 +42,24 @@ def create_intrinsic_module(
     """Instantiate the intrinsic module for the given method.
 
     Args:
-        method: one of {"icm", "rnd", "ride", "riac"}.
+        method: one of {"icm", "rnd", "ride", "riac", "proposed"}.
         obs_space: Gymnasium observation space.
-        act_space: Gymnasium action space (required for ICM/RIDE/RIAC).
+        act_space: Gymnasium action space (required for ICM/RIDE/RIAC/Proposed).
         device: torch device (string or torch.device).
         **kwargs: Optional method-specific settings.
             For "ride":
               - bin_size: float
               - alpha_impact: float
-            For "riac":
+            For "riac" / "proposed":
               - alpha_lp: float
+              - alpha_impact (proposed only): float
               - region_capacity: int
               - depth_max: int
               - ema_beta_long: float
               - ema_beta_short: float
 
     Returns:
-        A module instance (ICM, RND, RIDE, or RIAC).
+        A module instance.
 
     Raises:
         ValueError: if the method is unsupported or required arguments are missing.
@@ -82,7 +73,6 @@ def create_intrinsic_module(
         return RND(obs_space, device=device)
     if m == "ride":
         if act_space is None:
-            # RIDE uses ICM's inverse/forward for training the shared encoder
             raise ValueError("RIDE requires an action space (via ICM).")
         ride_kwargs: dict[str, Any] = {}
         if "bin_size" in kwargs and kwargs["bin_size"] is not None:
@@ -94,11 +84,25 @@ def create_intrinsic_module(
         if act_space is None:
             raise ValueError("RIAC requires an action space (via ICM forward model).")
         riac_kwargs: dict[str, Any] = {}
-        # Only pick supported knobs; ignore unrelated kwargs
         for k in ("alpha_lp", "region_capacity", "depth_max", "ema_beta_long", "ema_beta_short"):
             if k in kwargs and kwargs[k] is not None:
                 riac_kwargs[k] = float(kwargs[k]) if "alpha" in k or "beta" in k else int(kwargs[k])  # type: ignore[assignment]
         return RIAC(obs_space, act_space, device=device, **riac_kwargs)
+    if m == "proposed":
+        if act_space is None:
+            raise ValueError("Proposed requires an action space (via ICM).")
+        prop_kwargs: dict[str, Any] = {}
+        for k in (
+            "alpha_impact",
+            "alpha_lp",
+            "region_capacity",
+            "depth_max",
+            "ema_beta_long",
+            "ema_beta_short",
+        ):
+            if k in kwargs and kwargs[k] is not None:
+                prop_kwargs[k] = float(kwargs[k]) if "alpha" in k or "beta" in k else int(kwargs[k])  # type: ignore[assignment]
+        return Proposed(obs_space, act_space, device=device, **prop_kwargs)
     raise ValueError(f"Unsupported intrinsic method: {method!r}")
 
 
@@ -130,6 +134,10 @@ def compute_intrinsic_batch(
         if actions is None or next_obs is None:
             raise ValueError("RIAC.compute_batch requires next_obs and actions.")
         return module.compute_batch(obs, next_obs, actions, reduction="none")
+    if m == "proposed":
+        if actions is None or next_obs is None:
+            raise ValueError("Proposed.compute_batch requires next_obs and actions.")
+        return module.compute_batch(obs, next_obs, actions, reduction="none")
     raise ValueError(f"Unsupported intrinsic method for compute: {method!r}")
 
 
@@ -160,5 +168,9 @@ def update_module(
     if m == "riac":
         if actions is None or next_obs is None:
             raise ValueError("RIAC.update requires next_obs and actions.")
+        return dict(module.update(obs, next_obs, actions, steps=int(steps)))
+    if m == "proposed":
+        if actions is None or next_obs is None:
+            raise ValueError("Proposed.update requires next_obs and actions.")
         return dict(module.update(obs, next_obs, actions, steps=int(steps)))
     raise ValueError(f"Unsupported intrinsic method for update: {method!r}")
