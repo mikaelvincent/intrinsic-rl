@@ -3,12 +3,12 @@
 This module provides a small, explicit switchboard for constructing intrinsic
 reward modules and interacting with them in a unified way from the training loop.
 
-Supported methods (Sprint 1+2+3+4 Step 1):
+Supported methods (Sprint 1+2+3+4 Step 2):
 - "icm" : Intrinsic Curiosity Module (requires obs + next_obs + actions)
 - "rnd" : Random Network Distillation (prefers next_obs; actions unused)
 - "ride": Impact-only RIDE; reuses ICM encoder; episodic binning supported
 - "riac": Region-wise Learning Progress using ICM encoder/forward
-- "proposed": α_impact·impact + α_LP·LP (Step 1; no gating/normalization here)
+- "proposed": α_impact·impact + α_LP·LP with region gating (Step 2)
 """
 
 from __future__ import annotations
@@ -57,6 +57,11 @@ def create_intrinsic_module(
               - depth_max: int
               - ema_beta_long: float
               - ema_beta_short: float
+            For "proposed" (gating; NEW):
+              - gate_tau_lp_mult: float
+              - gate_tau_s: float
+              - gate_hysteresis_up_mult: float
+              - gate_min_consec_to_gate: int
 
     Returns:
         A module instance.
@@ -99,9 +104,14 @@ def create_intrinsic_module(
             "depth_max",
             "ema_beta_long",
             "ema_beta_short",
+            # NEW gating knobs:
+            "gate_tau_lp_mult",
+            "gate_tau_s",
+            "gate_hysteresis_up_mult",
+            "gate_min_consec_to_gate",
         ):
             if k in kwargs and kwargs[k] is not None:
-                prop_kwargs[k] = float(kwargs[k]) if "alpha" in k or "beta" in k else int(kwargs[k])  # type: ignore[assignment]
+                prop_kwargs[k] = float(kwargs[k]) if ("alpha" in k or "beta" in k or "tau" in k) else int(kwargs[k])  # type: ignore[assignment]
         return Proposed(obs_space, act_space, device=device, **prop_kwargs)
     raise ValueError(f"Unsupported intrinsic method: {method!r}")
 
