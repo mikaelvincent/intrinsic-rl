@@ -1,33 +1,33 @@
-"""Proposed unified intrinsic module (Step 1: RIDE + R‑IAC combination).
+"""Proposed unified intrinsic module (Step 2: RIDE + R‑IAC + gating).
 
 This module combines:
   • RIDE‑style *impact*:   ‖φ(s') − φ(s)‖₂
   • R‑IAC *learning progress* per region i: LP_i = max(0, EMA_long_i − EMA_short_i)
+  • **NEW (Sprint 4 — Step 2): Region‑wise gating** based on (§5.4.1):
+        Improvement      I_i = LP_i / (ε + EMA_long_i)        [diagnostic]
+        Stochasticity    S_i = EMA_short_i / (ε + median_error_global)
 
-Returned (unnormalized) intrinsic per transition:
-    r_int = α_impact * r_impact + α_LP * LP_i
+    Gate OFF (gate_i = 0) if, for K consecutive refreshes:
+        (LP_i < τ_LP) AND (S_i > τ_S)
+    Hysteresis: once gated, require LP_i > (hysteresis_up_mult · τ_LP) for 2
+    consecutive refreshes to re‑enable the gate (gate_i = 1).
+
+Returned (unnormalized) intrinsic per transition (with gating):
+    r_int = gate_i * (α_impact * r_impact + α_LP * LP_i)
 
 Notes
 -----
-* This file implements **only Step 1** of Sprint 4 (no gating/hysteresis yet).
-* The module **does not** normalize outputs internally; the trainer's global
-  RMS normalizer will scale `r_int` (see irl.train). Later steps may introduce
-  per-component normalization and gating.
-* An internal ICM instance provides the shared representation φ(s), the inverse
-  head (for training) and the forward head used to compute prediction error.
-
-Public API (aligned with other intrinsic modules)
--------------------------------------------------
-- compute(tr) -> IntrinsicOutput
-- compute_batch(obs, next_obs, actions, reduction="none") -> Tensor[[B] or scalar]
-- loss(obs, next_obs, actions) -> dict(total, icm_forward, icm_inverse, intrinsic_mean)
-- update(obs, next_obs, actions, steps=1) -> dict(loss_total, loss_forward, loss_inverse, intrinsic_mean)
+* Outputs are **not normalized** here; the trainer’s global RMS normalizer scales
+  `r_int` (see irl.train). The module exposes `outputs_normalized=False`.
+* KD‑tree regionization and EMA updates are performed online, just like Step 1.
+* Gating statistics are stored per‑region and updated whenever a region receives
+  a new sample (i.e., when LP_i is refreshed).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, Union, Iterable
+from typing import Any, Optional, Tuple, Union, Iterable, List
 
 import numpy as np
 import gymnasium as gym
@@ -60,18 +60,22 @@ def _ensure_2d(x: Tensor) -> Tensor:
 
 @dataclass
 class _RegionStats:
-    """Per-region EMA container (unnormalized for Step 1)."""
+    """Per-region EMA container (unnormalized for Step 2)."""
 
     ema_long: float = 0.0
     ema_short: float = 0.0
     count: int = 0
+    # ---- gating state (NEW) ----
+    gate: int = 1  # 1 => enabled, 0 => gated-off
+    bad_consec: int = 0  # consecutive 'bad' refreshes toward gating off
+    good_consec: int = 0  # consecutive 'good' refreshes toward re-enabling
 
 
 # -------------------------------- Proposed ---------------------------------
 
 
 class Proposed(BaseIntrinsicModule, nn.Module):
-    """Unified intrinsic = α_impact·impact + α_LP·LP(region).
+    """Unified intrinsic = gate_i · (α_impact·impact + α_LP·LP(region)) with gating.
 
     Args:
         obs_space: Box observation space (vector states).
@@ -83,7 +87,18 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         alpha_lp: Multiplier for region LP term.
         region_capacity: KD-tree leaf capacity before split.
         depth_max: Maximum KD-tree depth.
-        ema_beta_long / ema_beta_short: EMA coefficients for LP.
+        ema_beta_long: EMA coefficient for long-term error (R‑IAC).
+        ema_beta_short: EMA coefficient for short-term error (R‑IAC).
+
+        # ---- NEW gating knobs ----
+        gate_tau_lp_mult: float
+            τ_LP = gate_tau_lp_mult * median_LP_global
+        gate_tau_s: float
+            S_i threshold (S_i > τ_S considered "stochastic").
+        gate_hysteresis_up_mult: float
+            Require LP_i > (gate_hysteresis_up_mult · τ_LP) to re-enable (for 2 consecutive refreshes).
+        gate_min_consec_to_gate: int
+            K consecutive "bad" refreshes required to disable (gate_i ← 0).
 
     Outputs are **not normalized** here; trainer will apply global RMS.
     """
@@ -102,6 +117,11 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         depth_max: int = 12,
         ema_beta_long: float = 0.995,
         ema_beta_short: float = 0.90,
+        # ---- gating (NEW) ----
+        gate_tau_lp_mult: float = 0.01,
+        gate_tau_s: float = 2.0,
+        gate_hysteresis_up_mult: float = 2.0,
+        gate_min_consec_to_gate: int = 5,
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
@@ -127,7 +147,15 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         self.beta_long = float(ema_beta_long)
         self.beta_short = float(ema_beta_short)
 
-        # Outputs are NOT pre-normalized in Step 1
+        # ---- gating knobs (NEW) ----
+        self.tau_lp_mult = float(gate_tau_lp_mult)
+        self.tau_s = float(gate_tau_s)
+        self.hysteresis_up_mult = float(gate_hysteresis_up_mult)
+        self.min_consec_to_gate = int(gate_min_consec_to_gate)
+        self._eps = 1e-8
+        self.gating_enabled: bool = True
+
+        # Outputs are NOT pre-normalized in Step 2
         self.outputs_normalized: bool = False
 
         self.to(self.device)
@@ -144,7 +172,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         return torch.norm(phi_tp1 - phi_t, p=2, dim=-1)
 
     @torch.no_grad()
-    def _forward_error_and_phi(self, obs: Tensor, next_obs: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
+    def _forward_error_and_phi(
+        self, obs: Tensor, next_obs: Tensor, actions: Tensor
+    ) -> Tuple[Tensor, Tensor]:
         """Return (per-sample forward MSE in φ space [B], phi(s) [B,D])."""
         o = _ensure_2d(obs)
         op = _ensure_2d(next_obs)
@@ -167,10 +197,68 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         st.count += 1
         return max(0.0, st.ema_long - st.ema_short)
 
+    # -------- NEW: gating metrics, thresholds and update per region --------
+
+    def _global_medians(self) -> Tuple[float, float]:
+        """Return (median_LP_global, median_error_global) over regions with samples."""
+        lps: List[float] = []
+        errs: List[float] = []
+        for st in self._stats.values():
+            if st.count > 0:
+                lps.append(max(0.0, float(st.ema_long - st.ema_short)))
+                errs.append(float(st.ema_short))
+        if len(errs) == 0:
+            return 0.0, 0.0
+        return float(np.median(lps) if len(lps) > 0 else 0.0), float(np.median(errs))
+
+    def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
+        """Update region gate state based on LP and stochasticity score S_i.
+
+        Returns the current gate (1 enabled, 0 gated-off).
+        """
+        st = self._stats.get(rid)
+        if st is None:
+            return 1
+
+        # Require a minimum number of regions for robust medians (else keep open)
+        if sum(1 for s in self._stats.values() if s.count > 0) < 3:
+            st.bad_consec = 0
+            st.good_consec = 0
+            st.gate = 1
+            return st.gate
+
+        med_lp, med_err = self._global_medians()
+        tau_lp = self.tau_lp_mult * med_lp
+        # Stochasticity score S_i = EMA_short / (eps + median_error_global)
+        s_i = float(st.ema_short) / (self._eps + float(med_err))
+
+        # "Bad" condition toward gating off
+        cond_bad = (lp_i < tau_lp) and (s_i > self.tau_s)
+
+        if st.gate == 1:
+            if cond_bad:
+                st.bad_consec += 1
+                if st.bad_consec >= self.min_consec_to_gate:
+                    st.gate = 0
+                    st.good_consec = 0
+            else:
+                st.bad_consec = 0
+        else:
+            # Currently gated off; check hysteresis to re-enable
+            if lp_i > (self.hysteresis_up_mult * tau_lp):
+                st.good_consec += 1
+                if st.good_consec >= 2:
+                    st.gate = 1
+                    st.bad_consec = 0
+            else:
+                st.good_consec = 0
+
+        return st.gate
+
     # -------------------------- Intrinsic compute -------------------------
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        """Compute α_imp·impact + α_LP·LP(region(φ(s))) for a single transition."""
+        """Compute gated α_imp·impact + α_LP·LP(region(φ(s))) for a single transition."""
         with torch.no_grad():
             s = _as_tensor(tr.s, self.device)
             sp = _as_tensor(tr.s_next, self.device)
@@ -183,8 +271,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             )
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
             lp = self._update_region(rid, float(err.item()))
+            gate = self._maybe_update_gate(rid, float(lp)) if self.gating_enabled else 1
 
-            r = self.alpha_impact * float(impact.item()) + self.alpha_lp * float(lp)
+            r = float(gate) * (self.alpha_impact * float(impact.item()) + self.alpha_lp * float(lp))
             return IntrinsicOutput(r_int=float(r))
 
     @torch.no_grad()
@@ -195,7 +284,7 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized intrinsic for a batch (updates RIAC EMAs internally)."""
+        """Vectorized intrinsic for a batch (updates RIAC EMAs and gating internally)."""
         o = _as_tensor(obs, self.device)
         op = _as_tensor(next_obs, self.device)
         a = _as_tensor(actions, self.device)
@@ -204,21 +293,41 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         impact = self._impact_per_sample(o, op)  # [B]
         err, phi_t = self._forward_error_and_phi(o, op, a)  # [B], [B,D]
 
-        # Region IDs and LP updates
+        # Region IDs and LP/gate updates
         phi_np = phi_t.detach().cpu().numpy()
         rids = self.store.bulk_insert(phi_np)  # [B]
         lp_vals: list[float] = []
+        gates: list[int] = []
         for i in range(impact.shape[0]):
-            lp = self._update_region(int(rids[i]), float(err[i].item()))
+            rid = int(rids[i])
+            lp = self._update_region(rid, float(err[i].item()))
             lp_vals.append(lp)
+            g = self._maybe_update_gate(rid, float(lp)) if self.gating_enabled else 1
+            gates.append(int(g))
         lp_t = torch.as_tensor(lp_vals, dtype=torch.float32, device=self.device)  # [B]
+        gate_t = torch.as_tensor(gates, dtype=torch.float32, device=self.device)  # [B]
 
-        out = self.alpha_impact * impact + self.alpha_lp * lp_t  # [B]
+        out = gate_t * (self.alpha_impact * impact + self.alpha_lp * lp_t)  # [B]
         if reduction == "mean":
             return out.mean()
         return out
 
     # ----------------------------- Loss & Update ---------------------------
+
+    def _current_lp_for_rids(self, rids: Iterable[int]) -> list[float]:
+        vals: list[float] = []
+        for rid in rids:
+            st = self._stats.get(int(rid))
+            raw_lp = 0.0 if st is None or st.count == 0 else max(0.0, st.ema_long - st.ema_short)
+            vals.append(float(raw_lp))
+        return vals
+
+    def _current_gate_for_rids(self, rids: Iterable[int]) -> list[int]:
+        g: list[int] = []
+        for rid in rids:
+            st = self._stats.get(int(rid))
+            g.append(1 if (st is None) else int(st.gate))
+        return g
 
     def loss(self, obs: Any, next_obs: Any, actions: Any) -> dict[str, Tensor]:
         """ICM training loss + diagnostic r_int mean (non-mutating)."""
@@ -232,19 +341,16 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             impact = self._impact_per_sample(o, op)  # [B]
             err, phi_t = self._forward_error_and_phi(o, op, a)  # [B], [B,D]
 
-            # Estimate LP without mutating EMAs: use current region stats
+            # Use current region stats (no mutation) for LP and gate snapshot
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
-            lp_now = []
-            for rid in rids:
-                st = self._stats.get(int(rid))
-                raw_lp = (
-                    0.0 if st is None or st.count == 0 else max(0.0, st.ema_long - st.ema_short)
-                )
-                lp_now.append(raw_lp)
+            lp_now = torch.as_tensor(
+                self._current_lp_for_rids(rids), dtype=torch.float32, device=self.device
+            )
+            gates_now = torch.as_tensor(
+                self._current_gate_for_rids(rids), dtype=torch.float32, device=self.device
+            )
 
-            r_mean = (self.alpha_impact * impact + self.alpha_lp * torch.as_tensor(
-                lp_now, dtype=torch.float32, device=self.device
-            )).mean()
+            r_mean = (gates_now * (self.alpha_impact * impact + self.alpha_lp * lp_now)).mean()
 
         return {
             "total": icm_losses["total"],
@@ -255,7 +361,6 @@ class Proposed(BaseIntrinsicModule, nn.Module):
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
         """Train ICM (shared encoder/heads) and report losses + r_int mean (non-mutating)."""
-        # Diagnostic r_int mean before update (non-mutating LP snapshot)
         with torch.no_grad():
             o = _as_tensor(obs, self.device)
             op = _as_tensor(next_obs, self.device)
@@ -264,16 +369,15 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             impact = self._impact_per_sample(o, op)  # [B]
             err, phi_t = self._forward_error_and_phi(o, op, a)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
-            lp_now = []
-            for rid in rids:
-                st = self._stats.get(int(rid))
-                raw_lp = (
-                    0.0 if st is None or st.count == 0 else max(0.0, st.ema_long - st.ema_short)
-                )
-                lp_now.append(raw_lp)
-            r_mean = float((self.alpha_impact * impact + self.alpha_lp * torch.as_tensor(
-                lp_now, dtype=torch.float32, device=self.device
-            )).mean().item())
+            lp_now = torch.as_tensor(
+                self._current_lp_for_rids(rids), dtype=torch.float32, device=self.device
+            )
+            gates_now = torch.as_tensor(
+                self._current_gate_for_rids(rids), dtype=torch.float32, device=self.device
+            )
+            r_mean = float(
+                (gates_now * (self.alpha_impact * impact + self.alpha_lp * lp_now)).mean().item()
+            )
 
         metrics = self.icm.update(obs, next_obs, actions, steps=steps)
         return {
@@ -282,3 +386,14 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             "loss_inverse": float(metrics["loss_inverse"]),
             "intrinsic_mean": float(r_mean),
         }
+
+    # ----------------------------- diagnostics ----------------------------
+
+    @property
+    def gate_rate(self) -> float:
+        """Fraction of regions currently gated-off (for optional logging/diagnostics)."""
+        n = sum(1 for s in self._stats.values() if s.count > 0)
+        if n == 0:
+            return 0.0
+        off = sum(1 for s in self._stats.values() if s.count > 0 and s.gate == 0)
+        return float(off) / float(n)
