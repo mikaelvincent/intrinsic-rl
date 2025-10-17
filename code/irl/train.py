@@ -235,6 +235,7 @@ def cli_train(
         try:
             # For RIDE, plumb bin_size and alpha_impact from config.
             # For RIAC, also pass LP/regionization knobs (others ignore them).
+            # For Proposed (NEW), pass gating thresholds from cfg.intrinsic.gate.
             intrinsic_module = create_intrinsic_module(
                 method_l,
                 obs_space,
@@ -243,12 +244,17 @@ def cli_train(
                 # RIDE knobs
                 bin_size=float(cfg.intrinsic.bin_size),
                 alpha_impact=float(cfg.intrinsic.alpha_impact),
-                # RIAC knobs (ignored by non-RIAC modules)
+                # RIAC/Proposed knobs
                 alpha_lp=float(cfg.intrinsic.alpha_lp),
                 region_capacity=int(cfg.intrinsic.region_capacity),
                 depth_max=int(cfg.intrinsic.depth_max),
                 ema_beta_long=float(cfg.intrinsic.ema_beta_long),
                 ema_beta_short=float(cfg.intrinsic.ema_beta_short),
+                # Proposed gating knobs (ignored by other modules)
+                gate_tau_lp_mult=float(cfg.intrinsic.gate.tau_lp_mult),
+                gate_tau_s=float(cfg.intrinsic.gate.tau_s),
+                gate_hysteresis_up_mult=float(cfg.intrinsic.gate.hysteresis_up_mult),
+                gate_min_consec_to_gate=int(cfg.intrinsic.gate.min_consec_to_gate),
             )
             if not use_intrinsic:
                 typer.echo(
