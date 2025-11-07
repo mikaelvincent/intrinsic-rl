@@ -3,6 +3,9 @@
 Maintains long/short EMAs of forward error per region; LP = max(0, EMA_long - EMA_short).
 Returns LP normalized via a running RMS and scaled by α_LP.
 
+Now supports **image** observations by delegating φ(s) to ICM, which routes
+vectors via MLP and images via ConvEncoder.
+
 See: devspec/dev_spec_and_plan.md §5.3.5 (R‑IAC) and §5.7 (nets/losses).
 """
 
@@ -22,7 +25,7 @@ from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput, Transition
 from irl.intrinsic.icm import ICM, ICMConfig
 from irl.intrinsic.regions import KDTreeRegionStore
 from irl.intrinsic.normalization import RunningRMS
-from irl.utils.torchops import as_tensor, ensure_2d
+from irl.utils.torchops import as_tensor
 from . import diagnostics as _diag
 
 
@@ -76,14 +79,14 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("RIAC supports Box observation spaces (vector states).")
+            raise TypeError("RIAC supports Box observation spaces (vector or image).")
         self.device = torch.device(device)
 
         # ICM backbone (shared encoder/forward)
         self.icm = icm if icm is not None else ICM(obs_space, act_space, device=device, cfg=icm_cfg)
         self.encoder = self.icm.encoder
         self.is_discrete = self.icm.is_discrete
-        self.obs_dim = int(obs_space.shape[0])
+        self.obs_dim = int(np.prod(obs_space.shape))
         self.phi_dim = int(self.icm.cfg.phi_dim)
 
         # Regionization in φ-space
@@ -103,29 +106,16 @@ class RIAC(BaseIntrinsicModule, nn.Module):
 
         self.to(self.device)
 
-    # ----------------------- internal: per-region stats -----------------------
-
-    def _update_region(self, rid: int, error: float) -> float:
-        """Update EMAs for the region and return current LP ≥ 0."""
-        st = self._stats.get(rid)
-        if st is None or st.count == 0:
-            self._stats[rid] = _RegionStats(ema_long=error, ema_short=error, count=1)
-            return 0.0
-        st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * error
-        st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * error
-        st.count += 1
-        return max(0.0, st.ema_long - st.ema_short)
-
     # -------------------------- intrinsic computation -------------------------
 
     @torch.no_grad()
     def _forward_error_per_sample(
-        self, obs: Tensor, next_obs: Tensor, actions: Tensor
+        self, obs: Any, next_obs: Any, actions: Any
     ) -> Tuple[Tensor, Tensor]:
         """Mean per-sample forward error in φ space, and φ(s_t)."""
-        o = ensure_2d(obs)
-        op = ensure_2d(next_obs)
-        a = actions
+        o = obs
+        op = next_obs
+        a = as_tensor(actions, self.device)
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
         a_fwd = self.icm._act_for_forward(a)
@@ -136,14 +126,11 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Single-sample LP (normalized) for region of φ(s)."""
         with torch.no_grad():
-            s = as_tensor(tr.s, self.device)
-            sp = as_tensor(tr.s_next, self.device)
-            a = as_tensor(tr.a, self.device)
             err, phi_t = self._forward_error_per_sample(
-                s.view(1, -1), sp.view(1, -1), a.view(1, -1 if not self.is_discrete else 1)
+                tr.s, tr.s_next, tr.a
             )
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
-            lp = self._update_region(rid, float(err.item()))
+            lp = self._update_region(rid=int(rid), error=float(err.view(-1)[0].item()))
 
             self._lp_rms.update([lp])
             lp_norm = self._lp_rms.normalize([lp])[0]
@@ -159,11 +146,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         reduction: str = "none",
     ) -> Tensor:
         """Vectorized LP for a batch; updates per-region EMAs."""
-        o = as_tensor(obs, self.device)
-        op = as_tensor(next_obs, self.device)
-        a = as_tensor(actions, self.device)
-
-        err, phi_t = self._forward_error_per_sample(o, op, a)  # [B], [B,D]
+        err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [B], [B,D]
 
         phi_np = phi_t.detach().cpu().numpy()
         rids = self.store.bulk_insert(phi_np)
@@ -184,10 +167,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         """ICM losses + current normalized LP mean (diagnostic only)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            a = as_tensor(actions, self.device)
-            err, phi_t = self._forward_error_per_sample(o, op, a)
+            err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
             lp_vals = []
             for rid in rids:
@@ -209,10 +189,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
         """Train encoder/heads via ICM; report losses + normalized LP mean."""
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            a = as_tensor(actions, self.device)
-            err, phi_t = self._forward_error_per_sample(o, op, a)
+            err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
             vals = []
             for rid in rids:
@@ -231,6 +208,19 @@ class RIAC(BaseIntrinsicModule, nn.Module):
             "loss_inverse": float(metrics["loss_inverse"]),
             "intrinsic_mean": float(self.alpha_lp * lp_mean),
         }
+
+    # ----------------------- internal: per-region stats -----------------------
+
+    def _update_region(self, rid: int, error: float) -> float:
+        """Update EMAs for the region and return current LP ≥ 0."""
+        st = self._stats.get(rid)
+        if st is None or st.count == 0:
+            self._stats[rid] = _RegionStats(ema_long=error, ema_short=error, count=1)
+            return 0.0
+        st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * error
+        st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * error
+        st.count += 1
+        return max(0.0, st.ema_long - st.ema_short)
 
     # ----------------------------- diagnostics ----------------------------
 
