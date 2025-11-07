@@ -1,6 +1,6 @@
-"""Model definitions for PPO backbone.
+"""PPO backbone models (MLP policy/value).
 
-Provides ready-to-use MLP-based Policy and Value networks. CNN/image encoders for CarRacing arrive in a later sprint.
+See devspec §5.1.
 """
 
 from __future__ import annotations
