@@ -1,13 +1,8 @@
-"""Environment manager that builds single or vectorized Gymnasium envs.
+"""Build single or vectorized Gymnasium envs with consistent settings.
 
-Features:
-- Deterministic seeding per environment instance.
-- Optional frame-skip wrapper.
-- Optional CarRacing discrete actions wrapper (default enabled for CarRacing).
-- Optional best-effort domain randomization wrapper.
-- Returns either a single `gym.Env` (num_envs == 1) or a `vector.VectorEnv`.
-
-This is a minimal-yet-practical implementation intended for Sprint 0.
+Includes seeding, optional frame‑skip, CarRacing discrete control, and
+best‑effort domain randomization. Returns a `gym.Env` or a `VectorEnv`.
+See devspec/dev_spec_and_plan.md §4.2/§5.2.
 """
 
 from __future__ import annotations
