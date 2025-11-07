@@ -1,7 +1,6 @@
-"""ICM package (split from monolithic module).
+"""ICM subpackage (refactor).
 
-Public API:
-    from irl.intrinsic.icm import ICM, ICMConfig
+Public API: ICM, ICMConfig.
 """
 
 from __future__ import annotations
