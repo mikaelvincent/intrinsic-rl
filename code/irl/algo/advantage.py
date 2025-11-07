@@ -1,18 +1,9 @@
-"""Generalized Advantage Estimation (GAE) implementation.
+"""Generalized Advantage Estimation (GAE).
 
-The function is intentionally tolerant about the batch structure to keep the
-PPO backbone decoupled from the data-collection code that will arrive later.
-
-Accepted batch keys (fallbacks in order):
-- observations:  "obs", "observations"
-- next_observations: "next_obs", "next_observations"  (optional; see below)
-- rewards:       "rewards", "r_total", "r"
-- dones:         "dones", "terminals", "done"
-
-If `next_observations` are not provided, we compute v_{t+1} by shifting v_t and
-bootstrapping the last step with 0. This is safe for terminated transitions
-because (1 - done) will nullify the bootstrap term; if you have non-terminal
-last steps and need bootstrapping, pass `next_observations`.
+Tolerates common batch key aliases to decouple PPO from data collection.
+If `next_observations` are absent, v_{t+1} is taken as a shift of v_t with a
+zero bootstrap on the last step; terminals nullify bootstraps via (1 - done).
+See devspec/dev_spec_and_plan.md §5.1.
 """
 
 from __future__ import annotations
@@ -30,27 +21,17 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
     return default
 
 
-def _to_tensor(
-    x: Any, device: torch.device, dtype: torch.dtype | None = None
-) -> Tensor:
+def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
 
 
-def compute_gae(
-    batch: Any, value_fn: Any, gamma: float, lam: float
-) -> Tuple[Tensor, Tensor]:
-    """Compute advantages and value targets (TD(λ)/GAE).
+def compute_gae(batch: Any, value_fn: Any, gamma: float, lam: float) -> Tuple[Tensor, Tensor]:
+    """Return (advantages, value_targets) flattened to (N,).
 
-    Args:
-        batch: mapping-like container with observations, rewards, dones, etc.
-        value_fn: callable nn.Module mapping observations -> state values.
-        gamma: discount factor in (0, 1].
-        lam: GAE lambda in [0, 1].
-
-    Returns:
-        (advantages, value_targets) — both flattened to shape (N_total,)
+    `batch` may use aliases like "obs"/"observations", "dones"/"done", etc.;
+    see module docstring. Values are computed time‑major and flattened for PPO.
     """
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
