@@ -1,12 +1,8 @@
-"""PPO optimization loop (minimal implementation).
+"""Minimal PPO update over minibatches.
 
-This function expects a "batch" mapping with at least:
-- "obs" / "observations":      (N, obs_dim)
-- "actions":                   (N,) for Discrete or (N, act_dim) for Box
-- optionally "old_log_probs":  (N,)  -> if absent, computed once at epoch 0
-
-`advantages` and `value_targets` should be 1-D tensors of length N, as returned
-by `irl.algo.advantage.compute_gae`.
+Batch must contain observations and actions; `old_log_probs` is optional.
+Advantages/targets are 1‑D tensors from `irl.algo.advantage.compute_gae`.
+See devspec/dev_spec_and_plan.md §5.1.
 """
 
 from __future__ import annotations
@@ -25,9 +21,7 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
     return default
 
 
-def _to_tensor(
-    x: Any, device: torch.device, dtype: torch.dtype | None = None
-) -> Tensor:
+def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
@@ -36,21 +30,7 @@ def _to_tensor(
 def ppo_update(
     policy: Any, value: Any, batch: Any, advantages: Any, value_targets: Any, cfg: Any
 ) -> None:
-    """Run PPO updates for several epochs over minibatches.
-
-    The function creates lightweight Adam optimizers internally using the
-    learning rate from `cfg`. In later sprints, higher-level training code may
-    externalize optimizers, schedules, and logging.
-
-    Args:
-        policy: policy network (nn.Module) providing a `distribution(obs)` method.
-        value: value network (nn.Module) mapping obs -> scalar value.
-        batch: mapping with "obs"/"actions" (and optional "old_log_probs").
-        advantages: 1-D tensor of length N.
-        value_targets: 1-D tensor of length N.
-        cfg: PPOConfig-like object with fields:
-             epochs, minibatches, learning_rate, clip_range, entropy_coef.
-    """
+    """Run PPO for several epochs over shuffled minibatches."""
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
@@ -67,9 +47,7 @@ def ppo_update(
     vtarg_t = _to_tensor(value_targets, device, dtype=torch.float32).reshape(-1)
 
     N = obs_t.shape[0]
-    assert (
-        adv_t.shape[0] == N and vtarg_t.shape[0] == N
-    ), "adv/targets must match obs count"
+    assert adv_t.shape[0] == N and vtarg_t.shape[0] == N, "adv/targets must match obs count"
 
     # Normalize advantages once per update (common practice)
     adv_t = (adv_t - adv_t.mean()) / (adv_t.std(unbiased=False) + 1e-8)
