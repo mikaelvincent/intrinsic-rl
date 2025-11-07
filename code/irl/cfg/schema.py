@@ -1,7 +1,6 @@
-"""Typed configuration schemas (dataclasses).
+"""Configuration dataclasses.
 
-These dataclasses define the project's configuration surface. Defaults mirror the development specification (see devspec
-§6.2).
+Defines the project's config surface; defaults mirror devspec §6.2.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Region gating (randomness filter) thresholds and rules."""
+    """Region gating thresholds (Proposed)."""
 
     tau_lp_mult: float = 0.01  # multiply median LP
     tau_s: float = 2.0
@@ -25,7 +24,7 @@ class GateConfig:
 
 @dataclass(frozen=True)
 class IntrinsicConfig:
-    """Intrinsic reward configuration (used by RIDE, R-IAC, Proposed, etc.)."""
+    """Intrinsic reward knobs (RIDE/R-IAC/Proposed, etc.)."""
 
     eta: float = 0.1
     alpha_impact: float = 1.0
@@ -41,7 +40,7 @@ class IntrinsicConfig:
 
 @dataclass(frozen=True)
 class EnvConfig:
-    """Environment layer settings."""
+    """Environment settings."""
 
     id: str = "MountainCar-v0"
     vec_envs: int = 16
@@ -53,7 +52,7 @@ class EnvConfig:
 
 @dataclass(frozen=True)
 class PPOConfig:
-    """PPO optimizer/training hyperparameters."""
+    """PPO hyperparameters."""
 
     steps_per_update: int = 2048
     minibatches: int = 32
@@ -67,7 +66,7 @@ class PPOConfig:
 
 @dataclass(frozen=True)
 class AdaptationConfig:
-    """Policy-aware adaptive weighting schedule."""
+    """Policy-aware α schedule (optional)."""
 
     enabled: bool = True
     interval_steps: int = 50_000
@@ -76,7 +75,7 @@ class AdaptationConfig:
 
 @dataclass(frozen=True)
 class EvaluationConfig:
-    """Periodic evaluation settings (no intrinsic rewards during eval)."""
+    """Periodic evaluation (no intrinsic)."""
 
     interval_steps: int = 50_000
     episodes: int = 10
@@ -98,7 +97,7 @@ MethodLiteral = Literal["vanilla", "icm", "rnd", "ride", "riac", "proposed"]
 
 @dataclass(frozen=True)
 class Config:
-    """Top-level configuration."""
+    """Top-level configuration (see devspec §6)."""
 
     seed: int = 1
     device: str = "cpu"  # or "cuda:0"
