@@ -1,15 +1,7 @@
-"""Environment managers and wrappers.
+"""Env manager and small wrappers (frame-skip, CarRacing discrete, domain rand).
 
-Vectorized environment creation, seeding, and simple domain randomization wrappers.
-
-Usage:
-    from irl.envs import EnvManager
-
-This module provides:
-- EnvManager: builds single or vectorized Gymnasium environments with consistent seeding.
-- Lightweight wrappers: FrameSkip, CarRacingDiscreteActionWrapper, DomainRandomizationWrapper.
-
-The full training loop will integrate this manager in later sprints.
+See devspec/dev_spec_and_plan.md §4.1/§5.2. Import `EnvManager` to build
+single or vectorized Gymnasium environments with consistent seeding.
 """
 
 from __future__ import annotations
