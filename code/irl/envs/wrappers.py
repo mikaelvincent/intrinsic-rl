@@ -12,9 +12,7 @@ from gymnasium import spaces
 class FrameSkip(gym.Wrapper):
     """Repeat the same action for `skip` steps and sum rewards.
 
-    Notes:
-        * Uses last observation and last info from the inner env.
-        * Stops early if a termination/truncation happens before consuming all repeats.
+    Stops early if a termination/truncation occurs. Returns the last obs/info.
     """
 
     def __init__(self, env: gym.Env, skip: int = 2) -> None:
@@ -40,14 +38,9 @@ class FrameSkip(gym.Wrapper):
 
 
 class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
-    """Turn CarRacing's continuous Box(3,) action space into a small Discrete set.
+    """Convert CarRacing's Box(3,) actions into a small Discrete set.
 
-    Default action set (steer, gas, brake):
-        0: [ 0.0, 0.0, 0.0]  # no-op
-        1: [-1.0, 0.0, 0.0]  # steer left
-        2: [ 1.0, 0.0, 0.0]  # steer right
-        3: [ 0.0, 1.0, 0.0]  # gas
-        4: [ 0.0, 0.0, 1.0]  # brake
+    Default actions: no-op, left, right, gas, brake (5).
     """
 
     def __init__(
@@ -83,16 +76,11 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
 
 
 class DomainRandomizationWrapper(gym.Wrapper):
-    """Very lightweight, best-effort domain randomization.
+    """Apply small physics perturbations where available (best-effort).
 
-    This wrapper intentionally performs *safe, small* perturbations only when they are
-    available on the underlying environment. It avoids hard dependencies on MuJoCo or Box2D.
-
-    Current behavior (best-effort, guarded by try/except):
-        * If a MuJoCo model is present, scale gravity by ~±5% and geom friction by ~±10%.
-        * If a Box2D world is present, scale vertical gravity by ~±5%.
-
-    The randomness is applied *before* every `reset`.
+    * MuJoCo: scale gravity (~±5%) and geom friction (~±10%).
+    * Box2D : scale vertical gravity (~±5%).
+    Randomization is applied before every `reset`.
     """
 
     def __init__(self, env: gym.Env, seed: Optional[int] = None) -> None:
