@@ -1,7 +1,8 @@
-"""Region data structures for intrinsic modules (R‑IAC / Proposed).
+"""Region structures for intrinsic modules (KD‑tree store).
 
-Currently provides a lightweight KD‑tree region store with split logic.
+See devspec §5.6.
 """
+
 from __future__ import annotations
 
 from .kdtree import KDTreeRegionStore, RegionNode
