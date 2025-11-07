@@ -1,11 +1,4 @@
-"""Evaluation entry point (minimal CLI via Typer).
-
-Runs a policy for N episodes *without* intrinsic rewards.
-
-Examples
---------
-python -m irl.eval --env MountainCar-v0 --ckpt runs/.../checkpoints/ckpt_step_10000.pt --episodes 5
-"""
+"""Evaluate a saved policy deterministically (no intrinsic)."""
 
 from __future__ import annotations
 
@@ -43,20 +36,16 @@ def _build_normalizer(payload) -> Optional[tuple[np.ndarray, np.ndarray]]:
 
 @app.command("eval")
 def cli_eval(
-    env: str = typer.Option(
-        ..., "--env", "-e", help="Gymnasium env id (e.g., MountainCar-v0)."
-    ),
+    env: str = typer.Option(..., "--env", "-e", help="Gymnasium env id (e.g., MountainCar-v0)."),
     ckpt: Path = typer.Option(
         ..., "--ckpt", "-k", help="Path to a training checkpoint file.", exists=True
     ),
-    episodes: int = typer.Option(
-        10, "--episodes", "-n", help="Number of episodes to evaluate."
-    ),
+    episodes: int = typer.Option(10, "--episodes", "-n", help="Number of episodes to evaluate."),
     device: str = typer.Option(
         "cpu", "--device", "-d", help='Torch device, e.g., "cpu" or "cuda:0".'
     ),
 ) -> None:
-    """Evaluate a saved policy deterministically (mode action)."""
+    """Run evaluation episodes using mode actions (no exploration)."""
     payload = load_checkpoint(ckpt, map_location=device)
     cfg = payload.get("cfg", {})
     seed = int(cfg.get("seed", 1))
@@ -85,20 +74,14 @@ def cli_eval(
         ep_ret = 0.0
         while not done:
             x = _normalize(
-                obs
-                if isinstance(obs, np.ndarray)
-                else np.asarray(obs, dtype=np.float32)
+                obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
             )
             with torch.no_grad():
-                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device).view(
-                    1, -1
-                )
+                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device).view(1, -1)
                 dist = policy.distribution(obs_t)
                 act = dist.mode()
                 a = act.detach().cpu().numpy()
-            next_obs, r, term, trunc, _ = e.step(
-                int(a.item()) if hasattr(act_space, "n") else a[0]
-            )
+            next_obs, r, term, trunc, _ = e.step(int(a.item()) if hasattr(act_space, "n") else a[0])
             ep_ret += float(r)
             obs = next_obs
             done = bool(term) or bool(trunc)
