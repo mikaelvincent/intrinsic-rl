@@ -1,13 +1,7 @@
-"""ICM intrinsic module (split into encoder/heads/module).
+"""ICM intrinsic module: encoder, inverse, and forward heads.
 
-Implements:
-- Representation encoder φ(s)
-- Inverse head (CE for Discrete, Gaussian NLL for Box)
-- Forward head (MSE in φ-space)
-
-Public API:
-    * ICMConfig
-    * ICM (compute / compute_batch / loss / update)
+Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and update
+routines for both discrete and continuous actions. See devspec §5.3.2.
 """
 
 from __future__ import annotations
