@@ -1,9 +1,4 @@
-"""Diagnostics helpers for RIAC (file I/O split from the module).
-
-Functions here are used by RIAC.export_diagnostics(...) to write:
-  - regions.jsonl (one JSON object per region)
-  - gates.csv     (rows: step, region_id, gate)
-"""
+"""Diagnostics helpers for RIAC: write regions.jsonl and gates.csv."""
 
 from __future__ import annotations
 
