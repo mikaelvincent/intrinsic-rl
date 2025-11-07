@@ -1,13 +1,6 @@
-"""Configuration package.
+"""Typed config schemas, YAML loader, and validators.
 
-This module provides:
-- Typed dataclass schemas for the project configuration.
-- YAML loaders that parse user configs into those dataclasses.
-- Basic validation helpers for common invariants.
-
-Typical usage:
-    from irl.cfg import load_config, Config
-    cfg: Config = load_config("configs/bipedal_proposed.yaml")
+See devspec/dev_spec_and_plan.md §6 for the full schema.
 """
 
 from __future__ import annotations
