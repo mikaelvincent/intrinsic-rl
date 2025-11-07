@@ -1,15 +1,6 @@
-"""Checkpoint manager with atomic writes and retention.
+"""Checkpoint manager with atomic writes & bounded retention.
 
-Layout
-------
-<run_dir>/checkpoints/
-  - ckpt_step_<N>.pt
-  - ckpt_latest.pt  (copy of the last saved)
-
-Writes go to a temporary file and are atomically replaced to mitigate partial
-writes. A bounded number of step checkpoints are kept (oldest pruned).
-
-See: devspec/dev_spec_and_plan.md §6.1 (artifacts) and §9 (reliability).
+See devspec/dev_spec_and_plan.md §6.1 (artifacts) and §9 (reliability).
 """
 
 from __future__ import annotations
