@@ -43,28 +43,13 @@ from typing import Any, Iterable, Optional, Tuple, Union
 import gymnasium as gym
 import torch
 from torch import Tensor, nn
-from torch.nn import functional as F
 
 from . import BaseIntrinsicModule, IntrinsicOutput, Transition
 from .icm import ICM, ICMConfig
+from irl.utils.torchops import as_tensor, ensure_2d
 
 
 # ------------------------------ Small helpers ------------------------------
-
-
-def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
-
-
-def _ensure_2d(x: Tensor) -> Tensor:
-    """Ensure shape [B, D]; if [D], add batch dim; if [T,B,D], flatten to [T*B, D]."""
-    if x.dim() == 1:
-        return x.view(1, -1)
-    if x.dim() == 2:
-        return x
-    return x.view(-1, x.size(-1))
 
 
 # ---------------------------------- RIDE ------------------------------------
@@ -123,8 +108,8 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     @torch.no_grad()
     def _impact_per_sample(self, obs: Tensor, next_obs: Tensor) -> Tensor:
         """Return per-sample impact = ||φ(s') - φ(s)||_2 with shape [B]."""
-        o = _ensure_2d(obs)
-        op = _ensure_2d(next_obs)
+        o = ensure_2d(obs)
+        op = ensure_2d(next_obs)
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
         # L2 across embedding dims -> [B]
@@ -151,8 +136,8 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         binning, as episode boundaries are unknown here).
         """
         with torch.no_grad():
-            s = _as_tensor(tr.s, self.device)
-            sp = _as_tensor(tr.s_next, self.device)
+            s = as_tensor(tr.s, self.device)
+            sp = as_tensor(tr.s_next, self.device)
             r_raw = self._impact_per_sample(s.view(1, -1), sp.view(1, -1)).view(-1)[0]
             r = self.alpha_impact * r_raw
             return IntrinsicOutput(r_int=float(r.item()))
@@ -166,8 +151,8 @@ class RIDE(BaseIntrinsicModule, nn.Module):
             Tensor of shape [B] if reduction=="none"; scalar [1] if "mean".
         """
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
             r = self._impact_per_sample(o, op)
             r = self.alpha_impact * r
             if reduction == "mean":
@@ -195,17 +180,17 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         Returns:
             Tensor of shape [B] if reduction=="none"; scalar if "mean".
         """
-        o = _as_tensor(obs, self.device)
-        op = _as_tensor(next_obs, self.device)
-        o2 = _ensure_2d(o)
-        op2 = _ensure_2d(op)
+        o = as_tensor(obs, self.device)
+        op = as_tensor(next_obs, self.device)
+        o2 = ensure_2d(o)
+        op2 = ensure_2d(op)
         B = int(op2.size(0))
         self._ensure_counts(B)
 
         # Reset counts for envs that just finished; Gym vector envs typically return s_{t+1}
         # from the next episode already, so we reset **before** using its bin key.
         if dones is not None:
-            d = _as_tensor(dones, device=torch.device("cpu"), dtype=torch.float32).view(-1)
+            d = as_tensor(dones, device=torch.device("cpu"), dtype=torch.float32).view(-1)
             for i in range(B):
                 if bool(d[i].item()):
                     self._ep_counts[i].clear()
@@ -238,8 +223,8 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         # ICM losses train the shared encoder; no gradients from intrinsic itself
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
             r = self._impact_per_sample(o, op).mean()
         return {
             "total": icm_losses["total"],
@@ -252,8 +237,8 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         """Run ICM optimization steps; report ICM losses + RIDE intrinsic mean."""
         # Measure current intrinsic (for logging)
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
             r_mean = self._impact_per_sample(o, op).mean().detach().item()
 
         # Delegate training to ICM (keeps encoder/inverse/forward in sync)
