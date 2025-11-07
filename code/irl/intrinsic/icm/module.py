@@ -1,7 +1,9 @@
 """ICM intrinsic module: encoder, inverse, and forward heads.
 
 Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and update
-routines for both discrete and continuous actions. See devspec §5.3.2.
+routines for both discrete and continuous actions. Now supports **image**
+observations by routing through a ConvEncoder when the observation space has
+rank ≥ 2 (HWC or CHW). See devspec §5.3.2 and §6 (Sprint 6).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from torch.nn import functional as F
 
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput, Transition
 from irl.utils.torchops import as_tensor, ensure_2d, one_hot
+from irl.models import ConvEncoder, ConvEncoderConfig  # CNN path for image observations
 
 from .encoder import mlp
 from .heads import ContinuousInverseHead, ForwardHead
@@ -41,7 +44,11 @@ class ICMConfig:
 
 
 class ICM(BaseIntrinsicModule, nn.Module):
-    """Intrinsic Curiosity Module with φ, inverse, and forward heads."""
+    """Intrinsic Curiosity Module with φ, inverse, and forward heads.
+
+    * Vector observations → φ via an MLP.
+    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly).
+    """
 
     def __init__(
         self,
@@ -52,12 +59,17 @@ class ICM(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("ICM supports Box observation spaces (vector).")
+            raise TypeError("ICM supports Box observation spaces (vector or image).")
         self.device = torch.device(device)
         self.cfg = cfg or ICMConfig()
 
         # ----- Spaces -----
-        self.obs_dim = int(obs_space.shape[0])
+        self.is_image_obs = len(obs_space.shape) >= 2  # HWC/CHW or higher rank
+        # For vectors this is the feature dimension; for images it's unused by encoder logic
+        self.obs_dim = int(np.prod(obs_space.shape)) if not self.is_image_obs else int(
+            np.prod(obs_space.shape)
+        )
+
         self.is_discrete = isinstance(act_space, gym.spaces.Discrete)
         if self.is_discrete:
             self.n_actions = int(act_space.n)
@@ -70,18 +82,30 @@ class ICM(BaseIntrinsicModule, nn.Module):
         else:
             raise TypeError(f"Unsupported action space for ICM: {type(act_space)}")
 
-        # ----- Networks -----
-        # Encoder φ(s) : R^obs_dim -> R^phi_dim
-        self.encoder = mlp(self.obs_dim, self.cfg.hidden, out_dim=self.cfg.phi_dim)
+        # ----- Encoder φ(s) -----
+        if self.is_image_obs:
+            # Infer channel count from either leading or trailing axis (CHW vs HWC)
+            shape = tuple(int(s) for s in obs_space.shape)
+            cand = [shape[0], shape[-1]]
+            in_channels = cand[0] if cand[0] in (1, 3, 4) else cand[1]
+            if in_channels not in (1, 3, 4):
+                # Fallback: assume channels-last
+                in_channels = shape[-1]
+            cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.phi_dim))
+            self.encoder = ConvEncoder(cnn_cfg)  # lazy projection init handled internally
+        else:
+            # Vector path: simple MLP
+            # Note: first layer of mlp() includes FlattenObs so [T,B,D]/[B,D]/[D] are all handled.
+            self.encoder = mlp(int(obs_space.shape[0]), self.cfg.hidden, out_dim=self.cfg.phi_dim)
 
-        # Inverse dynamics head: input = concat[φ(s), φ(s')]
+        # ----- Inverse dynamics head: input = concat[φ(s), φ(s')] -----
         inv_in = 2 * self.cfg.phi_dim
         if self.is_discrete:
             self.inverse = mlp(inv_in, self.cfg.hidden, out_dim=self.n_actions)
         else:
             self.inverse = ContinuousInverseHead(inv_in, self.act_dim, hidden=self.cfg.hidden)
 
-        # Forward dynamics head: input = concat[φ(s), a_embed] -> φ̂(s')
+        # ----- Forward dynamics head: input = concat[φ(s), a_embed] -> φ̂(s') -----
         fwd_in = self.cfg.phi_dim + self._forward_act_in_dim
         self.forward_head = ForwardHead(fwd_in, self.cfg.phi_dim, hidden=self.cfg.hidden)
 
@@ -92,9 +116,32 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
     # ----------------------------- Embeddings -----------------------------
 
-    def _phi(self, obs: Tensor) -> Tensor:
-        x = ensure_2d(obs)
-        return self.encoder(x)
+    def _phi(self, obs: Any) -> Tensor:
+        """Return φ(s) for a batch or single observation.
+
+        * If image: auto-convert layout to NCHW and auto-scale to [0,1] when inputs
+          appear to be 0–255 (uint8 or float range > 1.0).
+        * If vector: flatten to [B, D] before passing to the MLP encoder.
+        """
+        if self.is_image_obs:
+            t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
+            t = t.to(self.device)
+            # Convert to float32; if values look like 0..255 (or dtype integer), scale to [0, 1].
+            if not torch.is_floating_point(t):
+                t = t.to(torch.float32) / 255.0
+            else:
+                t = t.to(torch.float32)
+                # Heuristic: auto-scale if max > 1.0 (common for raw 0..255 floats)
+                try:
+                    if torch.isfinite(t).any() and float(t.max().item()) > 1.0 + 1e-6:
+                        t = t / 255.0
+                except Exception:
+                    # Be conservative: leave as-is if reduction fails
+                    pass
+            return self.encoder(t)
+        else:
+            x = as_tensor(obs, self.device)
+            return self.encoder(ensure_2d(x))
 
     # ----------------------- Action formatting helpers --------------------
 
@@ -112,14 +159,12 @@ class ICM(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Compute intrinsic (per-sample forward MSE) without gradients."""
         with torch.no_grad():
-            s = as_tensor(tr.s, self.device)
-            s_next = as_tensor(tr.s_next, self.device)
-            a = as_tensor(tr.a, self.device)
+            s = tr.s
+            s_next = tr.s_next
+            a = tr.a
 
             r = self.compute_batch(
-                s.view(1, -1),
-                s_next.view(1, -1),
-                a.view(1, -1 if not self.is_discrete else 1),
+                s, s_next, a, reduction="none"
             )
             return IntrinsicOutput(r_int=float(r.view(-1)[0].item()))
 
@@ -128,9 +173,9 @@ class ICM(BaseIntrinsicModule, nn.Module):
     ) -> Tensor:
         """Vectorized intrinsic reward: per-sample forward MSE in φ-space."""
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            a = as_tensor(actions, self.device)
+            o = obs
+            op = next_obs
+            a = torch.as_tensor(actions, device=self.device)
             phi_t = self._phi(o)
             phi_tp1 = self._phi(op)
             a_fwd = self._act_for_forward(a)
@@ -168,9 +213,9 @@ class ICM(BaseIntrinsicModule, nn.Module):
         weights: Optional[Tuple[float, float]] = None,
     ) -> Mapping[str, Tensor]:
         """Compute ICM losses without updating parameters."""
-        o = as_tensor(obs, self.device)
-        op = as_tensor(next_obs, self.device)
-        a = as_tensor(actions, self.device)
+        o = obs
+        op = next_obs
+        a = torch.as_tensor(actions, device=self.device)
 
         phi_t = self._phi(o)
         phi_tp1 = self._phi(op)
