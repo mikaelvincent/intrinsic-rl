@@ -33,24 +33,7 @@ from torch.nn import functional as F
 
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput
 from irl.models.networks import mlp  # lightweight MLP builder (+FlattenObs)
-
-
-# ------------------------------ Helpers ---------------------------------
-
-
-def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
-
-
-def _ensure_2d(x: Tensor) -> Tensor:
-    """Ensure [B, D]; if [D], add batch dim; if [T,B,D] flatten to [T*B, D]."""
-    if x.dim() == 1:
-        return x.view(1, -1)
-    if x.dim() == 2:
-        return x
-    return x.view(-1, x.size(-1))
+from irl.utils.torchops import as_tensor, ensure_2d
 
 
 # ------------------------------ Config ----------------------------------
@@ -128,7 +111,7 @@ class RND(BaseIntrinsicModule, nn.Module):
     # -------------------------- Core compute ---------------------------
 
     def _pred_and_targ(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        x2 = _ensure_2d(x)
+        x2 = ensure_2d(x)
         p = self.predictor(x2)
         with torch.no_grad():
             t = self.target(x2)
@@ -151,7 +134,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         """Compute intrinsic for a single transition (no gradients)."""
         with torch.no_grad():
             x = tr.s_next if hasattr(tr, "s_next") and tr.s_next is not None else tr.s
-            xt = _as_tensor(x, self.device)
+            xt = as_tensor(x, self.device)
             r = self._intrinsic_raw_per_sample(xt)
             r = self._normalize_intrinsic(r)
             return IntrinsicOutput(r_int=float(r.view(-1)[0].item()))
@@ -166,7 +149,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         """
         with torch.no_grad():
             x_src = next_obs if next_obs is not None else obs
-            x = _as_tensor(x_src, self.device)
+            x = as_tensor(x_src, self.device)
             r = self._intrinsic_raw_per_sample(x)
             r = self._normalize_intrinsic(r)
             if reduction == "mean":
@@ -177,7 +160,7 @@ class RND(BaseIntrinsicModule, nn.Module):
 
     def loss(self, obs: Any) -> Mapping[str, Tensor]:
         """Compute predictor-vs-target MSE loss (no optimizer step)."""
-        o = _as_tensor(obs, self.device)
+        o = as_tensor(obs, self.device)
         p, t = self._pred_and_targ(o)
         per = F.mse_loss(p, t, reduction="none").mean(dim=-1)  # [B]
         total = per.mean()
