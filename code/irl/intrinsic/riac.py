@@ -65,24 +65,10 @@ from . import BaseIntrinsicModule, IntrinsicOutput, Transition
 from .icm import ICM, ICMConfig
 from .regions import KDTreeRegionStore
 from .normalization import RunningRMS
+from irl.utils.torchops import as_tensor, ensure_2d
 
 
 # ------------------------------ Small helpers ------------------------------
-
-
-def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
-
-
-def _ensure_2d(x: Tensor) -> Tensor:
-    """Ensure shape [B, D]; if [D], add batch dim; if [T,B,D], flatten to [T*B, D]."""
-    if x.dim() == 1:
-        return x.view(1, -1)
-    if x.dim() == 2:
-        return x
-    return x.view(-1, x.size(-1))
 
 
 @dataclass
@@ -204,8 +190,8 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         self, obs: Tensor, next_obs: Tensor, actions: Tensor
     ) -> Tuple[Tensor, Tensor]:
         """Return per-sample forward error in φ space (mean over dims), shape [B]."""
-        o = _ensure_2d(obs)
-        op = _ensure_2d(next_obs)
+        o = ensure_2d(obs)
+        op = ensure_2d(next_obs)
         a = actions
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
@@ -217,9 +203,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Compute α_LP * normalize(LP(region(φ(s)))) for a single transition."""
         with torch.no_grad():
-            s = _as_tensor(tr.s, self.device)
-            sp = _as_tensor(tr.s_next, self.device)
-            a = _as_tensor(tr.a, self.device)
+            s = as_tensor(tr.s, self.device)
+            sp = as_tensor(tr.s_next, self.device)
+            a = as_tensor(tr.a, self.device)
             err, phi_t = self._forward_error_per_sample(
                 s.view(1, -1), sp.view(1, -1), a.view(1, -1 if not self.is_discrete else 1)
             )
@@ -242,9 +228,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         reduction: str = "none",
     ) -> Tensor:
         """Vectorized α_LP * normalize(LP(region(φ(s)))) for a batch (updates EMAs)."""
-        o = _as_tensor(obs, self.device)
-        op = _as_tensor(next_obs, self.device)
-        a = _as_tensor(actions, self.device)
+        o = as_tensor(obs, self.device)
+        op = as_tensor(next_obs, self.device)
+        a = as_tensor(actions, self.device)
 
         # Forward-model error in φ-space
         err, phi_t = self._forward_error_per_sample(o, op, a)  # [B], [B,D]
@@ -273,9 +259,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         """Return ICM training loss + R‑IAC intrinsic mean (diagnostic only)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
-            a = _as_tensor(actions, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
+            a = as_tensor(actions, self.device)
             err, phi_t = self._forward_error_per_sample(o, op, a)
             # Use current per-region LPs without mutating state (locate only)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
@@ -302,9 +288,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         """Train encoder/heads via ICM; report ICM losses + current normalized LP mean."""
         # Measure current normalized LP mean (non-mutating)
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
-            a = _as_tensor(actions, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
+            a = as_tensor(actions, self.device)
             err, phi_t = self._forward_error_per_sample(o, op, a)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
             vals = []
@@ -354,8 +340,12 @@ class RIAC(BaseIntrinsicModule, nn.Module):
                     "ema_short": ema_s,
                     "lp": float(lp),
                     "gate": 1,  # Sprint 4 will implement gating; all enabled for now
-                    "bbox_lo": None if leaf.bbox_lo is None else [float(x) for x in leaf.bbox_lo.tolist()],
-                    "bbox_hi": None if leaf.bbox_hi is None else [float(x) for x in leaf.bbox_hi.tolist()],
+                    "bbox_lo": (
+                        None if leaf.bbox_lo is None else [float(x) for x in leaf.bbox_lo.tolist()]
+                    ),
+                    "bbox_hi": (
+                        None if leaf.bbox_hi is None else [float(x) for x in leaf.bbox_hi.tolist()]
+                    ),
                 }
             )
         return recs
