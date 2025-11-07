@@ -1,11 +1,11 @@
-"""Proposed unified intrinsic module (core implementation).
+"""Proposed unified intrinsic: α_impact·impact + α_LP·LP with region gating.
 
-Combines:
-  • RIDE-style impact  : ||φ(s') − φ(s)||₂
-  • R-IAC learning progress per region i: LP_i = max(0, EMA_long_i − EMA_short_i)
-  • Region-wise gating (randomness filter with hysteresis)
+- Impact: ||φ(s') − φ(s)||₂ (RIDE-like)
+- LP: region-wise learning progress from long/short EMAs (R‑IAC-like)
+- Gating: suppress regions with low LP and high stochasticity (hysteresis)
+- Per-component RMS normalization; outputs flagged as normalized.
 
-Outputs are normalized per-component (impact & LP) via running RMS.
+See: devspec/dev_spec_and_plan.md §5.4.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .normalize import ComponentRMS
 
 
 class Proposed(nn.Module):
-    """Unified intrinsic = gate_i · (α_impact·norm(impact) + α_LP·norm(LP(region)))."""
+    """Unified intrinsic with gating; outputs are already normalized."""
 
     def __init__(
         self,
@@ -87,8 +87,7 @@ class Proposed(nn.Module):
         self._rms = ComponentRMS(
             impact=RunningRMS(beta=0.99, eps=1e-8), lp=RunningRMS(beta=0.99, eps=1e-8)
         )
-        # Signal to trainer that outputs are already normalized here
-        self.outputs_normalized: bool = True
+        self.outputs_normalized: bool = True  # trainer should skip global RMS
 
         self.to(self.device)
 
@@ -114,7 +113,7 @@ class Proposed(nn.Module):
         a_fwd = self.icm._act_for_forward(a)
         pred = self.icm.forward_head(torch.cat([phi_t, a_fwd], dim=-1))
         per_dim = F.mse_loss(pred, phi_tp1, reduction="none")  # [B, D]
-        return per_dim.mean(dim=-1), phi_t  # [B], [B, D]
+        return per_dim.mean(dim=-1), phi_t
 
     def _update_region(self, rid: int, error: float) -> float:
         st = self._stats.get(rid)
@@ -140,12 +139,12 @@ class Proposed(nn.Module):
     # ----------------------------- gating -----------------------------
 
     def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
-        """Update region gate based on LP and stochasticity S_i; return gate."""
+        """Update region gate based on LP/stochasticity; return 0/1."""
         st = self._stats.get(rid)
         if st is None:
             return 1
 
-        # Require a minimum number of regions for robust medians (else keep open)
+        # Need ≥3 regions with stats for robust medians
         sufficient = sum(1 for s in self._stats.values() if s.count > 0) >= 3
         if not sufficient:
             st.bad_consec = 0
@@ -171,7 +170,7 @@ class Proposed(nn.Module):
     # ------------------------- public API: compute -------------------------
 
     def compute(self, tr) -> "IntrinsicOutput":
-        """Single-transition intrinsic (gated, per-component normalized)."""
+        """Single-transition intrinsic with gating and per-component RMS."""
         from irl.intrinsic import IntrinsicOutput  # local import to avoid cycle
 
         with torch.no_grad():
@@ -187,7 +186,7 @@ class Proposed(nn.Module):
             lp_raw = self._update_region(rid, float(err.item()))
             gate = self._maybe_update_gate(rid, float(lp_raw)) if self.gating_enabled else 1
 
-            # Normalize per component
+            # Normalize components and combine
             self._rms.update([float(impact_raw.item())], [float(lp_raw)])
             impact_n, lp_n = self._rms.normalize(
                 np.asarray([float(impact_raw.item())], dtype=np.float32),
@@ -206,7 +205,7 @@ class Proposed(nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized intrinsic (updates EMAs/gates and **normalizes** components)."""
+        """Vectorized intrinsic with gating and per-component RMS."""
         o = as_tensor(obs, self.device)
         op = as_tensor(next_obs, self.device)
         a = as_tensor(actions, self.device)
@@ -238,9 +237,7 @@ class Proposed(nn.Module):
         gate_t = torch.as_tensor(gates, dtype=torch.float32, device=self.device)
 
         out = gate_t * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)
-        if reduction == "mean":
-            return out.mean()
-        return out
+        return out.mean() if reduction == "mean" else out
 
     # ----------------------------- losses & update -----------------------------
 
@@ -268,7 +265,7 @@ class Proposed(nn.Module):
             op = as_tensor(next_obs, self.device)
             a = as_tensor(actions, self.device)
 
-            impact_raw = self._impact_per_sample(o, op)  # [B]
+            impact_raw = self._impact_per_sample(o, op)
             err, phi_t = self._forward_error_and_phi(o, op, a)
 
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
@@ -293,7 +290,7 @@ class Proposed(nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train ICM and report losses + current normalized intrinsic mean (non-mutating)."""
+        """Train ICM and report losses + current normalized intrinsic mean."""
         with torch.no_grad():
             o = as_tensor(obs, self.device)
             op = as_tensor(next_obs, self.device)
