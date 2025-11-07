@@ -1,13 +1,7 @@
-"""Intrinsic reward modules (skeleton + implemented baselines).
+"""Intrinsic modules and base protocol.
 
-Concrete modules:
-- ICM (implemented)
-- RND (implemented)
-- RIDE (impact-only; reuses ICM encoder; episodic binning arrives next)
-- R-IAC (LP via per-region EMAs; implemented Sprint 3 Step 2)
-- Proposed unified method (Step 1: combine impact + LP; no gating yet)
-
-Base protocol and simple output container are provided here.
+Provides base interfaces and concrete modules (ICM, RND, RIDE, RIAC, Proposed) plus factory helpers and a running RMS
+normalizer. See devspec §5.
 """
 
 from __future__ import annotations
