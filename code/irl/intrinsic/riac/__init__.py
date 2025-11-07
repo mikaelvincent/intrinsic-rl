@@ -1,7 +1,6 @@
-"""RIAC package (split from monolithic module).
+"""R-IAC subpackage (refactor).
 
-Public API:
-    from irl.intrinsic.riac import RIAC, simulate_lp_emas
+Public API: RIAC, simulate_lp_emas.
 """
 
 from __future__ import annotations
