@@ -34,25 +34,10 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from . import BaseIntrinsicModule, IntrinsicOutput, Transition
+from irl.utils.torchops import as_tensor, ensure_2d, one_hot
 
 
 # ------------------------------ Small helpers ------------------------------
-
-
-def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
-
-
-def _ensure_2d(x: Tensor) -> Tensor:
-    """Ensure [B, D]; if [D], add batch dim; if [T,B,D] flatten to [T*B, D]."""
-    if x.dim() == 1:
-        return x.view(1, -1)
-    if x.dim() == 2:
-        return x
-    # Flatten all but last dim
-    return x.view(-1, x.size(-1))
 
 
 def _mlp(in_dim: int, hidden: Iterable[int], out_dim: Optional[int] = None) -> nn.Sequential:
@@ -186,33 +171,35 @@ class ICM(BaseIntrinsicModule, nn.Module):
     # ----------------------------- Embeddings -----------------------------
 
     def _phi(self, obs: Tensor) -> Tensor:
-        x = _ensure_2d(obs)
+        x = ensure_2d(obs)
         return self.encoder(x)
 
     # ----------------------- Action formatting helpers --------------------
 
     def _one_hot(self, a: Tensor, n: int) -> Tensor:
-        a = a.long().view(-1)  # [B]
-        oh = torch.zeros((a.size(0), n), device=a.device, dtype=torch.float32)
-        oh.scatter_(1, a.view(-1, 1), 1.0)
-        return oh
+        # Kept as a method for minimal diffs; delegates to shared helper.
+        return one_hot(a, n)
 
     def _act_for_forward(self, actions: Tensor) -> Tensor:
         """Format actions for the forward model input."""
         if self.is_discrete:
             return self._one_hot(actions, self.n_actions)  # [B, A]
-        return _ensure_2d(actions).float()  # [B, A]
+        return ensure_2d(actions).float()  # [B, A]
 
     # -------------------------- Intrinsic compute -------------------------
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Compute intrinsic reward for a single transition (no gradients)."""
         with torch.no_grad():
-            s = _as_tensor(tr.s, self.device)
-            s_next = _as_tensor(tr.s_next, self.device)
-            a = _as_tensor(tr.a, self.device)
+            s = as_tensor(tr.s, self.device)
+            s_next = as_tensor(tr.s_next, self.device)
+            a = as_tensor(tr.a, self.device)
 
-            r = self.compute_batch(s.view(1, -1), s_next.view(1, -1), a.view(1, -1 if not self.is_discrete else 1))
+            r = self.compute_batch(
+                s.view(1, -1),
+                s_next.view(1, -1),
+                a.view(1, -1 if not self.is_discrete else 1),
+            )
             # r: [1] tensor
             return IntrinsicOutput(r_int=float(r.item()))
 
@@ -225,9 +212,9 @@ class ICM(BaseIntrinsicModule, nn.Module):
             Tensor of shape [B] if reduction=="none"; scalar [1] if "mean".
         """
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
-            a = _as_tensor(actions, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
+            a = as_tensor(actions, self.device)
             phi_t = self._phi(o)
             phi_tp1 = self._phi(op)
             a_fwd = self._act_for_forward(a)
@@ -250,7 +237,7 @@ class ICM(BaseIntrinsicModule, nn.Module):
             return F.cross_entropy(logits, a)
         # continuous
         mu, log_std = self.inverse(h)  # [B, act_dim] each
-        a = _ensure_2d(actions).float()
+        a = ensure_2d(actions).float()
         var = torch.exp(2.0 * log_std)
         nll = 0.5 * ((a - mu) ** 2 / var + 2.0 * log_std + np.log(2 * np.pi))
         return nll.sum(dim=-1).mean()
@@ -270,9 +257,9 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
         Returns dict with keys: total, forward, inverse, intrinsic_mean
         """
-        o = _as_tensor(obs, self.device)
-        op = _as_tensor(next_obs, self.device)
-        a = _as_tensor(actions, self.device)
+        o = as_tensor(obs, self.device)
+        op = as_tensor(next_obs, self.device)
+        a = as_tensor(actions, self.device)
 
         phi_t = self._phi(o)
         phi_tp1 = self._phi(op)
@@ -290,11 +277,15 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
         # Intrinsic reward mean for diagnostics (no η)
         with torch.no_grad():
-            r_int_mean = F.mse_loss(
-                self.forward_head(torch.cat([phi_t, a_fwd], dim=-1)),
-                phi_tp1,
-                reduction="none",
-            ).mean(dim=-1).mean()
+            r_int_mean = (
+                F.mse_loss(
+                    self.forward_head(torch.cat([phi_t, a_fwd], dim=-1)),
+                    phi_tp1,
+                    reduction="none",
+                )
+                .mean(dim=-1)
+                .mean()
+            )
 
         return {
             "total": total,
