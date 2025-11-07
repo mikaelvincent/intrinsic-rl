@@ -44,24 +44,10 @@ from . import BaseIntrinsicModule, IntrinsicOutput, Transition
 from .icm import ICM, ICMConfig
 from .regions import KDTreeRegionStore
 from .normalization import RunningRMS  # <-- NEW: per-component RMS normalizers
+from irl.utils.torchops import as_tensor, ensure_2d
 
 
 # ------------------------------ Small helpers ------------------------------
-
-
-def _as_tensor(x: Any, device: torch.device, dtype: Optional[torch.dtype] = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
-
-
-def _ensure_2d(x: Tensor) -> Tensor:
-    """Ensure [B, D]; if [D], add batch dim; if [T,B,D], flatten to [T*B, D]."""
-    if x.dim() == 1:
-        return x.view(1, -1)
-    if x.dim() == 2:
-        return x
-    return x.view(-1, x.size(-1))
 
 
 @dataclass
@@ -176,8 +162,8 @@ class Proposed(BaseIntrinsicModule, nn.Module):
     @torch.no_grad()
     def _impact_per_sample(self, obs: Tensor, next_obs: Tensor) -> Tensor:
         """RIDE impact magnitude: ||φ(s') - φ(s)||₂, shape [B]."""
-        o = _ensure_2d(obs)
-        op = _ensure_2d(next_obs)
+        o = ensure_2d(obs)
+        op = ensure_2d(next_obs)
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
         return torch.norm(phi_tp1 - phi_t, p=2, dim=-1)
@@ -187,8 +173,8 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         self, obs: Tensor, next_obs: Tensor, actions: Tensor
     ) -> Tuple[Tensor, Tensor]:
         """Return (per-sample forward MSE in φ space [B], phi(s) [B,D])."""
-        o = _ensure_2d(obs)
-        op = _ensure_2d(next_obs)
+        o = ensure_2d(obs)
+        op = ensure_2d(next_obs)
         a = actions
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
@@ -271,9 +257,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Compute gated α_imp·norm(impact) + α_LP·norm(LP(region)) for a single transition."""
         with torch.no_grad():
-            s = _as_tensor(tr.s, self.device)
-            sp = _as_tensor(tr.s_next, self.device)
-            a = _as_tensor(tr.a, self.device)
+            s = as_tensor(tr.s, self.device)
+            sp = as_tensor(tr.s_next, self.device)
+            a = as_tensor(tr.a, self.device)
 
             # Components (raw)
             impact_raw = self._impact_per_sample(s.view(1, -1), sp.view(1, -1)).view(-1)[0]
@@ -302,9 +288,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         reduction: str = "none",
     ) -> Tensor:
         """Vectorized intrinsic for a batch (updates RIAC EMAs/gates and **normalizes** components)."""
-        o = _as_tensor(obs, self.device)
-        op = _as_tensor(next_obs, self.device)
-        a = _as_tensor(actions, self.device)
+        o = as_tensor(obs, self.device)
+        op = as_tensor(next_obs, self.device)
+        a = as_tensor(actions, self.device)
 
         # Raw components
         impact_raw = self._impact_per_sample(o, op)  # [B]
@@ -331,7 +317,7 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         self._lp_rms.update(lp_np)
 
         imp_norm = self._impact_rms.normalize(imp_np)  # np.float32 [B]
-        lp_norm = self._lp_rms.normalize(lp_np)        # np.float32 [B]
+        lp_norm = self._lp_rms.normalize(lp_np)  # np.float32 [B]
 
         # Back to torch
         imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
@@ -365,9 +351,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
         icm_losses = self.icm.loss(obs, next_obs, actions)
 
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
-            a = _as_tensor(actions, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
+            a = as_tensor(actions, self.device)
 
             impact_raw = self._impact_per_sample(o, op)  # [B]
             err, phi_t = self._forward_error_and_phi(o, op, a)  # [B], [B,D]
@@ -380,7 +366,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             )
 
             # Normalize with *current* RMS (do not update in loss)
-            imp_norm = self._impact_rms.normalize(impact_raw.detach().cpu().numpy().astype(np.float32))
+            imp_norm = self._impact_rms.normalize(
+                impact_raw.detach().cpu().numpy().astype(np.float32)
+            )
             lp_norm = self._lp_rms.normalize(lp_now)
 
             imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
@@ -398,9 +386,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
         """Train ICM (shared encoder/heads) and report losses + r_int mean (non-mutating)."""
         with torch.no_grad():
-            o = _as_tensor(obs, self.device)
-            op = _as_tensor(next_obs, self.device)
-            a = _as_tensor(actions, self.device)
+            o = as_tensor(obs, self.device)
+            op = as_tensor(next_obs, self.device)
+            a = as_tensor(actions, self.device)
 
             impact_raw = self._impact_per_sample(o, op)  # [B]
             err, phi_t = self._forward_error_and_phi(o, op, a)
@@ -408,7 +396,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             lp_now = np.asarray(self._current_lp_for_rids(rids), dtype=np.float32)
 
             # Normalize with *current* RMS (do not update here)
-            imp_norm = self._impact_rms.normalize(impact_raw.detach().cpu().numpy().astype(np.float32))
+            imp_norm = self._impact_rms.normalize(
+                impact_raw.detach().cpu().numpy().astype(np.float32)
+            )
             lp_norm = self._lp_rms.normalize(lp_now)
 
             imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
@@ -416,7 +406,9 @@ class Proposed(BaseIntrinsicModule, nn.Module):
             gates_now = torch.as_tensor(
                 self._current_gate_for_rids(rids), dtype=torch.float32, device=self.device
             )
-            r_mean = float((gates_now * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)).mean().item())
+            r_mean = float(
+                (gates_now * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)).mean().item()
+            )
 
         metrics = self.icm.update(obs, next_obs, actions, steps=steps)
         return {
