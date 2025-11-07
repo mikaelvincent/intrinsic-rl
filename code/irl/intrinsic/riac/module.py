@@ -1,7 +1,9 @@
-"""R-IAC intrinsic module (split: core logic & API).
+"""R-IAC intrinsic: region-wise learning progress in φ-space.
 
-This file contains the RIAC class and the simulate_lp_emas utility; diagnostics
-file I/O helpers live in `diagnostics.py`. Public API is preserved.
+Maintains long/short EMAs of forward error per region; LP = max(0, EMA_long - EMA_short).
+Returns LP normalized via a running RMS and scaled by α_LP.
+
+See: devspec/dev_spec_and_plan.md §5.3.5 (R‑IAC) and §5.7 (nets/losses).
 """
 
 from __future__ import annotations
@@ -24,12 +26,9 @@ from irl.utils.torchops import as_tensor, ensure_2d
 from . import diagnostics as _diag
 
 
-# ------------------------------ Small helpers ------------------------------
-
-
 @dataclass
 class _RegionStats:
-    """Per-region EMA container."""
+    """Per-region EMAs (long/short) and count."""
 
     ema_long: float = 0.0
     ema_short: float = 0.0
@@ -39,7 +38,7 @@ class _RegionStats:
 def simulate_lp_emas(
     errors: Iterable[float], beta_long: float = 0.995, beta_short: float = 0.90
 ) -> Tuple[list[float], list[float], list[float]]:
-    """Run long/short EMAs over a sequence of errors and return their trajectories."""
+    """Utility: trajectories of EMA_long, EMA_short, and LP for a stream of errors."""
     el: list[float] = []
     es: list[float] = []
     lp: list[float] = []
@@ -58,11 +57,8 @@ def simulate_lp_emas(
     return el, es, lp
 
 
-# ---------------------------------- RIAC ------------------------------------
-
-
 class RIAC(BaseIntrinsicModule, nn.Module):
-    """R‑IAC: region‑wise learning progress intrinsic (normalized via running RMS)."""
+    """R‑IAC: learning progress per region (normalized)."""
 
     def __init__(
         self,
@@ -80,7 +76,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("RIAC currently supports Box observation spaces (vector states).")
+            raise TypeError("RIAC supports Box observation spaces (vector states).")
         self.device = torch.device(device)
 
         # ICM backbone (shared encoder/forward)
@@ -101,10 +97,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         self.beta_short = float(ema_beta_short)
         self.alpha_lp = float(alpha_lp)
 
-        # Per-module running RMS over LP values (for normalization)
+        # Running RMS over LP values
         self._lp_rms = RunningRMS(beta=0.99, eps=1e-8)
-        # Signal to trainers that outputs are normalized already
-        self.outputs_normalized: bool = True
+        self.outputs_normalized: bool = True  # for trainer integration
 
         self.to(self.device)
 
@@ -139,7 +134,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         return per_dim.mean(dim=-1), phi_t  # [B], [B, D]
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        """Compute α_LP * normalize(LP(region(φ(s)))) for a single transition."""
+        """Single-sample LP (normalized) for region of φ(s)."""
         with torch.no_grad():
             s = as_tensor(tr.s, self.device)
             sp = as_tensor(tr.s_next, self.device)
@@ -163,7 +158,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized α_LP * normalize(LP(region(φ(s)))) for a batch (updates EMAs)."""
+        """Vectorized LP for a batch; updates per-region EMAs."""
         o = as_tensor(obs, self.device)
         op = as_tensor(next_obs, self.device)
         a = as_tensor(actions, self.device)
@@ -171,7 +166,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         err, phi_t = self._forward_error_per_sample(o, op, a)  # [B], [B,D]
 
         phi_np = phi_t.detach().cpu().numpy()
-        rids = self.store.bulk_insert(phi_np)  # np.ndarray [B]
+        rids = self.store.bulk_insert(phi_np)
         lp_vals: list[float] = []
         for i in range(err.shape[0]):
             lp_vals.append(self._update_region(int(rids[i]), float(err[i].item())))
@@ -186,7 +181,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     # ----------------------------- losses & update ----------------------------
 
     def loss(self, obs: Any, next_obs: Any, actions: Any) -> dict[str, Tensor]:
-        """Return ICM training loss + RIAC intrinsic mean (diagnostic only)."""
+        """ICM losses + current normalized LP mean (diagnostic only)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
             o = as_tensor(obs, self.device)
@@ -212,7 +207,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train encoder/heads via ICM; report ICM losses + current normalized LP mean."""
+        """Train encoder/heads via ICM; report losses + normalized LP mean."""
         with torch.no_grad():
             o = as_tensor(obs, self.device)
             op = as_tensor(next_obs, self.device)
@@ -241,9 +236,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
 
     @property
     def lp_rms(self) -> float:
-        """Current RMS used to normalize LP values (for logging/diagnostics)."""
+        """Current RMS used to normalize LP values."""
         return self._lp_rms.rms
 
     def export_diagnostics(self, out_dir: Path, step: int) -> None:
-        """Append region stats to `regions.jsonl` and gates to `gates.csv`."""
+        """Append region stats to regions.jsonl and gates.csv (gates=1 for RIAC)."""
         _diag.export_diagnostics(self.store, self._stats, out_dir=out_dir, step=int(step))
