@@ -1,15 +1,9 @@
-"""Running RMS normalization utility for intrinsic rewards.
+"""Running RMS normalizer for intrinsic rewards.
 
-This module provides a lightweight exponential moving average (EMA) of the
-squared values to estimate a running root-mean-square (RMS). It is intended to
-stabilize intrinsic reward scales across time and across intrinsic modules.
-
-Typical usage
--------------
->>> rms = RunningRMS(beta=0.99)
->>> rms.update(r_vec)                 # update from a batch of raw intrinsic values
->>> r_norm = rms.normalize(r_vec)     # divide by current RMS (with eps guard)
->>> current = rms.rms                 # scalar RMS value
+Tracks EMA of squared values and exposes:
+- update(x): incorporate batch values
+- normalize(x): divide by current RMS (sqrt(EMA[r^2]+eps))
+- state_dict/load_state_dict: minimal serialization
 """
 
 from __future__ import annotations
@@ -22,17 +16,7 @@ import numpy as np
 
 @dataclass
 class RunningRMS:
-    """Exponential running RMS: sqrt(EMA[r^2] + eps).
-
-    Parameters
-    ----------
-    beta : float
-        EMA coefficient in [0, 1). Larger -> slower updates. Default 0.99.
-    eps : float
-        Numerical stability term added under the square root.
-    init : float
-        Initial RMS value. Internally we initialize EMA of r^2 to `init**2`.
-    """
+    """Exponential running RMS: sqrt(EMA[r^2] + eps)."""
 
     beta: float = 0.99
     eps: float = 1e-8
@@ -45,10 +29,7 @@ class RunningRMS:
     # ---------------- API ----------------
 
     def update(self, x: Any) -> None:
-        """Update running EMA from a batch of values.
-
-        Accepts arraylike; empty inputs are ignored.
-        """
+        """Update running EMA from a batch of values (arraylike)."""
         arr = np.asarray(x)
         if arr.size == 0:
             return
@@ -58,14 +39,13 @@ class RunningRMS:
 
     @property
     def rms(self) -> float:
-        """Current RMS = sqrt(EMA[r^2] + eps)."""
+        """Current RMS."""
         return float(np.sqrt(self._r2_ema + float(self.eps)))
 
     def normalize(self, x: Any) -> np.ndarray:
-        """Return x / rms as a float32 numpy array (shape preserved)."""
+        """Return x / rms as float32 (shape preserved)."""
         arr = np.asarray(x, dtype=np.float32)
         denom = self.rms
-        # Avoid division by zero even if eps or init were misconfigured
         if not np.isfinite(denom) or denom <= 0.0:
             denom = 1.0
         return arr / denom
