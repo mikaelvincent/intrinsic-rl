@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+"""Image preprocessing utilities for RL pipelines.
+
+Provides a small, dependency-free set of helpers to:
+* Convert NHWC/NCHW to a canonical layout,
+* Optionally convert RGB/RGBA → grayscale,
+* Scale integer images from [0, 255] → [0, 1],
+* Apply simple mean/std normalization,
+* Return a torch.Tensor suitable for CNNs ([N, C, H, W], float32).
+
+These functions are used by image-based agents (e.g., CarRacing) and are
+kept separate from encoders to make preprocessing explicit and testable.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, Sequence, Tuple, Union
+
+import numpy as np
+import torch
+from torch import Tensor
+
+from irl.utils.torchops import as_tensor
+
+
+__all__ = [
+    "ImagePreprocessConfig",
+    "to_channels_first",
+    "rgb_to_grayscale",
+    "preprocess_image",
+]
+
+
+@dataclass(frozen=True)
+class ImagePreprocessConfig:
+    """Configuration for image preprocessing."""
+
+    grayscale: bool = True
+    scale_uint8: bool = True
+    normalize_mean: Optional[Union[float, Sequence[float]]] = None
+    normalize_std: Optional[Union[float, Sequence[float]]] = None
+    channels_first: bool = True  # output layout
+    # If provided, images will be resized/cropped upstream; this module does not resample.
+
+
+def to_channels_first(x: Union[np.ndarray, Tensor]) -> Tensor:
+    """Return tensor in CHW (or NCHW) order from HWC/NHWC/CHW/NCHW inputs."""
+    t = torch.as_tensor(x)
+    if t.dim() == 2:
+        # H, W -> 1, H, W
+        t = t.unsqueeze(0)
+    if t.dim() == 3:
+        # CHW or HWC
+        if t.shape[0] in (1, 3, 4):
+            return t  # CHW
+        return t.permute(2, 0, 1)  # HWC -> CHW
+    if t.dim() == 4:
+        # NCHW or NHWC
+        if t.shape[1] in (1, 3, 4):
+            return t  # NCHW
+        return t.permute(0, 3, 1, 2)  # NHWC -> NCHW
+    raise ValueError(f"Unsupported image tensor rank: {t.dim()}")
+
+
+def rgb_to_grayscale(x: Tensor) -> Tensor:
+    """Convert RGB(A) to grayscale using ITU-R BT.601 luma weights.
+
+    Accepts CHW or NCHW. If 4 channels are present, the alpha is ignored. Returns tensor with a single channel (C=1).
+    """
+    t = x
+    was_batched = t.dim() == 4
+    if t.dim() == 3:
+        t = t.unsqueeze(0)  # -> NCHW
+
+    if t.shape[1] == 4:
+        t = t[:, :3]  # drop alpha
+    if t.shape[1] != 3:
+        raise ValueError(f"Expected 3 (or 4) channels for RGB(A), got {t.shape[1]}")
+
+    # Weights: R=0.299, G=0.587, B=0.114
+    w = torch.tensor([0.299, 0.587, 0.114], dtype=t.dtype, device=t.device).view(1, 3, 1, 1)
+    g = (t * w).sum(dim=1, keepdim=True)  # [N, 1, H, W]
+
+    return g if was_batched else g.squeeze(0)
+
+
+def _maybe_scale_uint8(t: Tensor, enable: bool) -> Tensor:
+    if enable and t.dtype in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
+        return t.to(dtype=torch.float32) / 255.0
+    return t.to(dtype=torch.float32)
+
+
+def _apply_normalization(t: Tensor, mean: Optional[Union[float, Sequence[float]]], std: Optional[Union[float, Sequence[float]]]) -> Tensor:
+    if mean is None and std is None:
+        return t
+    # Broadcast-friendly: accept scalars or sequences
+    m = torch.as_tensor(mean if mean is not None else 0.0, dtype=t.dtype, device=t.device)
+    s = torch.as_tensor(std if std is not None else 1.0, dtype=t.dtype, device=t.device)
+    # Shape to [C, 1, 1] or [1, C, 1, 1] depending on rank
+    if t.dim() == 3:
+        # CHW
+        if m.dim() == 0:
+            m = m.view(1, 1, 1)
+            s = s.view(1, 1, 1)
+        else:
+            m = m.view(-1, 1, 1)
+            s = s.view(-1, 1, 1)
+    elif t.dim() == 4:
+        # NCHW
+        if m.dim() == 0:
+            m = m.view(1, 1, 1, 1)
+            s = s.view(1, 1, 1, 1)
+        else:
+            m = m.view(1, -1, 1, 1)
+            s = s.view(1, -1, 1, 1)
+    return (t - m) / (s + 1e-8)
+
+
+def preprocess_image(
+    x: Union[np.ndarray, Tensor],
+    cfg: Optional[ImagePreprocessConfig] = None,
+    *,
+    device: Union[str, torch.device] = "cpu",
+) -> Tensor:
+    """Preprocess an image/mini-batch into a float32 tensor ready for CNNs.
+
+    Steps:
+      1) Convert to torch.Tensor on `device`.
+      2) Reorder layout to channels-first (CHW/NCHW).
+      3) If `grayscale`, convert RGB(A) → 1-channel grayscale.
+      4) If `scale_uint8` and dtype is integer, scale to [0, 1].
+      5) Apply optional mean/std normalization.
+      6) Return tensor in CHW or NCHW (depending on input rank), float32.
+
+    Parameters
+    ----------
+    x:
+        Image or batch of images in HWC/NHWC/CHW/NCHW layouts; dtype uint8 or float.
+    cfg:
+        ImagePreprocessConfig; defaults are conservative (no mean/std shift).
+    device:
+        Target device for the output tensor.
+    """
+    cfg = cfg or ImagePreprocessConfig()
+
+    t = as_tensor(x, device=torch.device(device))
+    t = to_channels_first(t)  # -> CHW/NCHW
+
+    if cfg.grayscale:
+        # Only convert when we actually have RGB(A)
+        ch_idx = 1 if t.dim() == 4 else 0
+        if t.shape[ch_idx] in (3, 4):
+            t = rgb_to_grayscale(t)
+
+    t = _maybe_scale_uint8(t, cfg.scale_uint8)
+    t = _apply_normalization(t, cfg.normalize_mean, cfg.normalize_std)
+
+    if cfg.channels_first:
+        return t  # already CHW/NCHW
+    # Convert back to channels-last if requested
+    if t.dim() == 3:
+        return t.permute(1, 2, 0)  # CHW -> HWC
+    return t.permute(0, 2, 3, 1)  # NCHW -> NHWC
