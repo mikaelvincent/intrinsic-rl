@@ -23,18 +23,11 @@ def _is_car_racing(env_id: str) -> bool:
 
 @dataclass
 class EnvManager:
-    """Factory for building (vectorized) environments with consistent settings.
+    """Factory for (vectorized) Gymnasium envs with stable seeding & wrappers.
 
-    Args:
-        env_id: Gymnasium environment id (e.g., "MountainCar-v0", "CarRacing-v3").
-        num_envs: Number of parallel envs. If 1, returns a regular `gym.Env`, otherwise a `VectorEnv`.
-        seed: Base RNG seed. Each env gets `seed + rank`.
-        frame_skip: Repeat actions for `frame_skip` steps (>=1).
-        domain_randomization: If True, wrap env with DomainRandomizationWrapper.
-        discrete_actions: For CarRacing, if True, use a small Discrete action set wrapper.
-        render_mode: Forwarded to `gym.make`. Use "rgb_array" or "human" as supported by the env.
-        async_vector: If True and `num_envs>1`, use AsyncVectorEnv instead of SyncVectorEnv.
-        make_kwargs: Extra kwargs passed to `gym.make`.
+    Builds a single `gym.Env` or a vectorized env, wiring frame‑skip,
+    optional CarRacing discrete controls, and best‑effort domain randomization.
+    See devspec/dev_spec_and_plan.md §4.2/§5.2. Field types document usage.
     """
 
     env_id: str
