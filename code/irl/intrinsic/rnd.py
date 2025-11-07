@@ -1,23 +1,10 @@
-"""RND intrinsic module.
+"""Random Network Distillation (RND).
 
-Random Network Distillation (RND) computes intrinsic reward as the prediction error
-of a trainable "predictor" network trying to match the output of a fixed, randomly
-initialized "target" network on observations.
+Intrinsic is the MSE between a trainable predictor and a fixed random target
+on observations (prefers next_obs if provided). Optional running RMS can
+normalize outputs locally; by default the trainer handles global scaling.
 
-* Intrinsic reward per sample:  MSE(predictor(x), target(x))
-  - (optionally normalized online by a running RMS; see config)
-
-API (mirrors ICM for convenience)
----------------------------------
-- compute(tr) -> IntrinsicOutput
-- compute_batch(obs, next_obs=None, reduction="none") -> Tensor[[B] or [1]]
-- loss(obs) -> dict(total, intrinsic_mean)
-- update(obs, steps=1) -> dict(loss_total, intrinsic_mean)
-
-Notes
------
-* This sprint assumes **vector observations** (gym.spaces.Box).
-* Actions are not required by RND and therefore ignored here.
+See: devspec/dev_spec_and_plan.md §5.3.3.
 """
 
 from __future__ import annotations
@@ -36,32 +23,9 @@ from irl.models.networks import mlp  # lightweight MLP builder (+FlattenObs)
 from irl.utils.torchops import as_tensor, ensure_2d
 
 
-# ------------------------------ Config ----------------------------------
-
-
 @dataclass
 class RNDConfig:
-    """Lightweight configuration for RND (kept local to the module).
-
-    Attributes
-    ----------
-    feature_dim : int
-        Output dimensionality of target/predictor MLPs.
-    hidden : Tuple[int, int]
-        Hidden sizes for the MLPs.
-    lr : float
-        Learning rate for the predictor's Adam optimizer.
-    grad_clip : float
-        Global gradient-norm clipping value.
-    rms_beta : float
-        Exponential moving-average coefficient for running RMS normalization.
-    rms_eps : float
-        Epsilon for RMS denominator numerical stability.
-    normalize_intrinsic : bool
-        If True, returned intrinsic is divided by running RMS.
-        NOTE: Default is False because the trainer now provides a global
-        RMS normalizer for intrinsic rewards. You can re-enable locally if needed.
-    """
+    """Lightweight configuration for RND."""
 
     feature_dim: int = 128
     hidden: Tuple[int, int] = (256, 256)
@@ -69,10 +33,7 @@ class RNDConfig:
     grad_clip: float = 5.0
     rms_beta: float = 0.99
     rms_eps: float = 1e-8
-    normalize_intrinsic: bool = False  # global normalizer handles default scaling
-
-
-# ------------------------------ Module ----------------------------------
+    normalize_intrinsic: bool = False  # trainer supplies global normalizer by default
 
 
 class RND(BaseIntrinsicModule, nn.Module):
@@ -86,7 +47,7 @@ class RND(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("RND currently supports Box observation spaces (vector states).")
+            raise TypeError("RND supports Box observation spaces (vector states).")
 
         self.device = torch.device(device)
         self.cfg = cfg or RNDConfig()
@@ -98,12 +59,11 @@ class RND(BaseIntrinsicModule, nn.Module):
 
         for p in self.target.parameters():
             p.requires_grad = False
-        self.target.eval()  # just to be explicit
+        self.target.eval()
 
         self._opt = torch.optim.Adam(self.predictor.parameters(), lr=float(self.cfg.lr))
 
-        # Running RMS over *unnormalized* per-sample intrinsic values
-        # We track exponential moving average of r^2 to estimate RMS.
+        # Running RMS over unnormalized intrinsic values
         self.register_buffer("_r2_ema", torch.tensor(1.0, dtype=torch.float32))  # start non-zero
 
         self.to(self.device)
@@ -118,7 +78,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         return p, t
 
     def _intrinsic_raw_per_sample(self, x: Tensor) -> Tensor:
-        """Per-sample (vector reduced) MSE, shape [B]."""
+        """Per-sample MSE, shape [B]."""
         p, t = self._pred_and_targ(x)
         return F.mse_loss(p, t, reduction="none").mean(dim=-1)
 
@@ -131,7 +91,7 @@ class RND(BaseIntrinsicModule, nn.Module):
     # Public API
 
     def compute(self, tr) -> IntrinsicOutput:
-        """Compute intrinsic for a single transition (no gradients)."""
+        """Compute intrinsic for a single transition (prefers s')."""
         with torch.no_grad():
             x = tr.s_next if hasattr(tr, "s_next") and tr.s_next is not None else tr.s
             xt = as_tensor(x, self.device)
@@ -142,30 +102,23 @@ class RND(BaseIntrinsicModule, nn.Module):
     def compute_batch(
         self, obs: Any, next_obs: Any | None = None, reduction: str = "none"
     ) -> Tensor:
-        """Compute intrinsic for a batch of observations.
-
-        If `next_obs` is provided, it is preferred (common RND practice),
-        otherwise `obs` is used.
-        """
+        """Batch intrinsic; if next_obs is provided, it is preferred."""
         with torch.no_grad():
             x_src = next_obs if next_obs is not None else obs
             x = as_tensor(x_src, self.device)
             r = self._intrinsic_raw_per_sample(x)
             r = self._normalize_intrinsic(r)
-            if reduction == "mean":
-                return r.mean()
-            return r
+            return r.mean() if reduction == "mean" else r
 
     # ----------------------------- Training ----------------------------
 
     def loss(self, obs: Any) -> Mapping[str, Tensor]:
-        """Compute predictor-vs-target MSE loss (no optimizer step)."""
+        """Predictor-vs-target MSE and running RMS diagnostic."""
         o = as_tensor(obs, self.device)
         p, t = self._pred_and_targ(o)
         per = F.mse_loss(p, t, reduction="none").mean(dim=-1)  # [B]
         total = per.mean()
 
-        # Update running RMS (EMA of r^2) for normalization diagnostics (no grad)
         with torch.no_grad():
             r2_batch_mean = (per**2).mean()
             self._r2_ema.mul_(self.cfg.rms_beta).add_((1.0 - self.cfg.rms_beta) * r2_batch_mean)
