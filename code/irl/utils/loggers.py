@@ -1,11 +1,6 @@
-"""TensorBoard + CSV scalar logging with minimal policy.
+"""CSV/TensorBoard scalar logging with simple cadence.
 
-- CSV: write every `logging.csv_interval` steps.
-- TB: log on each call (if TensorBoard is available).
-Paths:
-- CSV: <run_dir>/logs/scalars.csv
-- TB:  <run_dir>/tb/
-See devspec/dev_spec_and_plan.md §6 (Data Design).
+CSV writes on a configured interval; TB (if available) logs each call. See devspec/dev_spec_and_plan.md §6.
 """
 
 from __future__ import annotations
