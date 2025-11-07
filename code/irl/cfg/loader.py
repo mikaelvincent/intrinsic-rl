@@ -1,4 +1,7 @@
-"""YAML → dataclass loader and validators for IRL configs."""
+"""YAML → dataclass loader and validators for IRL configs.
+
+Concise loader/validator utilities. See devspec/dev_spec_and_plan.md §6.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +44,7 @@ class ConfigError(ValueError):
     """Raised when configuration parsing or validation fails."""
 
 
-# For robust Union checks (supports PEP 604 `X | Y`)
+# Support both typing.Union and PEP 604 unions (X | Y)
 try:  # Python 3.10+
     from types import UnionType as _UnionType  # type: ignore
 except Exception:  # pragma: no cover - older Python
@@ -54,16 +57,9 @@ _UNION_TYPES = (Union,) + ((_UnionType,) if _UnionType is not None else ())
 
 
 def load_config(path: Union[str, "Path"]) -> Config:
-    """Load a configuration from a YAML file into a typed dataclass.
+    """Load and validate a `Config` from a YAML file.
 
-    Args:
-        path: Path to YAML file.
-
-    Returns:
-        Config: fully constructed and validated configuration object.
-
-    Raises:
-        ConfigError: On YAML syntax errors or schema violations.
+    See devspec §6 for schema & invariants. Raises ConfigError on read/parse/validation issues.
     """
     p = Path(path)
     if not p.exists():
@@ -79,7 +75,7 @@ def load_config(path: Union[str, "Path"]) -> Config:
 
 
 def loads_config(yaml_text: str) -> Config:
-    """Load configuration from YAML text."""
+    """Load and validate a `Config` from YAML text (see devspec §6)."""
     try:
         data = yaml.safe_load(yaml_text) or {}
     except Exception as exc:
@@ -94,11 +90,7 @@ def loads_config(yaml_text: str) -> Config:
 
 
 def validate_config(cfg: Config) -> None:
-    """Validate common invariants for PPO training & environment settings.
-
-    Raises:
-        ConfigError: if a validation rule is violated.
-    """
+    """Check common PPO/env invariants (ranges, divisibility, gentle hints)."""
     # Basic ranges
     if cfg.env.vec_envs < 1:
         raise ConfigError("env.vec_envs must be >= 1")
@@ -121,41 +113,32 @@ def validate_config(cfg: Config) -> None:
     if cfg.intrinsic.r_clip <= 0.0:
         raise ConfigError("intrinsic.r_clip must be > 0")
 
-    # NEW: RIDE/Proposed knob sanity checks (applies generally; harmless for other methods)
+    # RIDE/Proposed knobs (sanity only; harmless if unused)
     if cfg.intrinsic.bin_size <= 0.0:
         raise ConfigError("intrinsic.bin_size must be > 0")
     if cfg.intrinsic.alpha_impact <= 0.0:
         raise ConfigError("intrinsic.alpha_impact must be > 0")
 
-    # Batch divisibility rule (supporting both 'total steps' and 'per-env steps' interpretations)
-    # Accept if either interpretation yields an integer minibatch size.
-    total_transitions_variant_a = cfg.ppo.steps_per_update  # interpreted as global total per update
-    total_transitions_variant_b = (
-        cfg.ppo.steps_per_update * cfg.env.vec_envs
-    )  # if steps are per-env
-
-    if (total_transitions_variant_a % cfg.ppo.minibatches != 0) and (
-        total_transitions_variant_b % cfg.ppo.minibatches != 0
-    ):
+    # Minibatch divisibility: accept either interpretation of steps_per_update
+    total_a = cfg.ppo.steps_per_update
+    total_b = cfg.ppo.steps_per_update * cfg.env.vec_envs
+    if (total_a % cfg.ppo.minibatches != 0) and (total_b % cfg.ppo.minibatches != 0):
         raise ConfigError(
-            "Minibatch divisibility violated: either `ppo.steps_per_update` (interpreted as "
-            "global transitions per update) or `ppo.steps_per_update * env.vec_envs` "
-            "(interpreted as per-env steps × #envs) must be divisible by `ppo.minibatches`."
+            "Minibatch divisibility violated: either `ppo.steps_per_update` or "
+            "`ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches`."
         )
 
-    # Method-specific gentle hints (no hard failure)
+    # Method-specific hints (soft checks)
     if cfg.method == "vanilla":
-        # Vanilla PPO ignores intrinsic, but keeping section is harmless.
         pass
 
-    # CarRacing default: discrete actions encouraged by spec
     if cfg.env.id.startswith("CarRacing") and not cfg.env.discrete_actions:
-        # No error — just a soft check placeholder. Real policy head checks happen at runtime.
+        # Soft guidance; real policy head checks happen at runtime.
         pass
 
 
 def to_dict(cfg: Config) -> dict:
-    """Convert Config dataclass (recursively) into a plain dict."""
+    """Convert Config dataclass recursively to a plain dict."""
     return asdict(cfg)
 
 
@@ -163,13 +146,7 @@ def to_dict(cfg: Config) -> dict:
 
 
 def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
-    """Recursively coerce a Mapping into the dataclass `cls`.
-
-    Important:
-        Works correctly even when dataclasses were defined with
-        `from __future__ import annotations` (PEP 563), by resolving field types
-        via `typing.get_type_hints`.
-    """
+    """Recursively coerce a Mapping into the dataclass `cls` (strict)."""
     if not is_dataclass(cls):
         raise ConfigError(f"Internal error: target {cls!r} is not a dataclass")
 
@@ -180,7 +157,7 @@ def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
         pretty = ", ".join(sorted(unknown))
         raise ConfigError(f"Unknown field(s) at {path}: {pretty}")
 
-    # Resolve real (non-deferred) field types
+    # Resolve real field types (robust even with postponed annotations)
     mod = sys.modules.get(cls.__module__)
     gns = mod.__dict__ if mod is not None else None
     try:
@@ -195,7 +172,6 @@ def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
         if key in data:
             kwargs[key] = _coerce_value_to_type(data[key], target_type, f"{path}.{key}")
         else:
-            # Allow dataclass defaults / factories to apply; error only if neither exists.
             if f.default is not MISSING or f.default_factory is not MISSING:  # type: ignore[attr-defined]
                 continue
             raise ConfigError(f"Missing required field: {path}.{key}")
@@ -207,7 +183,7 @@ def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
 
 
 def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
-    """Best-effort coercion of YAML-loaded values into annotated types."""
+    """Best-effort coercion of YAML values into annotated types (strict where practical)."""
     origin = get_origin(typ)
     args = get_args(typ)
 
@@ -217,10 +193,9 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
             raise ConfigError(f"Expected mapping at {path}, got {type(value).__name__}")
         return _from_mapping(typ, value, path)
 
-    # Optional / Union (supports typing.Union and PEP 604 unions)
+    # Optional/Union
     if origin in _UNION_TYPES:
-        # Optional[T] case
-        if type(None) in args:
+        if type(None) in args:  # Optional[T]
             if value is None:
                 return None
             non_none = [a for a in args if a is not type(None)]
@@ -248,20 +223,20 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
             )
         return value
 
-    # Sequences (Lists/Tuples) — accept generic sequences but not strings
+    # Sequences (not strings)
     if origin in (list, tuple, ABCSequence):
         elem_type = args[0] if args else Any
         if isinstance(value, str) or not isinstance(value, Sequence):
             raise ConfigError(f"Expected sequence at {path}, got {type(value).__name__}")
         return [_coerce_value_to_type(v, elem_type, f"{path}[{i}]") for i, v in enumerate(value)]
 
-    # Mappings (Dict-like) — shallow accept; keys/values left as-is
+    # Mappings
     if origin in (dict, ABCMapping):
         if not isinstance(value, Mapping):
             raise ConfigError(f"Expected mapping at {path}, got {type(value).__name__}")
         return dict(value)
 
-    # Primitive coercions
+    # Primitives
     if typ is bool:
         if isinstance(value, bool):
             return value
@@ -275,7 +250,6 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
 
     if typ is int:
         if isinstance(value, bool):
-            # Prevent bool subclasses from slipping through as ints
             raise ConfigError(f"Expected int at {path}, got bool")
         if isinstance(value, int):
             return value
@@ -303,11 +277,12 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
             return str(value) if not isinstance(value, str) else value
         return str(value)
 
-    # Any / unknown typing — accept as-is
+    # Fallback
     return value
 
 
 def is_dataclass_type(t: Any) -> bool:
+    """Return True if `t` is a dataclass type."""
     try:
         return is_dataclass(t)  # type: ignore[arg-type]
     except Exception:  # pragma: no cover - defensive
