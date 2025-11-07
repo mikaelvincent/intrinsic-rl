@@ -1,11 +1,7 @@
-"""Policy/Value networks for PPO (MLP-based).
+"""MLP-based Policy/Value networks for PPO.
 
-Notes:
-- Observations are flattened before feeding into MLPs.
-- Supports Discrete and Box action spaces.
-- Continuous actions use diagonal Gaussian with state-independent log_std.
-
-This module now imports the shared MLP builder from `irl.models.layers`.
+Flat Box observations; Discrete or Box actions. Continuous uses diagonal Gaussian with state‑independent log_std. See
+devspec/dev_spec_and_plan.md §5.1.
 """
 
 from __future__ import annotations
@@ -90,7 +86,8 @@ class PolicyNetwork(nn.Module):
         # Expect 2D [batch, obs_dim]; callers should reshape if needed.
         if x.dim() > 2:
             x = x.view(-1, self.obs_dim)
-        feats = self.backbone(x)
+        feats = self.backbone(feats=x) if "feats" in self.backbone.forward.__code__.co_varnames else self.backbone(x)  # type: ignore[attr-defined]
+        # Some tools may inspect signature; the fallback preserves behavior.
         if self.is_discrete:
             logits = self.policy_head(feats)
             return CategoricalDist(logits=logits)
