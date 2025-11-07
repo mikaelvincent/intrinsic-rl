@@ -1,8 +1,4 @@
-"""Action distribution helpers for PPO (minimal, torch-based).
-
-This module provides lightweight wrappers over torch.distributions to unify the interface expected by our PPO
-implementation for both discrete and continuous action spaces.
-"""
+"""Torch-based action distribution wrappers used by PPO."""
 
 from __future__ import annotations
 
@@ -36,11 +32,9 @@ class CategoricalDist:
 
 @dataclass
 class DiagGaussianDist:
-    """Diagonal Gaussian distribution for continuous actions.
+    """Diagonal Gaussian for continuous actions (state‑indep.
 
-    Args:
-        mean: (B, A) mean vector
-        log_std: (A,) or (B, A) log standard deviation(s)
+    log_std).
     """
 
     mean: Tensor
