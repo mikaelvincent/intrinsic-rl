@@ -1,32 +1,12 @@
-"""KD‑tree region store with split logic.
+"""KD-tree region store for φ-space partitioning.
 
-This module implements a *balanced-ish* binary KD‑tree over an embedding space φ∈R^D.
-It is designed for R‑IAC / Proposed intrinsic methods to maintain **regions** of the
-latent space with a simple capacity‑based split policy:
+Balanced-ish binary KD-tree over φ∈R^D with capacity-based splits:
+- Each leaf holds up to `capacity` samples; on overflow (and if depth < depth_max),
+  split on the max-variance dimension at the median value.
+- Region IDs are assigned to leaves; on split, left child inherits the parent's ID
+  and right child gets a new ID for early ID stability.
 
-* Each **leaf** holds up to `capacity` samples; when **capacity is reached** (`count >= capacity`)
-  and `depth < depth_max`, it **splits** on the dimension with the largest sample variance,
-  at the **median** of that dimension. Points with value `<= median` go left; `> median` go right.
-* If no split produces non‑empty children (e.g., all points identical), the node
-  remains a leaf (no further splitting), and it may continue to accumulate samples.
-
-Design notes
-------------
-* **Region IDs** are assigned **only to leaves**. When a leaf splits, the **left child
-  inherits** the parent's region_id; the right child receives a **new** region_id.
-  This ensures existing region_id references remain valid for points that remain
-  on the left side of the split and stabilizes IDs earlier.
-* Leaf nodes keep a small list of their raw samples (NumPy arrays) to support split
-  statistics. With default `capacity=200`, memory remains modest and well‑bounded.
-* Bounding boxes (lo/hi) are maintained per leaf for diagnostics/visualization.
-
-Typical usage
--------------
->>> store = KDTreeRegionStore(dim=128, capacity=200, depth_max=12)
->>> rid = store.insert(phi)                 # phi: (128,) numpy array
->>> leaf = store.leaf_by_id[rid]
->>> store.num_regions()
-42
+See: devspec/dev_spec_and_plan.md §5.6.
 """
 
 from __future__ import annotations
@@ -42,10 +22,7 @@ Array = np.ndarray
 
 @dataclass
 class RegionNode:
-    """A node in the KD‑tree.
-
-    Leaves hold samples; internal nodes hold split metadata.
-    """
+    """KD-tree node (leaf stores samples; internal stores split metadata)."""
 
     depth: int
     dim: int
@@ -89,12 +66,12 @@ class RegionNode:
     # ------------------- split helpers -------------------
 
     def _split_candidates(self) -> List[int]:
-        """Return dimensions sorted by descending sample variance."""
+        """Dimensions sorted by descending sample variance."""
         pts = self.points()
         if pts.shape[0] == 0:
             return []
-        var = pts.var(axis=0)  # population variance
-        order = np.argsort(var)[::-1]  # largest variance first
+        var = pts.var(axis=0)
+        order = np.argsort(var)[::-1]
         return [int(d) for d in order]
 
     def _median_and_masks(self, pts: Array, d: int) -> Tuple[float, Array, Array]:
@@ -146,16 +123,11 @@ class KDTreeRegionStore:
     # ------------------- basic API -------------------
 
     def insert(self, p: Array) -> int:
-        """Insert a single point; return the (leaf) region_id it belongs to **after** any split.
-
-        We attempt a split as soon as the leaf reaches `capacity` (>=), which improves the
-        stability of returned region IDs under future insertions.
-        """
+        """Insert a single point; return region_id it belongs to **after** any split."""
         leaf = self.root.route(p)
         leaf.add_point(p)
         if leaf.count >= self.capacity and leaf.depth < self.depth_max:
             self._split_leaf(leaf)
-        # Route again after potential split to return final region id
         final_leaf = self.root.route(p)
         assert final_leaf.region_id is not None
         return int(final_leaf.region_id)
@@ -199,14 +171,12 @@ class KDTreeRegionStore:
     # ------------------- internal: splitting -------------------
 
     def _split_leaf(self, leaf: RegionNode) -> None:
-        """Split a leaf node into two children based on median along a high‑variance dim."""
+        """Split a leaf on max-variance dim at median; ensure both children non-empty."""
         assert leaf.is_leaf
         pts = leaf.points()
-        # Defensive: if not enough points or all identical, skip
         if pts.shape[0] <= 1:
             return
 
-        # Try dimensions by decreasing variance and choose the first that yields non‑empty children
         split_dim: Optional[int] = None
         split_val: Optional[float] = None
         left_mask = right_mask = None  # type: ignore[assignment]
@@ -217,44 +187,40 @@ class KDTreeRegionStore:
                 left_mask, right_mask = lmask, rmask
                 break
 
-        # If no valid split exists, keep as a leaf (likely all points identical)
         if split_dim is None or split_val is None or left_mask is None or right_mask is None:
             return
 
-        # Create children
+        # Children (left inherits parent region_id; right gets a new one)
         left = RegionNode(
             depth=leaf.depth + 1,
             dim=leaf.dim,
             capacity=leaf.capacity,
-            region_id=leaf.region_id,  # inherit parent's id
+            region_id=leaf.region_id,
         )
         right = RegionNode(
             depth=leaf.depth + 1,
             dim=leaf.dim,
             capacity=leaf.capacity,
-            region_id=self._next_region_id,  # allocate new id
+            region_id=self._next_region_id,
         )
         self._next_region_id += 1
 
-        # Distribute points
         for x in pts[left_mask]:
             left.add_point(x)
         for x in pts[right_mask]:
             right.add_point(x)
 
-        # Update tree topology
+        # Update topology and registry
         leaf.is_leaf = False
         leaf.left = left
         leaf.right = right
         leaf.split_dim = split_dim
         leaf.split_val = float(split_val)
-        # Clear leaf payloads/stats (internal nodes don't store samples)
         leaf._points.clear()
         leaf.count = 0
         leaf.bbox_lo = None
         leaf.bbox_hi = None
 
-        # Update leaves registry: parent id now maps to left; add right
         assert left.region_id is not None and right.region_id is not None
         self.leaf_by_id[left.region_id] = left
         self.leaf_by_id[right.region_id] = right
