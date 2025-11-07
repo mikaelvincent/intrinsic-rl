@@ -1,28 +1,15 @@
-"""Checkpoint manager with safe, atomic-ish writes.
+"""Checkpoint manager with atomic writes and retention.
 
-Conventions
------------
-* Directory layout inside a run directory:
-    <run_dir>/
-      checkpoints/
-        ckpt_step_<N>.pt
-        ckpt_latest.pt   # copy/replace to the last saved checkpoint
+Layout
+------
+<run_dir>/checkpoints/
+  - ckpt_step_<N>.pt
+  - ckpt_latest.pt  (copy of the last saved)
 
-* Payload is a plain dict; recommended keys (not enforced):
-    {
-      "step": int,
-      "policy": policy.state_dict(),
-      "value": value.state_dict(),
-      "optim": {
-          "policy": pol_opt.state_dict(),
-          "value": val_opt.state_dict(),
-      },
-      "cfg": to_dict(cfg),
-      "rng": {...},  # optional python/torch/numpy rng states
-      "meta": {...}, # optional user metadata
-    }
+Writes go to a temporary file and are atomically replaced to mitigate partial
+writes. A bounded number of step checkpoints are kept (oldest pruned).
 
-* By default keeps the latest K checkpoints (oldest are pruned).
+See: devspec/dev_spec_and_plan.md §6.1 (artifacts) and §9 (reliability).
 """
 
 from __future__ import annotations
@@ -45,6 +32,7 @@ def _atomic_replace(src: Path, dst: Path) -> None:
 
 
 def _safe_torch_save(obj: Any, path: Path) -> None:
+    """Write via tmp file then replace to reduce corruption risk."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(obj, tmp)
@@ -52,12 +40,7 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
 
 
 def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Load a checkpoint payload across torch versions.
-
-    PyTorch 2.6+ defaults to weights_only=True which restricts pickle content. Our checkpoints intentionally store
-    general Python objects (e.g., numpy arrays), so we request weights_only=False. Older torch versions don't support
-    this kwarg.
-    """
+    """Load payload across torch versions (opt out of weights_only)."""
     try:
         # torch >= 2.6
         return torch.load(path, map_location=map_location, weights_only=False)
@@ -68,6 +51,8 @@ def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> 
 
 @dataclass
 class CheckpointManager:
+    """Manage periodic saves, pruning, and 'latest' symlink-equivalent."""
+
     run_dir: Path
     interval_steps: int
     max_to_keep: Optional[int] = 5
@@ -148,5 +133,5 @@ class CheckpointManager:
 
 
 def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Convenience free function."""
+    """Convenience free function for direct loads."""
     return _torch_load_compat(path, map_location=map_location)
