@@ -1,14 +1,7 @@
-"""Factory and thin helpers for intrinsic modules.
+"""Factory/helpers for intrinsic modules (ICM, RND, RIDE, RIAC, Proposed).
 
-This module provides a small, explicit switchboard for constructing intrinsic
-reward modules and interacting with them in a unified way from the training loop.
-
-Supported methods (Sprint 1+2+3+4 Step 2):
-- "icm" : Intrinsic Curiosity Module (requires obs + next_obs + actions)
-- "rnd" : Random Network Distillation (prefers next_obs; actions unused)
-- "ride": Impact-only RIDE; reuses ICM encoder; episodic binning supported
-- "riac": Region-wise Learning Progress using ICM encoder/forward
-- "proposed": α_impact·impact + α_LP·LP with region gating (Step 2)
+Unified construction plus compute/update helpers used by the trainer. See devspec/dev_spec_and_plan.md §5 for method
+details.
 """
 
 from __future__ import annotations
@@ -39,36 +32,7 @@ def create_intrinsic_module(
     device: str | torch.device = "cpu",
     **kwargs: Any,
 ):
-    """Instantiate the intrinsic module for the given method.
-
-    Args:
-        method: one of {"icm", "rnd", "ride", "riac", "proposed"}.
-        obs_space: Gymnasium observation space.
-        act_space: Gymnasium action space (required for ICM/RIDE/RIAC/Proposed).
-        device: torch device (string or torch.device).
-        **kwargs: Optional method-specific settings.
-            For "ride":
-              - bin_size: float
-              - alpha_impact: float
-            For "riac" / "proposed":
-              - alpha_lp: float
-              - alpha_impact (proposed only): float
-              - region_capacity: int
-              - depth_max: int
-              - ema_beta_long: float
-              - ema_beta_short: float
-            For "proposed" (gating; NEW):
-              - gate_tau_lp_mult: float
-              - gate_tau_s: float
-              - gate_hysteresis_up_mult: float
-              - gate_min_consec_to_gate: int
-
-    Returns:
-        A module instance.
-
-    Raises:
-        ValueError: if the method is unsupported or required arguments are missing.
-    """
+    """Instantiate the intrinsic module for the given method."""
     m = str(method).lower()
     if m == "icm":
         if act_space is None:
@@ -124,10 +88,7 @@ def compute_intrinsic_batch(
     next_obs: Any | None,
     actions: Any | None = None,
 ):
-    """Compute *unscaled* intrinsic rewards for a batch.
-
-    Returns a 1-D torch.Tensor of shape [N] (where N is the batch size).
-    """
+    """Compute unscaled intrinsic rewards for a batch (returns [N])."""
     m = str(method).lower()
     if m == "icm":
         if actions is None or next_obs is None:
