@@ -1,7 +1,4 @@
-"""Intrinsic RL research codebase (skeleton).
-
-This package skeleton is created in Sprint 0 — Step 1. Subpackages are empty scaffolds to be filled in subsequent steps.
-"""
+"""Intrinsic RL research codebase (skeleton)."""
 
 from ._version import __version__
 
