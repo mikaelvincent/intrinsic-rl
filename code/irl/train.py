@@ -1,49 +1,8 @@
-"""Training entry point (minimal PPO CLI via Typer).
+"""PPO training CLI with optional intrinsic rewards.
 
-This implements a *small* but functional training loop for Vanilla PPO on vector
-Gymnasium environments (default: MountainCar-v0). It now supports plugging in
-Sprint‑1 intrinsic modules (`icm`, `rnd`) via a tiny factory. Intrinsic rewards
-are computed on collected batches and added to extrinsic rewards before GAE/PPO.
-
-Usage examples
---------------
-# From a YAML config (recommended):
-python -m irl.train --config configs/mountaincar_vanilla.yaml --total-steps 10000
-
-# With defaults (runs MountainCar-v0 vanilla for 10k steps on CPU):
-python -m irl.train --total-steps 10000
-
-Notes
------
-* We rely on `irl.algo.advantage.compute_gae` and `irl.algo.ppo.ppo_update`.
-* Vector envs are created via `irl.envs.EnvManager` with RecordEpisodeStatistics.
-* Logging is handled by MetricLogger (CSV every `csv_interval`; TB if enabled).
-* A checkpoint is saved at the end of training and at configured intervals.
-* If `cfg.method` is "icm" or "rnd" and `intrinsic.eta > 0`, intrinsic rewards
-  are computed and added to extrinsic rewards prior to advantage estimation.
-* Intrinsic rewards are globally normalized online by a running RMS (EMA)
-  to stabilize scales across modules.
-
-Sprint‑2 addition
------------------
-* For method `"ride"`, intrinsic rewards are computed **per step** using
-  `RIDE.compute_impact_binned(...)` with episodic binning & counts (§5.5).
-
-Sprint‑3 update
----------------
-* For modules that already **return normalized** intrinsic (e.g., RIAC after
-  Sprint 3 — Step 3), we **skip** the global RMS normalization to avoid double
-  normalization. Such modules expose `outputs_normalized=True` and (optionally)
-  `lp_rms` for logging.
-
-Sprint‑3 — Step 4 (this change)
--------------------------------
-* When method is `"riac"`, export diagnostics at the CSV logging cadence:
-  `diagnostics/regions.jsonl` (JSONL) and `diagnostics/gates.csv` (CSV).
-
-Sprint‑4 — Step 3 (this change)
--------------------------------
-* Log **gate_rate** for the Proposed method (fraction of regions gated-off).
+Supports vanilla PPO and pluggable intrinsic modules (icm, rnd, ride, riac, proposed), vectorized Gymnasium envs,
+running observation normalization, logging (CSV/TB), and checkpointing. For full methodology and rationale, see
+devspec/dev_spec_and_plan.md (§5 algorithms, §6 logging/artifacts, §7 testing).
 """
 
 from __future__ import annotations
@@ -66,7 +25,7 @@ from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.checkpoint import CheckpointManager
 from irl.utils.loggers import MetricLogger
 
-# Intrinsic factory & helpers (Sprint 1)
+# Intrinsic factory & helpers
 from irl.intrinsic import (  # type: ignore
     is_intrinsic_method,
     create_intrinsic_module,
@@ -119,7 +78,7 @@ class RunningObsNorm:
         self.var = np.ones((shape,), dtype=np.float64)
 
     def update(self, x: np.ndarray) -> None:
-        """x: [B, obs_dim] batch."""
+        """Update stats from a batch `x: [B, obs_dim]`."""
         x = np.asarray(x, dtype=np.float64)
         if x.ndim == 1:
             x = x[None, :]
@@ -144,8 +103,8 @@ class RunningObsNorm:
         m_b = batch_var * b
         new_var = (m_a + m_b + (delta**2) * (self.count * b / tot)) / tot
 
-        self.mean = np.maximum(new_mean, -1e12)  # clamp extremely for safety (theoretical)
-        self.var = np.maximum(new_var, 1e-12)  # numeric safety
+        self.mean = np.maximum(new_mean, -1e12)
+        self.var = np.maximum(new_var, 1e-12)
         self.count = tot
 
     def normalize(self, x: np.ndarray) -> np.ndarray:
@@ -191,7 +150,7 @@ def cli_train(
         help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
     ),
 ) -> None:
-    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND/RIDE/RIAC)."""
+    """Run a minimal PPO training loop with optional intrinsic rewards (ICM/RND/RIDE/RIAC/Proposed)."""
     # --- Load or synthesize config ---
     if config is not None:
         cfg = load_config(str(config))
@@ -237,9 +196,6 @@ def cli_train(
     intrinsic_module = None
     if is_intrinsic_method(method_l):
         try:
-            # For RIDE, plumb bin_size and alpha_impact from config.
-            # For RIAC, also pass LP/regionization knobs (others ignore them).
-            # For Proposed (NEW), pass gating thresholds from cfg.intrinsic.gate.
             intrinsic_module = create_intrinsic_module(
                 method_l,
                 obs_space,
@@ -496,18 +452,17 @@ def cli_train(
                     except Exception:
                         pass
 
-            # --- NEW: Proposed-specific gate metric ---
+            # --- Proposed-specific gate metric ---
             try:
-                if intrinsic_module is not None and method_l == "proposed" and hasattr(
-                    intrinsic_module, "gate_rate"
+                if (
+                    intrinsic_module is not None
+                    and method_l == "proposed"
+                    and hasattr(intrinsic_module, "gate_rate")
                 ):
-                    # gate_rate is fraction of regions currently gated-off
                     gr = float(getattr(intrinsic_module, "gate_rate"))
                     log_payload["gate_rate"] = gr
-                    # Also provide a percentage for dashboards (optional)
                     log_payload["gate_rate_pct"] = 100.0 * gr
             except Exception:
-                # Never let logging errors break the training loop
                 pass
 
             ml.log(step=int(global_step), **log_payload)
@@ -523,7 +478,6 @@ def cli_train(
                     diag_dir = run_dir / "diagnostics"
                     intrinsic_module.export_diagnostics(diag_dir, step=int(global_step))
             except Exception:
-                # Diagnostics must never break training; ignore any I/O issues.
                 pass
 
             # --- Checkpoint cadence ---
