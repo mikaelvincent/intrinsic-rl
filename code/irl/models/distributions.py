@@ -32,10 +32,7 @@ class CategoricalDist:
 
 @dataclass
 class DiagGaussianDist:
-    """Diagonal Gaussian for continuous actions (state‑indep.
-
-    log_std).
-    """
+    """Diagonal Gaussian for continuous actions (state‑independent log_std)."""
 
     mean: Tensor
     log_std: Tensor
