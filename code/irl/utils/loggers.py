@@ -1,17 +1,11 @@
-"""Lightweight experiment logging utilities (TensorBoard + CSV).
+"""TensorBoard + CSV scalar logging with minimal policy.
 
-Design goals
-------------
-* Zero friction: single MetricLogger orchestrates both TB and CSV.
-* Stable paths: `run_dir/logs/scalars.csv`, `run_dir/tb/` (if TB enabled).
-* Minimal policy: write to CSV every `logging.csv_interval` steps; TB each call.
-* Atomic-ish writes: flush after each CSV append; create dirs if missing.
-
-Notes
------
-* CSV column set is inferred on the first write and kept stable afterwards.
-  For dynamic metric sets across time, prefer one MetricLogger per phase or
-  keep keys stable (recommended).
+- CSV: write every `logging.csv_interval` steps.
+- TB: log on each call (if TensorBoard is available).
+Paths:
+- CSV: <run_dir>/logs/scalars.csv
+- TB:  <run_dir>/tb/
+See devspec/dev_spec_and_plan.md §6 (Data Design).
 """
 
 from __future__ import annotations
@@ -64,13 +58,7 @@ class TBLogger:
 
 
 class CSVLogger:
-    """Append-only CSV logger with a stable header.
-
-    Parameters
-    ----------
-    path : Path
-        Output CSV file path (`.../logs/scalars.csv`).
-    """
+    """Append-only CSV logger with stable header."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -116,19 +104,7 @@ class CSVLogger:
 
 
 class MetricLogger:
-    """Unified experiment logger for scalars.
-
-    Usage
-    -----
-    >>> ml = MetricLogger(Path("runs/my_run"), cfg.logging)
-    >>> ml.log(step=100, loss=0.1, ep_return=42)
-    >>> ml.close()
-
-    Paths
-    -----
-    * CSV:  `<run_dir>/logs/scalars.csv`
-    * TB :  `<run_dir>/tb/` (only if `cfg.tb` is True)
-    """
+    """Unified scalar logger: CSV on cadence, TB each call."""
 
     def __init__(self, run_dir: Path, cfg: LoggingConfig) -> None:
         self.run_dir = Path(run_dir)
@@ -153,10 +129,9 @@ class MetricLogger:
     # ------------- API -------------
 
     def log(self, step: int, **metrics: float) -> None:
-        """Log scalar metrics at a given step.
+        """Log floats by step.
 
-        * TB logs every call (if enabled).
-        * CSV logs when `step` advances and `(step % csv_interval == 0)`.
+        TB every call; CSV when cadence matches.
         """
         if self.tb is not None:
             self.tb.log_scalars(metrics, step)
@@ -171,7 +146,7 @@ class MetricLogger:
             self._last_csv_write_step = int(step)
 
     def log_hparams(self, params: Mapping[str, object]) -> None:
-        """Optional: log a snapshot of hyperparameters as text (TB only)."""
+        """Optional: snapshot hparams as text (TB only)."""
         if self.tb is not None:
             # Render as a small YAML-like block for readability
             text_lines = []
