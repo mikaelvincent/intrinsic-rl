@@ -10,6 +10,8 @@ Optionally, per-episode de-duplication divides by (1 + N_ep(bin(φ(s')))).
 The encoder/inverse/forward heads are shared with ICM; only the ICM
 representation is trained here.
 
+Supports both vector and **image** observations: image inputs are routed
+through the ICM's ConvEncoder path (auto HWC/CHW and auto-scaling).
 See: devspec/dev_spec_and_plan.md §5.3.4 (RIDE) and §5.5 (binning).
 """
 
@@ -23,7 +25,7 @@ from torch import Tensor, nn
 
 from . import BaseIntrinsicModule, IntrinsicOutput, Transition
 from .icm import ICM, ICMConfig
-from irl.utils.torchops import as_tensor, ensure_2d
+from irl.utils.torchops import as_tensor
 
 
 class RIDE(BaseIntrinsicModule, nn.Module):
@@ -42,7 +44,7 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("RIDE supports Box observation spaces (vector states).")
+            raise TypeError("RIDE supports Box observation spaces (vector or image).")
         self.device = torch.device(device)
 
         # Backing ICM module (owns encoder/training)
@@ -66,12 +68,13 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     # -------------------------- Intrinsic compute -------------------------
 
     @torch.no_grad()
-    def _impact_per_sample(self, obs: Tensor, next_obs: Tensor) -> Tensor:
-        """Return per-sample impact = ||φ(s') - φ(s)||₂ with shape [B]."""
-        o = ensure_2d(obs)
-        op = ensure_2d(next_obs)
-        phi_t = self.icm._phi(o)
-        phi_tp1 = self.icm._phi(op)
+    def _impact_per_sample(self, obs: Any, next_obs: Any) -> Tensor:
+        """Return per-sample impact = ||φ(s') - φ(s)||₂ with shape [B].
+
+        Accepts vector arrays or images (CHW/NCHW/NHWC).
+        """
+        phi_t = self.icm._phi(obs)
+        phi_tp1 = self.icm._phi(next_obs)
         return torch.norm(phi_tp1 - phi_t, p=2, dim=-1)
 
     def _ensure_counts(self, batch_size: int) -> None:
@@ -89,9 +92,7 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Single-transition intrinsic (raw impact; no episodic binning)."""
         with torch.no_grad():
-            s = as_tensor(tr.s, self.device)
-            sp = as_tensor(tr.s_next, self.device)
-            r_raw = self._impact_per_sample(s.view(1, -1), sp.view(1, -1)).view(-1)[0]
+            r_raw = self._impact_per_sample(tr.s, tr.s_next).view(-1)[0]
             r = self.alpha_impact * r_raw
             return IntrinsicOutput(r_int=float(r.item()))
 
@@ -100,9 +101,7 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     ) -> Tensor:
         """Vectorized raw impact (no episodic binning)."""
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            r = self._impact_per_sample(o, op)
+            r = self._impact_per_sample(obs, next_obs)
             r = self.alpha_impact * r
             return r.mean() if reduction == "mean" else r
 
@@ -115,11 +114,12 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         reduction: str = "none",
     ) -> Tensor:
         """Impact with episodic de-duplication (counts reset on done=True)."""
-        o = as_tensor(obs, self.device)
-        op = as_tensor(next_obs, self.device)
-        o2 = ensure_2d(o)
-        op2 = ensure_2d(op)
-        B = int(op2.size(0))
+        o = obs
+        op = next_obs
+        # Normalize shapes to batch-first on the fly via φ (no explicit reshape needed)
+        phi_t = self.icm._phi(o)
+        phi_tp1 = self.icm._phi(op)
+        B = int(phi_tp1.size(0))
         self._ensure_counts(B)
 
         # Reset counts for envs that just finished
@@ -129,9 +129,6 @@ class RIDE(BaseIntrinsicModule, nn.Module):
                 if bool(d[i].item()):
                     self._ep_counts[i].clear()
 
-        # Embeddings & keys for next_obs
-        phi_t = self.icm._phi(o2)
-        phi_tp1 = self.icm._phi(op2)
         keys = self._bin_keys(phi_tp1)
 
         # Raw impact
@@ -153,9 +150,7 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         """ICM loss + mean raw impact (diagnostic)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            r = self._impact_per_sample(o, op).mean()
+            r = self._impact_per_sample(obs, next_obs).mean()
         return {
             "total": icm_losses["total"],
             "icm_forward": icm_losses["forward"],
@@ -166,9 +161,7 @@ class RIDE(BaseIntrinsicModule, nn.Module):
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
         """Optimize ICM; report ICM losses + current mean raw impact."""
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            r_mean = self._impact_per_sample(o, op).mean().detach().item()
+            r_mean = self._impact_per_sample(obs, next_obs).mean().detach().item()
 
         metrics = self.icm.update(obs, next_obs, actions, steps=steps)
         return {
