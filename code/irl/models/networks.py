@@ -28,15 +28,10 @@ def _space_dims(space: gym.Space) -> int:
 
 
 class PolicyNetwork(nn.Module):
-    """PPO policy network.
+    """PPO policy MLP for Discrete/Box actions (see spec §5.1).
 
-    For Discrete actions: categorical logits head.
-    For Box actions: mean head + state-independent log_std parameter.
-
-    Args:
-        obs_space: Gymnasium observation space (expects flat-able arrays).
-        action_space: Discrete or Box action space.
-        hidden_sizes: MLP widths.
+    Discrete → categorical logits; Box → mean + state‑independent log_std. Types and shapes are conveyed by the
+    signatures.
     """
 
     def __init__(
@@ -110,7 +105,10 @@ class PolicyNetwork(nn.Module):
 
 
 class ValueNetwork(nn.Module):
-    """State-value network (MLP -> scalar)."""
+    """State‑value MLP → scalar V(s).
+
+    See spec §5.1.
+    """
 
     def __init__(self, obs_space: gym.Space, hidden_sizes: Iterable[int] = (256, 256)) -> None:
         super().__init__()
