@@ -4,6 +4,8 @@ Notes:
 - Observations are flattened before feeding into MLPs.
 - Supports Discrete and Box action spaces.
 - Continuous actions use diagonal Gaussian with state-independent log_std.
+
+This module now imports the shared MLP builder from `irl.models.layers`.
 """
 
 from __future__ import annotations
@@ -15,29 +17,7 @@ import torch
 from torch import Tensor, nn
 
 from .distributions import CategoricalDist, DiagGaussianDist
-
-
-# -------------------- small helpers --------------------
-
-
-class FlattenObs(nn.Module):
-    def forward(self, x: Tensor) -> Tensor:
-        if x.dim() == 1:
-            return x.view(1, -1)
-        return x.view(x.size(0), -1)
-
-
-def mlp(
-    in_dim: int, hidden: Sequence[int] = (256, 256), out_dim: int | None = None
-) -> nn.Sequential:
-    layers: list[nn.Module] = [FlattenObs()]
-    last = in_dim
-    for h in hidden:
-        layers += [nn.Linear(last, h), nn.ReLU(inplace=True)]
-        last = h
-    if out_dim is not None:
-        layers.append(nn.Linear(last, out_dim))
-    return nn.Sequential(*layers)
+from .layers import mlp  # re-exported for backward compatibility
 
 
 def _space_dims(space: gym.Space) -> int:
@@ -80,6 +60,7 @@ class PolicyNetwork(nn.Module):
         self.obs_dim = int(obs_space.shape[0])
         self.is_discrete = isinstance(action_space, gym.spaces.Discrete)
 
+        # mlp() comes from irl.models.layers and already includes FlattenObs as the first layer.
         self.backbone = mlp(self.obs_dim, tuple(hidden_sizes), out_dim=None)
 
         if self.is_discrete:
