@@ -30,21 +30,12 @@ def update_region_gate(
     eps: float = 1e-8,
     sufficient_regions: bool = True,
 ) -> int:
-    """Update and return region gate (1 enabled, 0 gated-off).
+    """Update and return the region gate (1 on, 0 off).
 
-    Args:
-        st: region stats object (updated in-place).
-        lp_i: current LP value for this region.
-        tau_lp: LP threshold (absolute).
-        tau_s: stochasticity threshold.
-        median_error_global: median EMA_short across regions (for S_i).
-        hysteresis_up_mult: multiplier for τ_LP to re-enable a gated region.
-        min_consec_to_gate: consecutive 'bad' refreshes required to gate off.
-        eps: numerical guard.
-        sufficient_regions: if False, keep gate open and reset counters.
-
-    Returns:
-        int: current gate value (1 or 0).
+    Implements the hysteretic rule from the dev spec (§5.4.1): gate off when
+    LP is below a threshold and stochasticity is high for K consecutive
+    refreshes; re‑enable after meeting the stronger hysteresis criterion.
+    Mutates ``st`` in place and returns the current gate value.
     """
     if not sufficient_regions:
         st.bad_consec = 0
