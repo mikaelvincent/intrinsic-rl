@@ -5,7 +5,10 @@
 - Gating: suppress regions with low LP and high stochasticity (hysteresis)
 - Per-component RMS normalization; outputs flagged as normalized.
 
-See: devspec/dev_spec_and_plan.md §5.4.
+Supports both vector and **image** observations by delegating φ(s) to ICM,
+which routes vectors through an MLP and images through a ConvEncoder.
+
+See: devspec/dev_spec_and_plan.md §5.4 and Sprint 6.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from irl.utils.torchops import as_tensor, ensure_2d
+from irl.utils.torchops import as_tensor
 from irl.intrinsic.icm import ICM, ICMConfig
 from irl.intrinsic.regions import KDTreeRegionStore
 from irl.intrinsic.normalization import RunningRMS
@@ -52,7 +55,7 @@ class Proposed(nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("Proposed supports Box observation spaces (vector states).")
+            raise TypeError("Proposed supports Box observation spaces (vector states or images).")
 
         self.device = torch.device(device)
 
@@ -60,7 +63,7 @@ class Proposed(nn.Module):
         self.icm = icm if icm is not None else ICM(obs_space, act_space, device=device, cfg=icm_cfg)
         self.encoder = self.icm.encoder
         self.is_discrete = self.icm.is_discrete
-        self.obs_dim = int(obs_space.shape[0])
+        self.obs_dim = int(np.prod(obs_space.shape))
         self.phi_dim = int(self.icm.cfg.phi_dim)
 
         # KD-tree regionization over φ-space
@@ -94,20 +97,18 @@ class Proposed(nn.Module):
     # ----------------------------- internals -----------------------------
 
     @torch.no_grad()
-    def _impact_per_sample(self, obs: Tensor, next_obs: Tensor) -> Tensor:
-        o = ensure_2d(obs)
-        op = ensure_2d(next_obs)
-        phi_t = self.icm._phi(o)
-        phi_tp1 = self.icm._phi(op)
+    def _impact_per_sample(self, obs: Any, next_obs: Any) -> Tensor:
+        phi_t = self.icm._phi(obs)
+        phi_tp1 = self.icm._phi(next_obs)
         return torch.norm(phi_tp1 - phi_t, p=2, dim=-1)
 
     @torch.no_grad()
     def _forward_error_and_phi(
-        self, obs: Tensor, next_obs: Tensor, actions: Tensor
+        self, obs: Any, next_obs: Any, actions: Any
     ) -> Tuple[Tensor, Tensor]:
-        o = ensure_2d(obs)
-        op = ensure_2d(next_obs)
-        a = actions
+        o = obs
+        op = next_obs
+        a = as_tensor(actions, self.device)
         phi_t = self.icm._phi(o)
         phi_tp1 = self.icm._phi(op)
         a_fwd = self.icm._act_for_forward(a)
@@ -174,16 +175,14 @@ class Proposed(nn.Module):
         from irl.intrinsic import IntrinsicOutput  # local import to avoid cycle
 
         with torch.no_grad():
-            s = as_tensor(tr.s, self.device)
-            sp = as_tensor(tr.s_next, self.device)
-            a = as_tensor(tr.a, self.device)
+            s = tr.s
+            sp = tr.s_next
+            a = tr.a
 
-            impact_raw = self._impact_per_sample(s.view(1, -1), sp.view(1, -1)).view(-1)[0]
-            err, phi_t = self._forward_error_and_phi(
-                s.view(1, -1), sp.view(1, -1), a.view(1, -1 if not self.is_discrete else 1)
-            )
+            impact_raw = self._impact_per_sample(s, sp).view(-1)[0]
+            err, phi_t = self._forward_error_and_phi(s, sp, a)
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
-            lp_raw = self._update_region(rid, float(err.item()))
+            lp_raw = self._update_region(rid, float(err.view(-1)[0].item()))
             gate = self._maybe_update_gate(rid, float(lp_raw)) if self.gating_enabled else 1
 
             # Normalize components and combine
@@ -206,9 +205,9 @@ class Proposed(nn.Module):
         reduction: str = "none",
     ) -> Tensor:
         """Vectorized intrinsic with gating and per-component RMS."""
-        o = as_tensor(obs, self.device)
-        op = as_tensor(next_obs, self.device)
-        a = as_tensor(actions, self.device)
+        o = obs
+        op = next_obs
+        a = actions
 
         impact_raw = self._impact_per_sample(o, op)  # [B]
         err, phi_t = self._forward_error_and_phi(o, op, a)  # [B], [B, D]
@@ -261,9 +260,9 @@ class Proposed(nn.Module):
         icm_losses = self.icm.loss(obs, next_obs, actions)
 
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            a = as_tensor(actions, self.device)
+            o = obs
+            op = next_obs
+            a = actions
 
             impact_raw = self._impact_per_sample(o, op)
             err, phi_t = self._forward_error_and_phi(o, op, a)
@@ -292,9 +291,9 @@ class Proposed(nn.Module):
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
         """Train ICM and report losses + current normalized intrinsic mean."""
         with torch.no_grad():
-            o = as_tensor(obs, self.device)
-            op = as_tensor(next_obs, self.device)
-            a = as_tensor(actions, self.device)
+            o = obs
+            op = next_obs
+            a = actions
 
             impact_raw = self._impact_per_sample(o, op)
             err, phi_t = self._forward_error_and_phi(o, op, a)
