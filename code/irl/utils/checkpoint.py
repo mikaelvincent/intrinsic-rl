@@ -1,15 +1,17 @@
 """Checkpoint manager with atomic writes & bounded retention.
 
-See devspec/dev_spec_and_plan.md §6.1 (artifacts) and §9 (reliability).
+See devspec/dev_spec_and_plan.md ยง6.1 (artifacts) and ยง9 (reliability).
 """
 
 from __future__ import annotations
 
 import os
 import re
+import json
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Mapping
 
 import torch
 
@@ -38,6 +40,44 @@ def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> 
     except TypeError:
         # torch < 2.6 (no weights_only kwarg)
         return torch.load(path, map_location=map_location)
+
+
+# -------------------- Config hash helper --------------------
+
+
+def _json_stable(obj: Any) -> str:
+    """Return a stable JSON string for hashing (sorted keys, simple separators)."""
+    # Recursively sort dict keys and convert non-JSON types where practical.
+    def _normalize(x: Any) -> Any:
+        if isinstance(x, Mapping):
+            return {k: _normalize(x[k]) for k in sorted(x.keys())}
+        if isinstance(x, (list, tuple)):
+            return [_normalize(v) for v in x]
+        # primitives (including numpy scalars will be stringified by json if unsupported)
+        return x
+
+    norm = _normalize(obj)
+    return json.dumps(norm, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def compute_cfg_hash(cfg_like: Any) -> str:
+    """Compute a short SHA-256 hash (first 16 hex chars) of a config mapping.
+
+    The hash is based on a stable JSON representation with sorted keys to make
+    it invariant to Python dict insertion order differences.
+
+    Parameters
+    ----------
+    cfg_like : Any
+        A mapping (e.g., dict from `irl.cfg.to_dict(cfg)`) or JSON-serializable object.
+
+    Returns
+    -------
+    str
+        Lowercase hex digest prefix (16 chars) of the SHA-256 hash.
+    """
+    data = _json_stable(cfg_like)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass
