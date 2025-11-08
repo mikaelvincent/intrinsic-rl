@@ -50,6 +50,8 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import typer  # noqa: E402
 
+from irl.utils.checkpoint import atomic_replace  # <-- atomic helper
+
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
 
@@ -290,7 +292,9 @@ def cli_curves(
     ax.grid(True, alpha=0.3)
 
     _ensure_parent(out)
-    fig.savefig(str(out), dpi=150, bbox_inches="tight")
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    atomic_replace(tmp, out)
     plt.close(fig)
     typer.echo(f"[green]Saved[/green] {out}")
 
@@ -367,7 +371,9 @@ def cli_overlay(
     ax.grid(True, alpha=0.3)
 
     _ensure_parent(out)
-    fig.savefig(str(out), dpi=150, bbox_inches="tight")
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    atomic_replace(tmp, out)
     plt.close(fig)
     typer.echo(f"[green]Saved[/green] {out}")
 
@@ -462,7 +468,9 @@ def cli_bars(
         fig.tight_layout()
 
     _ensure_parent(out)
-    plt.savefig(str(out), dpi=150, bbox_inches="tight")
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    atomic_replace(tmp, out)
     plt.close("all")
     typer.echo(f"[green]Saved[/green] {out}")
 
