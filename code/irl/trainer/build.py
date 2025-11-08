@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple
+import os
+import sys
 
 import torch
 
@@ -32,3 +34,53 @@ def ensure_device(dev_str: str) -> torch.device:
         print("[warning] CUDA requested but not available; falling back to CPU.")
         return torch.device("cpu")
     return torch.device(dev_str)
+
+
+# -------------------- MuJoCo headless rendering helper --------------------
+
+
+_MUJOCO_ENV_HINTS = (
+    "Ant",
+    "HalfCheetah",
+    "Humanoid",
+    "Hopper",
+    "Walker2d",
+    "Swimmer",
+    "Reacher",
+    "Pusher",
+    "InvertedPendulum",
+    "InvertedDoublePendulum",
+)
+
+
+def ensure_mujoco_gl(env_id: str) -> str:
+    """Ensure MUJOCO_GL is sensible for MuJoCo tasks.
+
+    Behavior:
+    * If `env_id` looks like a MuJoCo task and MUJOCO_GL is *unset*:
+        - On Linux: set MUJOCO_GL='egl' (common headless default) and print a notice.
+        - On Windows/macOS: do not set; print a hint instead.
+    * If MUJOCO_GL is already set: print the current value (once per process invocation).
+
+    Returns
+    -------
+    str
+        The value of MUJOCO_GL after this call ('' if unset).
+    """
+    is_mujoco = any(hint in str(env_id) for hint in _MUJOCO_ENV_HINTS)
+    if not is_mujoco:
+        return os.environ.get("MUJOCO_GL", "") or ""
+
+    current = os.environ.get("MUJOCO_GL")
+    if current:
+        print(f"[info] MUJOCO_GL={current} (pre-set).")
+        return current
+
+    # If unset, choose a safe default on Linux; otherwise just hint.
+    if sys.platform.startswith("linux"):
+        os.environ["MUJOCO_GL"] = "egl"
+        print("[info] MUJOCO_GL not set; defaulting to 'egl' for headless MuJoCo rendering.")
+        return "egl"
+
+    print("[info] MuJoCo env detected. Consider setting MUJOCO_GL=egl for headless runs.")
+    return ""
