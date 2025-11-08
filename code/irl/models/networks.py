@@ -11,6 +11,7 @@ See dev spec §5.1 and Sprint 6 notes for the image pathway.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Iterable, Union
 
 import gymnasium as gym
@@ -114,7 +115,11 @@ class PolicyNetwork(nn.Module):
 
         if self.is_image:
             in_ch = _infer_in_channels(tuple(int(s) for s in obs_space.shape))
-            self.cnn = ConvEncoder(ConvEncoderConfig(in_channels=in_ch, out_dim=(cnn_cfg.out_dim if cnn_cfg else 256)) if cnn_cfg else ConvEncoderConfig(in_channels=in_ch))  # type: ignore[arg-type]
+            # Honor user-supplied ConvEncoderConfig; override only in_channels to match the space.
+            cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
+            if int(cfg.in_channels) != int(in_ch):
+                cfg = replace(cfg, in_channels=int(in_ch))
+            self.cnn = ConvEncoder(cfg)
             feat_dim = int(self.cnn.out_dim)
         else:
             self.obs_dim = int(obs_space.shape[0])
@@ -181,7 +186,11 @@ class ValueNetwork(nn.Module):
         self.is_image = _is_image_space(obs_space)
         if self.is_image:
             in_ch = _infer_in_channels(tuple(int(s) for s in obs_space.shape))
-            self.cnn = ConvEncoder(ConvEncoderConfig(in_channels=in_ch, out_dim=(cnn_cfg.out_dim if cnn_cfg else 256)) if cnn_cfg else ConvEncoderConfig(in_channels=in_ch))  # type: ignore[arg-type]
+            # Honor user-supplied ConvEncoderConfig; override only in_channels.
+            cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
+            if int(cfg.in_channels) != int(in_ch):
+                cfg = replace(cfg, in_channels=int(in_ch))
+            self.cnn = ConvEncoder(cfg)
             self.head = nn.Linear(int(self.cnn.out_dim), 1)
         else:
             self.obs_dim = int(obs_space.shape[0])
