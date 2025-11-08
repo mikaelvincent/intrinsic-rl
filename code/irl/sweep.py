@@ -1,28 +1,22 @@
-"""Sweep / multi-seed evaluation and aggregation.
+"""Sweep / multi-seed evaluation, aggregation, and statistics.
 
-This CLI discovers one or more checkpoints (either passed directly or found
-under run directories), evaluates each deterministically using the existing
-`irl.evaluator.evaluate` routine, and writes aggregated CSV summaries.
+This CLI discovers checkpoints and evaluates them deterministically (eval-many),
+writes aggregated CSVs, and (new) provides non-parametric statistical tests
+between methods using the per-seed raw summary (Mann–Whitney U + bootstrap CIs).
 
 Usage examples
 --------------
-# Evaluate latest checkpoints under several run directories (glob accepted)
-python -m irl.sweep eval-many \
-  --runs "runs/proposed__BipedalWalker*" \
-  --episodes 10 \
-  --device cpu \
-  --out results/summary.csv
+# Evaluate latest checkpoints and write summary CSVs
+python -m irl.sweep eval-many --runs "runs/proposed__BipedalWalker*" --out results/summary.csv
 
-# Evaluate an explicit list of checkpoints (mixing methods/envs allowed)
-python -m irl.sweep eval-many \
-  --ckpt runs/.../checkpoints/ckpt_step_100000.pt \
-  --ckpt runs/.../checkpoints/ckpt_latest.pt \
-  --out results/summary.csv
-
-Outputs
--------
-* summary.csv        — aggregated by (method, env_id) across seeds
-* summary_raw.csv    — per-checkpoint (per seed) raw results (same folder)
+# Compare two methods on a given env using the raw results
+python -m irl.sweep stats \
+  --summary-raw results/summary_raw.csv \
+  --env BipedalWalker-v3 \
+  --method-a proposed \
+  --method-b ride \
+  --metric mean_return \
+  --boot 5000
 """
 
 from __future__ import annotations
@@ -39,6 +33,7 @@ import typer
 
 from irl.evaluator import evaluate
 from irl.utils.checkpoint import load_checkpoint
+from irl.stats_utils import bootstrap_ci, mannwhitney_u  # NEW: stats helpers
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -333,6 +328,176 @@ def cli_eval_many(
             f"| mean={row['mean_return_mean']:.2f} ± {row['mean_return_std']:.2f} "
             f"(step≈{row['step_mean']})"
         )
+
+
+# ---------------------- NEW: Statistics CLI ----------------------
+
+
+def _read_summary_raw(path: Path) -> list[dict]:
+    """Read results/summary_raw.csv into a list of dicts with typed fields."""
+    rows: list[dict] = []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            try:
+                rows.append(
+                    {
+                        "method": str(row["method"]),
+                        "env_id": str(row["env_id"]),
+                        "seed": int(row["seed"]),
+                        "ckpt_step": int(row["ckpt_step"]),
+                        "episodes": int(row["episodes"]),
+                        "mean_return": float(row["mean_return"]),
+                        "std_return": float(row["std_return"]),
+                        "min_return": float(row["min_return"]),
+                        "max_return": float(row["max_return"]),
+                        "mean_length": float(row["mean_length"]),
+                        "std_length": float(row["std_length"]),
+                        "ckpt_path": str(row.get("ckpt_path", "")),
+                    }
+                )
+            except Exception:
+                # Skip malformed rows; keep going
+                continue
+    return rows
+
+
+def _values_for_method(
+    raw: list[dict],
+    *,
+    env: str,
+    method: str,
+    metric: str,
+    latest_per_seed: bool = True,
+) -> list[float]:
+    """Collect per-seed values for (env, method), choosing latest step per seed if enabled."""
+    filt = [r for r in raw if r["env_id"] == env and r["method"] == method]
+    if not filt:
+        return []
+
+    if latest_per_seed:
+        # Keep highest ckpt_step per seed
+        by_seed: dict[int, dict] = {}
+        for r in filt:
+            sid = int(r["seed"])
+            prev = by_seed.get(sid)
+            if prev is None or int(r["ckpt_step"]) > int(prev["ckpt_step"]):
+                by_seed[sid] = r
+        vals = [float(rec[metric]) for rec in by_seed.values()]
+    else:
+        vals = [float(rec[metric]) for rec in filt]
+
+    return vals
+
+
+@app.command("stats")
+def cli_stats(
+    summary_raw: Path = typer.Option(
+        Path("results/summary_raw.csv"),
+        "--summary-raw",
+        "-s",
+        help="Path to per-checkpoint CSV (from eval-many).",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    env: str = typer.Option(
+        ..., "--env", "-e", help="Environment id to filter (e.g., BipedalWalker-v3)."
+    ),
+    method_a: str = typer.Option(
+        ..., "--method-a", "-a", help="First method name (e.g., proposed)."
+    ),
+    method_b: str = typer.Option(..., "--method-b", "-b", help="Second method name (e.g., ride)."),
+    metric: str = typer.Option(
+        "mean_return",
+        "--metric",
+        "-m",
+        help="Column from summary_raw to compare (default: mean_return).",
+    ),
+    boot: int = typer.Option(
+        2000, "--boot", "-B", help="Bootstrap draws for CIs (0 disables bootstrap)."
+    ),
+    alternative: str = typer.Option(
+        "two-sided",
+        "--alt",
+        help='Alternative hypothesis: "two-sided" | "greater" | "less". '
+        '"greater" tests if method-a tends larger than method-b.',
+    ),
+    latest_per_seed: bool = typer.Option(
+        True,
+        "--latest-per-seed/--all-checkpoints",
+        help="Use the latest ckpt per seed (default) or all rows.",
+    ),
+) -> None:
+    """Compare two methods non-parametrically with Mann–Whitney U and bootstrap CIs."""
+    alt = alternative.strip().lower()
+    if alt not in ("two-sided", "greater", "less"):
+        raise typer.BadParameter("--alt must be one of: two-sided, greater, less")
+
+    raw = _read_summary_raw(summary_raw)
+    if not raw:
+        raise typer.BadParameter(f"No rows parsed from {summary_raw}")
+
+    x = _values_for_method(
+        raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed
+    )
+    y = _values_for_method(
+        raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed
+    )
+
+    if not x:
+        raise typer.BadParameter(f"No rows for env={env!r}, method={method_a!r}")
+    if not y:
+        raise typer.BadParameter(f"No rows for env={env!r}, method={method_b!r}")
+
+    res = mannwhitney_u(x, y, alternative=alt)  # MWU (normal approx + tie corr)
+
+    # Bootstrap CIs for differences in mean and median
+    def diff_mean(a, b):  # noqa: ANN001 - simple inline for bootstrap
+        return float(float(sum(a)) / len(a) - float(sum(b)) / len(b))
+
+    def diff_median(a, b):  # noqa: ANN001
+        return float(np.median(a) - np.median(b))
+
+    mean_pt, mean_lo, mean_hi = (
+        bootstrap_ci(x, y, diff_mean, n_boot=int(boot))
+        if boot > 0
+        else (res.mean_x - res.mean_y, float("nan"), float("nan"))
+    )
+    med_pt, med_lo, med_hi = (
+        bootstrap_ci(x, y, diff_median, n_boot=int(boot))
+        if boot > 0
+        else (res.median_x - res.median_y, float("nan"), float("nan"))
+    )
+
+    # Pretty report
+    typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
+    typer.echo(f"Groups: {method_a} (n={res.n_x}) vs {method_b} (n={res.n_y})")
+    typer.echo(
+        f"U1={res.U1:.3f}, U2={res.U2:.3f}, U_used={res.U:.3f}, z={res.z:.3f}, p={res.p_value:.6g}  (alt={alt})"
+    )
+    typer.echo(
+        f"Means   : {method_a}={res.mean_x:.3f}, {method_b}={res.mean_y:.3f}  (Δ={res.mean_x - res.mean_y:+.3f})"
+    )
+    typer.echo(
+        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  (Δ={res.median_x - res.median_y:+.3f})"
+    )
+    typer.echo(
+        f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*CLES-1)"
+    )
+
+    if boot > 0:
+        typer.echo(f"\nBootstrap {boot}× percentile CIs (two-sided 95%):")
+        typer.echo(f"  Δ mean   : {mean_pt:+.3f}  CI [{mean_lo:+.3f}, {mean_hi:+.3f}]")
+        typer.echo(f"  Δ median : {med_pt:+.3f}  CI [{med_lo:+.3f}, {med_hi:+.3f}]")
+
+    typer.echo(
+        "\nNotes:\n"
+        "  • MWU p-value uses normal approximation with tie correction and continuity correction.\n"
+        "  • CLES = P(a > b) + 0.5·P(a = b); Cliff's δ = 2·CLES − 1 (rank-biserial).\n"
+        "  • For robust comparisons, prefer ≥5 seeds per method."
+    )
 
 
 def main() -> None:
