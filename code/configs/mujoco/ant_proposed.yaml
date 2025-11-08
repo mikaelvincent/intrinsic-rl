@@ -4,7 +4,7 @@ device: "cuda:0"  # set to "cpu" if no GPU is available
 method: "proposed"
 
 env:
-  id: "Ant-v4"
+  id: "Ant-v5"
   vec_envs: 16
   frame_skip: 1
   domain_randomization: false
