@@ -9,6 +9,7 @@ from typing import Optional
 import typer
 
 from irl.evaluator import evaluate as run_evaluate
+from irl.utils.checkpoint import atomic_write_text  # <-- atomic helper
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -44,10 +45,10 @@ def cli_eval(
         f"± {summary['std_return']:.2f} over {summary['episodes']} episodes"
     )
 
-    # Optional JSON dump
+    # Optional JSON dump (atomic)
     if out is not None:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        text = json.dumps(summary, indent=2)
+        atomic_write_text(out, text)
         typer.echo(f"Saved summary to {out}")
 
 
