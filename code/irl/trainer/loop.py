@@ -24,7 +24,7 @@ from irl.intrinsic import (  # type: ignore
     RunningRMS,
 )
 
-from .build import ensure_device, default_run_dir, single_spaces
+from .build import ensure_device, default_run_dir, single_spaces, ensure_mujoco_gl
 from .obs_norm import RunningObsNorm
 
 
@@ -43,6 +43,13 @@ def train(
     device = ensure_device(cfg.device)
     torch.manual_seed(int(cfg.seed))
     np.random.seed(int(cfg.seed))
+
+    # Ensure sensible MUJOCO_GL for MuJoCo tasks (no-op for others)
+    try:
+        ensure_mujoco_gl(cfg.env.id)
+    except Exception:
+        # Defensive: never hard-fail on an advisory utility
+        pass
 
     # --- Env & models ---
     manager = EnvManager(
