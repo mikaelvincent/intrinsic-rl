@@ -1,0 +1,41 @@
+# Humanoid (MuJoCo) — Proposed intrinsic (RIDE + R-IAC + gating)
+seed: 1
+device: "cuda:0"
+method: "proposed"
+
+env:
+  id: "Humanoid-v4"
+  vec_envs: 16
+  frame_skip: 1
+  domain_randomization: false
+  discrete_actions: true
+
+ppo:
+  steps_per_update: 2048
+  minibatches: 32
+  epochs: 10
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  entropy_coef: 0.0
+
+intrinsic:
+  eta: 0.1
+  alpha_impact: 1.0
+  alpha_lp: 0.5
+  r_clip: 5.0
+
+adaptation:
+  enabled: true
+  interval_steps: 50000
+  entropy_low_frac: 0.3
+
+evaluation:
+  interval_steps: 50000
+  episodes: 10
+
+logging:
+  tb: true
+  csv_interval: 10000
+  checkpoint_interval: 100000
