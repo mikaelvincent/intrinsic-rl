@@ -40,7 +40,8 @@ class ConvEncoderConfig:
     channels: Tuple[int, int, int] = (32, 64, 64)
     kernels: Tuple[int, int, int] = (8, 4, 3)
     strides: Tuple[int, int, int] = (4, 2, 1)
-    paddings: Tuple[int, int, int] = (0, 0, 0)
+    # Use padding on the final 3x3 layer to avoid underflow on small inputs (e.g., 32x32 -> 2x2).
+    paddings: Tuple[int, int, int] = (0, 0, 1)
     out_dim: int = 256
     activation_inplace: bool = True
 
@@ -101,7 +102,8 @@ class ConvEncoder(nn.Module):
             dummy = torch.zeros(1, self.in_channels, int(in_hw[0]), int(in_hw[1]), device=device)
             h = self.conv(dummy)
             flat = int(h.numel())
-        self._proj = nn.Linear(flat, self.out_dim)
+        # Create on the same device as the conv stack
+        self._proj = nn.Linear(flat, self.out_dim).to(device)
 
     @staticmethod
     def _ensure_nchw(x: Tensor, expected_c: int) -> Tensor:
@@ -130,10 +132,11 @@ class ConvEncoder(nn.Module):
         t = self._ensure_nchw(t, self.in_channels)
 
         h = self.conv(t)
-        h = h.view(h.size(0), -1)  # [N, F]
+        # Use reshape to support non-contiguous tensors safely.
+        h = h.reshape(h.size(0), -1)  # [N, F]
 
         if self._proj is None:
-            # Lazily create projection with correct input size
+            # Lazily create projection with correct input size, on the right device
             self._proj = nn.Linear(h.size(1), self.out_dim).to(h.device)
 
         z = self._proj(h)
