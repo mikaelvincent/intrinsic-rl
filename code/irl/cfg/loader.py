@@ -94,6 +94,8 @@ def validate_config(cfg: Config) -> None:
     # Basic ranges
     if cfg.env.vec_envs < 1:
         raise ConfigError("env.vec_envs must be >= 1")
+    if cfg.env.frame_skip < 1:
+        raise ConfigError("env.frame_skip must be >= 1")
 
     if cfg.ppo.steps_per_update <= 0:
         raise ConfigError("ppo.steps_per_update must be > 0")
