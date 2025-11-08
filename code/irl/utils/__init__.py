@@ -11,6 +11,7 @@ from .checkpoint import (
     atomic_write_bytes,
 )
 from .torchops import as_tensor, ensure_2d, one_hot  # shared tensor helpers
+from .determinism import seed_everything  # NEW: reproducible seeding helper
 
 __all__ = [
     # Loggers
@@ -27,4 +28,6 @@ __all__ = [
     "as_tensor",
     "ensure_2d",
     "one_hot",
+    # Determinism
+    "seed_everything",
 ]
