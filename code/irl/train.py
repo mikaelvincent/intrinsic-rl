@@ -1,4 +1,4 @@
-"""PPO training CLI — thin wrapper around irl.trainer.train().
+"""PPO training CLI â€” thin wrapper around irl.trainer.train().
 
 This keeps the public CLI stable while moving the heavy training logic into the irl.trainer subpackage to meet Sprint 5
 refactor goals.
@@ -56,6 +56,11 @@ def cli_train(
         "-d",
         help='Override device, e.g., "cpu" or "cuda:0". (Defaults to config value or CPU.)',
     ),
+    resume: bool = typer.Option(
+        False,
+        "--resume/--no-resume",
+        help="Resume from the latest checkpoint in --run-dir if available (verifies config hash).",
+    ),
 ) -> None:
     """Launch PPO training with optional intrinsic rewards."""
     if config is not None:
@@ -75,7 +80,7 @@ def cli_train(
         cfg = replace(cfg, device=str(device))
 
     validate_config(cfg)
-    out_dir = run_train(cfg, total_steps=total_steps, run_dir=run_dir)
+    out_dir = run_train(cfg, total_steps=total_steps, run_dir=run_dir, resume=resume)
     typer.echo(f"[green]Training finished[/green]\nRun dir: {out_dir}")
 
 
