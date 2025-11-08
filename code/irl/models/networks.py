@@ -4,7 +4,7 @@ Supports:
 - **Vector Box** observations: standard MLP backbone.
 - **Image Box** observations (rank >= 2): ConvEncoder backbone (NCHW/NHWC tolerant, auto 0..1 scaling).
 
-Discrete actions -> categorical logits. Continuous actions -> diagonal Gaussian with state‑independent log_std.
+Discrete actions -> categorical logits. Continuous actions -> diagonal Gaussian with state-independent log_std.
 
 See dev spec §5.1 and Sprint 6 notes for the image pathway.
 """
@@ -69,7 +69,8 @@ def _prep_images_to_nchw(x: Tensor, expected_c: int) -> Tensor:
         raise ValueError(f"Expected image tensor with rank >=3, got {t.shape}")
     # Collapse leading dims except image dims
     if t.dim() >= 5:
-        t = t.view(-1, *t.shape[-3:])  # -> [N, H, W, C] or [N, C, H, W]
+        # Use reshape to tolerate non-contiguous inputs (e.g., (T,B,H,W,C))
+        t = t.reshape(-1, *t.shape[-3:])  # -> [N, H, W, C] or [N, C, H, W]
     elif t.dim() == 3:
         t = t.unsqueeze(0)  # -> [1, H, W, C] or [1, C, H, W]
     # Convert to float and scale to [0,1] when needed
@@ -94,7 +95,7 @@ def _prep_images_to_nchw(x: Tensor, expected_c: int) -> Tensor:
 class PolicyNetwork(nn.Module):
     """PPO policy with MLP (vector) or CNN (image) backbone.
 
-    Discrete → categorical logits; Box → mean + state‑independent log_std.
+    Discrete → categorical logits; Box → mean + state-independent log_std.
     """
 
     def __init__(
@@ -165,7 +166,7 @@ class PolicyNetwork(nn.Module):
 
 
 class ValueNetwork(nn.Module):
-    """State‑value function V(s) with MLP (vector) or CNN (image) backbone."""
+    """State-value function V(s) with MLP (vector) or CNN (image) backbone."""
 
     def __init__(
         self,
