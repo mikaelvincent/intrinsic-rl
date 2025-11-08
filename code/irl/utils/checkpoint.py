@@ -42,6 +42,39 @@ def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> 
         return torch.load(path, map_location=map_location)
 
 
+# -------------------- Public atomic helpers (text/bytes/files) --------------------
+
+
+def atomic_replace(src: Path, dst: Path) -> None:
+    """Public wrapper for atomic replace."""
+    _atomic_replace(Path(src), Path(dst))
+
+
+def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Atomically write text to `path` using tmp + replace + fsync."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Explicit fsync for durability
+    with open(tmp, "w", encoding=encoding, newline="") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    _atomic_replace(tmp, path)
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Atomically write bytes to `path` using tmp + replace + fsync."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    _atomic_replace(tmp, path)
+
+
 # -------------------- Config hash helper --------------------
 
 
