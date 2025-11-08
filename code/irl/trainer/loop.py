@@ -28,6 +28,10 @@ from .build import ensure_device, default_run_dir, single_spaces
 from .obs_norm import RunningObsNorm
 
 
+def _is_image_space(space) -> bool:
+    return hasattr(space, "shape") and len(space.shape) >= 2
+
+
 def train(
     cfg: Config,
     *,
@@ -53,6 +57,9 @@ def train(
     )
     env = manager.make()
     obs_space, act_space = single_spaces(env)
+
+    is_image = _is_image_space(obs_space)
+
     policy = PolicyNetwork(obs_space, act_space).to(device)
     value = ValueNetwork(obs_space).to(device)
 
@@ -104,12 +111,11 @@ def train(
     # --- Reset env(s) & init norm ---
     obs, _ = env.reset()
     B = int(getattr(env, "num_envs", 1))
-    obs_dim = int(obs_space.shape[0])
-    is_discrete = hasattr(act_space, "n")
 
-    obs_norm = RunningObsNorm(shape=obs_dim)
-    first_batch = obs if B > 1 else obs[None, :]
-    obs_norm.update(first_batch)
+    obs_norm = None if is_image else RunningObsNorm(shape=int(obs_space.shape[0]))
+    if not is_image:
+        first_batch = obs if B > 1 else obs[None, :]
+        obs_norm.update(first_batch)  # type: ignore[union-attr]
 
     global_step = 0
     update_idx = 0
@@ -121,10 +127,18 @@ def train(
                 int(cfg.ppo.steps_per_update),
                 max(1, ceil((int(total_steps) - int(global_step)) / B)),
             )
-
             T = per_env_steps
-            obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
-            next_obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
+
+            # Allocate storage depending on observation type
+            if not is_image:
+                obs_dim = int(obs_space.shape[0])
+                obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
+                next_obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
+            else:
+                obs_seq_list = []
+                next_obs_seq_list = []
+
+            is_discrete = hasattr(act_space, "n")
             acts_seq = (
                 np.zeros((T, B), dtype=np.int64)
                 if is_discrete
@@ -137,10 +151,17 @@ def train(
             ) else None
 
             for t in range(T):
-                obs_b = obs if B > 1 else obs[None, :]
-                obs_norm.update(obs_b)
-                obs_b_norm = obs_norm.normalize(obs_b)
-                obs_seq[t] = obs_b_norm.astype(np.float32)
+                obs_b = obs if B > 1 else obs[None, ...]
+                if not is_image:
+                    obs_norm.update(obs_b)  # type: ignore[union-attr]
+                    obs_b_norm = obs_norm.normalize(obs_b)  # type: ignore[union-attr]
+                else:
+                    obs_b_norm = obs_b  # images: no vector obs-norm (handled inside nets)
+
+                if not is_image:
+                    obs_seq[t] = obs_b_norm.astype(np.float32)
+                else:
+                    obs_seq_list.append(obs_b_norm.astype(np.float32))
 
                 with torch.no_grad():
                     obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
@@ -154,14 +175,21 @@ def train(
                 next_obs, rewards, terms, truncs, _ = env.step(a_np if B > 1 else a_np[0])
                 done_flags = np.asarray(terms, dtype=bool) | np.asarray(truncs, dtype=bool)
 
-                next_obs_b = next_obs if B > 1 else next_obs[None, :]
-                obs_norm.update(next_obs_b)
-                next_obs_b_norm = obs_norm.normalize(next_obs_b)
+                next_obs_b = next_obs if B > 1 else next_obs[None, ...]
+                if not is_image:
+                    obs_norm.update(next_obs_b)  # type: ignore[union-attr]
+                    next_obs_b_norm = obs_norm.normalize(next_obs_b)  # type: ignore[union-attr]
+                else:
+                    next_obs_b_norm = next_obs_b
 
                 acts_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[0:1, :])
                 rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
                 done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
-                next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
+
+                if not is_image:
+                    next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
+                else:
+                    next_obs_seq_list.append(next_obs_b_norm.astype(np.float32))
 
                 if r_int_raw_seq is not None:
                     r_step = intrinsic_module.compute_impact_binned(  # type: ignore[union-attr]
@@ -177,6 +205,16 @@ def train(
                 obs = next_obs
                 global_step += B
 
+            # Build obs arrays
+            if not is_image:
+                obs_seq_final = obs_seq
+                next_obs_seq_final = next_obs_seq
+                obs_shape = (int(obs_space.shape[0]),)
+            else:
+                obs_seq_final = np.stack(obs_seq_list, axis=0)
+                next_obs_seq_final = np.stack(next_obs_seq_list, axis=0)
+                obs_shape = tuple(int(s) for s in obs_space.shape)
+
             # --- Intrinsic compute/update (optional) ---
             r_int_raw_flat = None
             r_int_scaled_flat = None
@@ -185,8 +223,8 @@ def train(
                 if method_l == "ride":
                     r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)  # type: ignore[union-attr]
                 else:
-                    obs_flat = obs_seq.reshape(T * B, obs_dim)
-                    next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
+                    obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
+                    next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
                     acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
                     r_int_raw_t = compute_intrinsic_batch(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
@@ -204,8 +242,8 @@ def train(
 
                 try:
                     if method_l == "ride":
-                        obs_flat = obs_seq.reshape(T * B, obs_dim)
-                        next_obs_flat = next_obs_seq.reshape(T * B, obs_dim)
+                        obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
+                        next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
                         acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
                     mod_metrics = update_module(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat  # type: ignore[arg-type]
@@ -220,8 +258,8 @@ def train(
                 rew_total_seq = rew_ext_seq
 
             gae_batch = {
-                "obs": obs_seq,
-                "next_observations": next_obs_seq,
+                "obs": obs_seq_final,
+                "next_observations": next_obs_seq_final,
                 "rewards": rew_total_seq,
                 "dones": done_seq,
             }
@@ -229,11 +267,13 @@ def train(
                 gae_batch, value, gamma=float(cfg.ppo.gamma), lam=float(cfg.ppo.gae_lambda)
             )
 
-            obs_flat = obs_seq.reshape(T * B, obs_dim)
-            acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+            obs_flat_for_ppo = (
+                obs_seq_final.reshape(T * B, -1) if not is_image else obs_seq_final.reshape((T * B,) + obs_shape)
+            )
+            acts_flat_for_ppo = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
             batch = {
-                "obs": obs_flat,
-                "actions": acts_flat,
+                "obs": obs_flat_for_ppo,
+                "actions": acts_flat_for_ppo,
                 "rewards": rew_total_seq.reshape(T * B),
                 "dones": done_seq.reshape(T * B),
             }
@@ -242,7 +282,9 @@ def train(
 
             # --- Logging ---
             with torch.no_grad():
-                last_obs = torch.as_tensor(obs_seq[-1], device=device, dtype=torch.float32).view(B, -1)
+                last_obs = torch.as_tensor(
+                    obs_seq_final[-1], device=device, dtype=torch.float32
+                )  # [B,...]
                 ent = float(policy.entropy(last_obs).mean().item())
 
             log_payload = {
@@ -299,7 +341,8 @@ def train(
                     "policy": policy.state_dict(),
                     "value": value.state_dict(),
                     "cfg": to_dict(cfg),
-                    "obs_norm": {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},
+                    # Only persist obs_norm for vector observations
+                    "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
                     "intrinsic_norm": int_rms.state_dict(),
                     "meta": {"updates": update_idx},
                 }
@@ -319,7 +362,7 @@ def train(
             "policy": policy.state_dict(),
             "value": value.state_dict(),
             "cfg": to_dict(cfg),
-            "obs_norm": {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},
+            "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
             "intrinsic_norm": int_rms.state_dict(),
             "meta": {"updates": update_idx},
         }
