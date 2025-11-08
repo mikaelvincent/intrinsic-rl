@@ -27,6 +27,9 @@ from irl.intrinsic import (  # type: ignore
 from .build import ensure_device, default_run_dir, single_spaces, ensure_mujoco_gl
 from .obs_norm import RunningObsNorm
 
+# NEW: config hash helper for resume verification
+from irl.utils.checkpoint import compute_cfg_hash
+
 
 def _is_image_space(space) -> bool:
     return hasattr(space, "shape") and len(space.shape) >= 2
@@ -37,8 +40,24 @@ def train(
     *,
     total_steps: int = 10_000,
     run_dir: Optional[Path] = None,
+    resume: bool = False,
 ) -> Path:
-    """Run PPO + optional intrinsic rewards; returns the run directory."""
+    """Run PPO + optional intrinsic rewards; returns the run directory.
+
+    Parameters
+    ----------
+    cfg:
+        Validated Config object.
+    total_steps:
+        Absolute target environment steps for this run. If resuming from a checkpoint with
+        step=S, training continues until step reaches `total_steps` (no extra offset).
+    run_dir:
+        Directory for logs/checkpoints. If omitted, a fresh timestamped directory is created.
+        When provided with `resume=True`, the latest checkpoint in this directory is loaded.
+    resume:
+        If True and a latest checkpoint exists in `run_dir`, restore state and continue.
+        A config-hash mismatch aborts with a clear error to avoid accidental cross-run resumes.
+    """
     validate_config(cfg)
     device = ensure_device(cfg.device)
     torch.manual_seed(int(cfg.seed))
@@ -50,6 +69,39 @@ def train(
     except Exception:
         # Defensive: never hard-fail on an advisory utility
         pass
+
+    # ---- Resolve run directory & (optional) resume payload ----
+    run_dir = Path(run_dir) if run_dir is not None else default_run_dir(cfg)
+    ckpt = CheckpointManager(run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3)
+
+    resume_payload: Optional[dict] = None
+    resume_step: int = 0
+
+    if resume:
+        try:
+            # Load on CPU first (cheaper / device-agnostic), verify config hash early.
+            payload_cpu, step_cpu = ckpt.load_latest(map_location="cpu")
+            # Verify config hash (prefer stored cfg_hash; fallback to hash of embedded cfg).
+            current_hash = compute_cfg_hash(to_dict(cfg))
+            stored_hash = payload_cpu.get("cfg_hash")
+            if stored_hash is None:
+                stored_hash = compute_cfg_hash(payload_cpu.get("cfg", {}) or {})
+            if str(stored_hash) != str(current_hash):
+                raise RuntimeError(
+                    "Config hash mismatch when resuming:\n"
+                    f"  checkpoint: {stored_hash}\n"
+                    f"  current   : {current_hash}\n"
+                    "Refuse to resume with a different configuration. "
+                    "Supply a matching config or run with --no-resume."
+                )
+            resume_payload = payload_cpu
+            resume_step = int(step_cpu)
+            print(f"[resume] Loaded latest checkpoint at step={resume_step} from {ckpt.latest_path}")
+        except FileNotFoundError:
+            print("[resume] No checkpoint found; starting a new run.")
+        except Exception as exc:
+            # Fail loudly on intentional config mismatches; user can opt-out via resume=False.
+            raise
 
     # --- Env & models ---
     manager = EnvManager(
@@ -110,10 +162,8 @@ def train(
     int_rms = RunningRMS(beta=0.99, eps=1e-8)
 
     # --- Run dir, logging, checkpoints ---
-    run_dir = Path(run_dir) if run_dir is not None else default_run_dir(cfg)
     ml = MetricLogger(run_dir, cfg.logging)
     ml.log_hparams(to_dict(cfg))
-    ckpt = CheckpointManager(run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3)
 
     # --- Reset env(s) & init norm ---
     obs, _ = env.reset()
@@ -124,8 +174,50 @@ def train(
         first_batch = obs if B > 1 else obs[None, :]
         obs_norm.update(first_batch)  # type: ignore[union-attr]
 
+    # --- If resuming: restore state from checkpoint payload ---
     global_step = 0
     update_idx = 0
+    if resume_payload is not None:
+        try:
+            # Policy / Value
+            policy.load_state_dict(resume_payload["policy"])
+            value.load_state_dict(resume_payload["value"])
+        except Exception:
+            print("[resume] Warning: could not load policy/value weights from checkpoint.")
+        # Intrinsic global normalizer
+        try:
+            int_rms.load_state_dict(resume_payload.get("intrinsic_norm", {}))
+        except Exception:
+            pass
+        # Observation normalizer (only for vector observations)
+        try:
+            if not is_image and resume_payload.get("obs_norm") is not None:
+                on = resume_payload["obs_norm"]
+                # Ensure dtype/shape correctness
+                import numpy as _np
+
+                obs_norm.count = float(on.get("count", obs_norm.count))  # type: ignore[union-attr]
+                obs_norm.mean = _np.asarray(on.get("mean", obs_norm.mean), dtype=_np.float64)  # type: ignore[union-attr]
+                obs_norm.var = _np.asarray(on.get("var", obs_norm.var), dtype=_np.float64)  # type: ignore[union-attr]
+        except Exception:
+            pass
+        # Intrinsic module state (if present & compatible)
+        try:
+            intr = resume_payload.get("intrinsic")
+            if intrinsic_module is not None and isinstance(intr, dict):
+                if intr.get("method") == method_l and "state_dict" in intr:
+                    intrinsic_module.load_state_dict(intr["state_dict"])  # type: ignore[attr-defined]
+        except Exception:
+            print("[resume] Warning: intrinsic module state not restored.")
+
+        # Counters
+        global_step = int(resume_step)
+        try:
+            update_idx = int((resume_payload.get("meta") or {}).get("updates", update_idx))
+        except Exception:
+            update_idx = update_idx
+
+        print(f"[resume] State restored. Continuing from global_step={global_step}.")
 
     try:
         while global_step < int(total_steps):
@@ -348,6 +440,7 @@ def train(
                     "policy": policy.state_dict(),
                     "value": value.state_dict(),
                     "cfg": to_dict(cfg),
+                    "cfg_hash": compute_cfg_hash(to_dict(cfg)),  # NEW: store config hash
                     # Only persist obs_norm for vector observations
                     "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
                     "intrinsic_norm": int_rms.state_dict(),
@@ -369,6 +462,7 @@ def train(
             "policy": policy.state_dict(),
             "value": value.state_dict(),
             "cfg": to_dict(cfg),
+            "cfg_hash": compute_cfg_hash(to_dict(cfg)),  # NEW: store config hash
             "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
             "intrinsic_norm": int_rms.state_dict(),
             "meta": {"updates": update_idx},
