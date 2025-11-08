@@ -24,14 +24,19 @@ def _single_spaces(env) -> tuple:
 
 
 def _build_normalizer(payload) -> Optional[tuple[np.ndarray, np.ndarray]]:
-    """Return (mean, std) if obs_norm is present in checkpoint payload."""
+    """Return (mean, std) if vector obs_norm is present; images return None."""
     on = payload.get("obs_norm")
     if on is None:
         return None
     mean = np.asarray(on.get("mean"), dtype=np.float64)
     var = np.asarray(on.get("var"), dtype=np.float64)
+    # For image runs we stored obs_norm=None, so this branch won't run.
     std = np.sqrt(var + 1e-8)
     return mean, std
+
+
+def _is_image_space(space) -> bool:
+    return hasattr(space, "shape") and len(space.shape) >= 2
 
 
 @app.command("eval")
@@ -58,7 +63,8 @@ def cli_eval(
     policy.load_state_dict(payload["policy"])
     policy.eval()
 
-    norm = _build_normalizer(payload)
+    is_image = _is_image_space(obs_space)
+    norm = _build_normalizer(payload) if not is_image else None
 
     def _normalize(x: np.ndarray) -> np.ndarray:
         if norm is None:
@@ -77,7 +83,7 @@ def cli_eval(
                 obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
             )
             with torch.no_grad():
-                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device).view(1, -1)
+                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
                 dist = policy.distribution(obs_t)
                 act = dist.mode()
                 a = act.detach().cpu().numpy()
