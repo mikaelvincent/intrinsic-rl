@@ -5,6 +5,7 @@ refactor goals.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,18 @@ def cli_train(
         "--method",
         help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
     ),
+    env: Optional[str] = typer.Option(
+        None,
+        "--env",
+        "-e",
+        help="Override Gymnasium environment id (e.g., Ant-v4, HalfCheetah-v4, Humanoid-v4).",
+    ),
+    device: Optional[str] = typer.Option(
+        None,
+        "--device",
+        "-d",
+        help='Override device, e.g., "cpu" or "cuda:0". (Defaults to config value or CPU.)',
+    ),
 ) -> None:
     """Launch PPO training with optional intrinsic rewards."""
     if config is not None:
@@ -53,18 +66,13 @@ def cli_train(
     if config is None and method is None:
         method = "vanilla"
 
+    # Apply CLI overrides while preserving other config fields.
     if method is not None:
-        cfg = Config(
-            seed=cfg.seed,
-            device=cfg.device,
-            method=str(method),
-            env=cfg.env,
-            ppo=cfg.ppo,
-            intrinsic=cfg.intrinsic,
-            adaptation=cfg.adaptation,
-            evaluation=cfg.evaluation,
-            logging=cfg.logging,
-        )
+        cfg = replace(cfg, method=str(method))
+    if env is not None:
+        cfg = replace(cfg, env=replace(cfg.env, id=str(env)))
+    if device is not None:
+        cfg = replace(cfg, device=str(device))
 
     validate_config(cfg)
     out_dir = run_train(cfg, total_steps=total_steps, run_dir=run_dir)
