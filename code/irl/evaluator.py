@@ -25,6 +25,7 @@ import torch
 from irl.envs import EnvManager
 from irl.models import PolicyNetwork
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.determinism import seed_everything  # NEW
 
 
 def _single_spaces(env) -> Tuple:
@@ -93,6 +94,9 @@ def evaluate(
     seed = int(cfg.get("seed", 1))
     step = int(payload.get("step", -1))
 
+    # NEW: apply uniform seeding to maximize repeatability in tests/CI
+    seed_everything(seed, deterministic=True)
+
     # Build a single environment (no vectorization) for evaluation
     manager = EnvManager(env_id=env, num_envs=1, seed=seed)
     e = manager.make()
@@ -132,11 +136,10 @@ def evaluate(
                 act = dist.mode()
                 a_np = act.detach().cpu().numpy()
 
+            # Discrete or continuous action routing
             if hasattr(act_space, "n"):
-                # Discrete action
                 action_for_env = int(a_np.item())
             else:
-                # Continuous Box action: ensure flat shape for env.step()
                 action_for_env = a_np.reshape(-1)
 
             next_obs, r, term, trunc, _ = e.step(action_for_env)
