@@ -32,7 +32,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import typer
 
 from irl.evaluator import evaluate
-from irl.utils.checkpoint import load_checkpoint
+from irl.utils.checkpoint import load_checkpoint, atomic_replace  # <-- added atomic_replace
 from irl.stats_utils import bootstrap_ci, mannwhitney_u  # NEW: stats helpers
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -161,10 +161,11 @@ def _evaluate_ckpt(ckpt: Path, episodes: int, device: str) -> RunResult:
 
 
 def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
-    """Write per-checkpoint results to CSV."""
+    """Write per-checkpoint results to CSV (atomic)."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fn = path
-    with fn.open("w", newline="", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(
             [
@@ -199,6 +200,13 @@ def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
                     str(r.ckpt_path),
                 ]
             )
+        f.flush()
+        try:
+            import os
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+    atomic_replace(tmp, path)
 
 
 def _aggregate(rows: List[RunResult]) -> List[Dict[str, object]]:
@@ -236,8 +244,10 @@ def _aggregate(rows: List[RunResult]) -> List[Dict[str, object]]:
 
 
 def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
-    """Write aggregated summary to CSV (one row per (method, env))."""
+    """Write aggregated summary to CSV (atomic)."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
     cols = [
         "method",
         "env_id",
@@ -252,11 +262,18 @@ def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
         "step_max",
         "step_mean",
     ]
-    with path.open("w", newline="", encoding="utf-8") as f:
+    with tmp.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for row in agg_rows:
             w.writerow(row)
+        f.flush()
+        try:
+            import os
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+    atomic_replace(tmp, path)
 
 
 @app.command("eval-many")
@@ -458,7 +475,8 @@ def cli_stats(
         return float(float(sum(a)) / len(a) - float(sum(b)) / len(b))
 
     def diff_median(a, b):  # noqa: ANN001
-        return float(np.median(a) - np.median(b))
+        import numpy as _np
+        return float(_np.median(a) - _np.median(b))
 
     mean_pt, mean_lo, mean_hi = (
         bootstrap_ci(x, y, diff_mean, n_boot=int(boot))
