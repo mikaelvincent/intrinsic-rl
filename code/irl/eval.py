@@ -2,41 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from statistics import mean, pstdev
 from typing import Optional
 
-import numpy as np
-import torch
 import typer
 
-from irl.envs import EnvManager
-from irl.models import PolicyNetwork, ValueNetwork  # Value kept for parity
-from irl.utils.checkpoint import load_checkpoint
+from irl.evaluator import evaluate as run_evaluate
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
-
-
-def _single_spaces(env) -> tuple:
-    obs_space = getattr(env, "single_observation_space", None) or env.observation_space
-    act_space = getattr(env, "single_action_space", None) or env.action_space
-    return obs_space, act_space
-
-
-def _build_normalizer(payload) -> Optional[tuple[np.ndarray, np.ndarray]]:
-    """Return (mean, std) if vector obs_norm is present; images return None."""
-    on = payload.get("obs_norm")
-    if on is None:
-        return None
-    mean = np.asarray(on.get("mean"), dtype=np.float64)
-    var = np.asarray(on.get("var"), dtype=np.float64)
-    # For image runs we stored obs_norm=None, so this branch won't run.
-    std = np.sqrt(var + 1e-8)
-    return mean, std
-
-
-def _is_image_space(space) -> bool:
-    return hasattr(space, "shape") and len(space.shape) >= 2
 
 
 @app.command("eval")
@@ -49,56 +23,32 @@ def cli_eval(
     device: str = typer.Option(
         "cpu", "--device", "-d", help='Torch device, e.g., "cpu" or "cuda:0".'
     ),
+    out: Optional[Path] = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Optional path to write aggregated results as JSON.",
+        dir_okay=False,
+    ),
 ) -> None:
-    """Run evaluation episodes using mode actions (no exploration)."""
-    payload = load_checkpoint(ckpt, map_location=device)
-    cfg = payload.get("cfg", {})
-    seed = int(cfg.get("seed", 1))
+    """Run evaluation episodes using mode actions and report aggregate stats."""
+    summary = run_evaluate(env=env, ckpt=ckpt, episodes=episodes, device=device)
 
-    manager = EnvManager(env_id=env, num_envs=1, seed=seed)
-    e = manager.make()
-    obs_space, act_space = _single_spaces(e)
+    # Per-episode lines
+    for i, (ret, length) in enumerate(zip(summary["returns"], summary["lengths"]), start=1):
+        typer.echo(f"Episode {i}/{summary['episodes']}: return = {ret:.2f}, length = {length}")
 
-    policy = PolicyNetwork(obs_space, act_space).to(device)
-    policy.load_state_dict(payload["policy"])
-    policy.eval()
-
-    is_image = _is_image_space(obs_space)
-    norm = _build_normalizer(payload) if not is_image else None
-
-    def _normalize(x: np.ndarray) -> np.ndarray:
-        if norm is None:
-            return x
-        mean, std = norm
-        return (x - mean) / std
-
-    returns: list[float] = []
-
-    for ep in range(int(episodes)):
-        obs, _ = e.reset()
-        done = False
-        ep_ret = 0.0
-        while not done:
-            x = _normalize(
-                obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
-            )
-            with torch.no_grad():
-                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
-                dist = policy.distribution(obs_t)
-                act = dist.mode()
-                a = act.detach().cpu().numpy()
-            next_obs, r, term, trunc, _ = e.step(int(a.item()) if hasattr(act_space, "n") else a[0])
-            ep_ret += float(r)
-            obs = next_obs
-            done = bool(term) or bool(trunc)
-        returns.append(ep_ret)
-        typer.echo(f"Episode {ep+1}/{episodes}: return = {ep_ret:.2f}")
-
-    m = mean(returns)
-    s = pstdev(returns) if len(returns) > 1 else 0.0
+    # Aggregate line
     typer.echo(
-        f"\n[green]Eval complete[/green] — mean return {m:.2f} ± {s:.2f} over {episodes} episodes"
+        f"\n[green]Eval complete[/green] — mean return {summary['mean_return']:.2f} "
+        f"± {summary['std_return']:.2f} over {summary['episodes']} episodes"
     )
+
+    # Optional JSON dump
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        typer.echo(f"Saved summary to {out}")
 
 
 def main() -> None:
