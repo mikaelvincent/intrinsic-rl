@@ -6,7 +6,7 @@ Returns LP normalized via a running RMS and scaled by α_LP.
 Now supports **image** observations by delegating φ(s) to ICM, which routes
 vectors via MLP and images via ConvEncoder.
 
-See: devspec/dev_spec_and_plan.md §5.3.5 (R‑IAC) and §5.7 (nets/losses).
+See: devspec/dev_spec_and_plan.md §5.3.5 (R-IAC) and §5.7 (nets/losses).
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def simulate_lp_emas(
 
 
 class RIAC(BaseIntrinsicModule, nn.Module):
-    """R‑IAC: learning progress per region (normalized)."""
+    """R-IAC: learning progress per region (normalized)."""
 
     def __init__(
         self,
@@ -145,16 +145,47 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized LP for a batch; updates per-region EMAs."""
-        err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [B], [B,D]
+        """Vectorized LP for a batch; updates per-region EMAs.
 
+        Optimization: group by region id and update EMAs once per region using the
+        mean forward error of samples that map to that region. This reduces Python-
+        level loops without changing interfaces. (Per-sample LPs within a region
+        share the same post-update LP.)
+        """
+        err_t, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [B], [B,D]
+
+        # Insert all points; get region ids
         phi_np = phi_t.detach().cpu().numpy()
-        rids = self.store.bulk_insert(phi_np)
-        lp_vals: list[float] = []
-        for i in range(err.shape[0]):
-            lp_vals.append(self._update_region(int(rids[i]), float(err[i].item())))
+        rids = self.store.bulk_insert(phi_np)  # (B,)
+        err_np = err_t.detach().cpu().numpy().astype(np.float64)
 
-        lp_arr = np.asarray(lp_vals, dtype=np.float32)
+        # Group errors by region id and compute per-region mean error
+        uniq, inv = np.unique(rids, return_inverse=True)  # uniq[K], inv[B] in [0..K-1]
+        sums = np.zeros(len(uniq), dtype=np.float64)
+        cnts = np.zeros(len(uniq), dtype=np.int64)
+        np.add.at(sums, inv, err_np)
+        np.add.at(cnts, inv, 1)
+        means = sums / np.maximum(1, cnts)
+
+        # Update region stats once per region (EMA on the mean)
+        lp_per_region = np.zeros(len(uniq), dtype=np.float32)
+        for i, rid in enumerate(uniq):
+            rid_i = int(rid)
+            e_mean = float(means[i])
+            st = self._stats.get(rid_i)
+            if st is None or st.count == 0:
+                # First observation(s) in this region: initialize EMAs to the mean error.
+                self._stats[rid_i] = _RegionStats(ema_long=e_mean, ema_short=e_mean, count=int(cnts[i]))
+                lp = 0.0
+            else:
+                st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * e_mean
+                st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * e_mean
+                st.count += int(cnts[i])
+                lp = max(0.0, float(st.ema_long - st.ema_short))
+            lp_per_region[i] = float(lp)
+
+        # Broadcast per-region LP back to samples, normalize, and scale
+        lp_arr = lp_per_region[inv].astype(np.float32)  # (B,)
         self._lp_rms.update(lp_arr)
         lp_norm = self._lp_rms.normalize(lp_arr)
 
