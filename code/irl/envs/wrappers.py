@@ -93,14 +93,20 @@ class DomainRandomizationWrapper(gym.Wrapper):
 
     * MuJoCo: scale gravity (~±5%) and geom friction (~±10%).
     * Box2D : scale vertical gravity (~±5%).
-    Randomization is applied before every `reset`.
+    Randomization is applied **before** every `reset()`.
+
+    Diagnostics:
+      - Adds an entry to the `reset()` info dict:
+          info["dr_applied"] = {"mujoco": <int>, "box2d": <int>}
+        indicating how many sub-perturbations were applied per backend.
     """
 
     def __init__(self, env: gym.Env, seed: Optional[int] = None) -> None:
         super().__init__(env)
         # Use numpy RNG; vector environments can still be reproducible via per-env seeding.
         self._rng = np.random.default_rng(seed)
-        self._last_applied = 0  # diagnostics only
+        self._last_applied = 0  # total diagnostics only (sum)
+        self._last_diag: dict[str, int] = {"mujoco": 0, "box2d": 0}  # detailed diagnostics
 
     # ------------------ helpers ------------------
 
@@ -166,13 +172,22 @@ class DomainRandomizationWrapper(gym.Wrapper):
         return applied
 
     def _apply_randomization(self) -> None:
-        applied = 0
-        applied += self._maybe_randomize_mujoco()
-        applied += self._maybe_randomize_box2d()
-        self._last_applied = applied
+        """Apply DR and update diagnostics (per-backend + total)."""
+        applied_mj = self._maybe_randomize_mujoco()
+        applied_b2d = self._maybe_randomize_box2d()
+        self._last_diag = {"mujoco": int(applied_mj), "box2d": int(applied_b2d)}
+        self._last_applied = int(applied_mj + applied_b2d)
 
     # ------------------ gym API ------------------
 
     def reset(self, **kwargs):
         self._apply_randomization()
-        return self.env.reset(**kwargs)
+        obs, info = self.env.reset(**kwargs)
+        # Ensure info is a dict we can enrich with diagnostics
+        if not isinstance(info, dict):
+            info = {}
+        else:
+            info = dict(info)  # copy to avoid mutating upstream containers
+        # Inject per-backend diagnostics; remain no-op if both zeros
+        info.setdefault("dr_applied", dict(self._last_diag))
+        return obs, info
