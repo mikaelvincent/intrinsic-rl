@@ -2,7 +2,7 @@
 
 This document explains the configuration schema, invariants, and shows runnable examples that match the trainer and tests.
 
-> All keys are validated strictly. Unknown/missing keys raise a `ConfigError`.  
+> All keys are validated strictly. Unknown/missing keys raise a `ConfigError`.
 > Source of truth: `code/irl/cfg/schema.py` and `code/irl/cfg/loader.py`.
 
 ---
@@ -312,3 +312,30 @@ You can inspect gating trends via the logged `gate_rate` metric (Proposed).
 * Loader & validation: `code/irl/cfg/loader.py`
 * Ready-made configs: `code/configs/**/*.yaml`
 * Trainer entry: `code/irl/trainer/loop.py`
+
+---
+
+## 7) Resume semantics & optimizer persistence
+
+Checkpoints include:
+
+* `step`: current environment step.
+* `policy` / `value`: network state dicts.
+* `cfg` + `cfg_hash`: exact configuration and a short hash used to verify resume safety.
+* `obs_norm`: observation normalizer state for vector observations (images don’t use this).
+* `intrinsic_norm`: global intrinsic `RunningRMS` state (used when module outputs are not normalized internally).
+* `optimizers`: **Adam state dicts** for policy and value — momentum/EMA preserved.
+* `intrinsic` (optional): method-tagged intrinsic module state dict (restored only if the current run’s `method` matches).
+
+**Resume behavior (`--resume`):**
+
+1. Load the latest checkpoint from `--run-dir`.
+2. Verify **config hash** matches the current config; on mismatch, training **aborts** with a clear error.
+3. Restore policy/value, **optimizer states**, global RMS, obs normalizer (if applicable), and intrinsic module state (if method matches).
+4. Move optimizer tensors to the active device automatically (CPU/GPU) before continuing.
+5. Continue training until `--total-steps` is reached (no extra offset; if the checkpoint is already beyond `--total-steps`, the run exits immediately).
+
+> To start a new run in an existing directory, omit `--resume` (default) or pass `--no-resume`.
+> Intrinsic state is only restored when `intrinsic.method` in the checkpoint equals the current `method`; otherwise, training proceeds without loading that module’s state.
+
+For details on intrinsic normalization during training and how it interacts with resumes, see **“Normalization contract (unified)”** above.
