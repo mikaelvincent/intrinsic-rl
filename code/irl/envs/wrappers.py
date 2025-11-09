@@ -71,8 +71,21 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
         self.action_space = spaces.Discrete(self._action_set.shape[0])
 
     def action(self, act: int):
-        act = int(act)
-        return self._action_set[act]
+        """Map a discrete index to the underlying Box(3,) action with bounds-checking."""
+        try:
+            idx = int(act)
+        except Exception as exc:
+            raise ValueError(
+                f"Discrete action must be an integer index (got {act!r})."
+            ) from exc
+
+        n = int(self._action_set.shape[0])
+        if idx < 0 or idx >= n:
+            raise ValueError(
+                f"Action index {idx} is out of bounds for action set of size {n}. "
+                f"Valid range is [0, {n - 1}]."
+            )
+        return self._action_set[idx]
 
 
 class DomainRandomizationWrapper(gym.Wrapper):
