@@ -44,6 +44,29 @@ def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
                 state[k] = v.to(device)
 
 
+# ---------------- new helper: enforce time-major (T,B,...) ---------------- #
+
+def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarray:
+    """Return array with leading dims (T,B,...) from (T,B,...) or (B,T,...).
+
+    Raises ValueError with a clear message if shapes are inconsistent.
+    """
+    if x.ndim < 2:
+        raise ValueError(
+            f"{name}: expected at least 2 dims (T,B,...), got shape={x.shape}"
+        )
+    t0, b0 = int(x.shape[0]), int(x.shape[1])
+    if t0 == T and b0 == B:
+        return x
+    if t0 == B and b0 == T:
+        # auto-fix common mistake: batch-major provided instead of time-major
+        return np.swapaxes(x, 0, 1)
+    raise ValueError(
+        f"{name}: inconsistent leading dims. Expected (T,B)=({T},{B}); got {tuple(x.shape[:2])}. "
+        "Ensure time is the first axis and batch is second."
+    )
+
+
 def train(
     cfg: Config,
     *,
@@ -340,6 +363,14 @@ def train(
                 obs_seq_final = np.stack(obs_seq_list, axis=0)
                 next_obs_seq_final = np.stack(next_obs_seq_list, axis=0)
                 obs_shape = tuple(int(s) for s in obs_space.shape)
+
+            # ---- NEW: enforce time-major (T,B,...) everywhere ----
+            obs_seq_final = _ensure_time_major_np(obs_seq_final, T, B, "obs_seq")
+            next_obs_seq_final = _ensure_time_major_np(next_obs_seq_final, T, B, "next_obs_seq")
+            rew_ext_seq = _ensure_time_major_np(rew_ext_seq, T, B, "rewards")
+            done_seq = _ensure_time_major_np(done_seq, T, B, "dones")
+            if r_int_raw_seq is not None:
+                r_int_raw_seq = _ensure_time_major_np(r_int_raw_seq, T, B, "r_int_raw")
 
             # --- Intrinsic compute/update (optional) ---
             r_int_raw_flat = None
