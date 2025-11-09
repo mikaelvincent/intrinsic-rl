@@ -396,7 +396,9 @@ def train(
             obs_flat_for_ppo = (
                 obs_seq_final.reshape(T * B, -1) if not is_image else obs_seq_final.reshape((T * B,) + obs_shape)
             )
-            acts_flat_for_ppo = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+            acts_flat_for_ppo = (
+                acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+            )
             batch = {
                 "obs": obs_flat_for_ppo,
                 "actions": acts_flat_for_ppo,
@@ -438,6 +440,9 @@ def train(
                             "ppo_entropy": float(ppo_stats.get("entropy", float("nan"))),
                             "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
                             "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
+                            # NEW: KL early-stop + epochs ran
+                            "ppo_early_stop": float(ppo_stats.get("early_stop", 0.0)),
+                            "ppo_epochs_ran": float(ppo_stats.get("epochs_ran", float("nan"))),
                         }
                     )
                 except Exception:
