@@ -391,8 +391,10 @@ def train(
                 r_clip = float(cfg.intrinsic.r_clip)
                 outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
                 if outputs_norm:
+                    # Module already normalized -> only clip + scale
                     r_int_scaled_flat = eta * np.clip(r_int_raw_flat, -r_clip, r_clip)
                 else:
+                    # Global RMS path
                     int_rms.update(r_int_raw_flat)
                     r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                     r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
@@ -481,10 +483,33 @@ def train(
 
             if r_int_raw_flat is not None and r_int_scaled_flat is not None:
                 outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False)) if intrinsic_module else False
-                if outputs_norm and hasattr(intrinsic_module, "lp_rms"):
-                    r_int_rms_val = float(getattr(intrinsic_module, "lp_rms"))
-                else:
-                    r_int_rms_val = float(int_rms.rms)
+
+                # Prefer module-provided RMS diagnostics to avoid double-normalization ambiguity.
+                r_int_rms_val = float(int_rms.rms)
+                if outputs_norm and intrinsic_module is not None:
+                    # Single-RMS modules (e.g., RND with internal normalization)
+                    if hasattr(intrinsic_module, "rms"):
+                        try:
+                            r_int_rms_val = float(getattr(intrinsic_module, "rms"))
+                        except Exception:
+                            pass
+                    # Multi-component modules (Proposed): log both and average for r_int_rms
+                    if hasattr(intrinsic_module, "impact_rms") and hasattr(intrinsic_module, "lp_rms"):
+                        try:
+                            imp_rms_val = float(getattr(intrinsic_module, "impact_rms"))
+                            lp_rms_val = float(getattr(intrinsic_module, "lp_rms"))
+                            log_payload["impact_rms"] = imp_rms_val
+                            log_payload["lp_rms"] = lp_rms_val
+                            r_int_rms_val = 0.5 * (imp_rms_val + lp_rms_val)
+                        except Exception:
+                            pass
+                    # Fallback: some modules expose only lp_rms (RIAC)
+                    elif hasattr(intrinsic_module, "lp_rms"):
+                        try:
+                            r_int_rms_val = float(getattr(intrinsic_module, "lp_rms"))
+                        except Exception:
+                            pass
+
                 log_payload.update(
                     {
                         "r_int_raw_mean": float(np.mean(r_int_raw_flat)),
