@@ -4,6 +4,13 @@ Intrinsic is the MSE between a trainable predictor and a fixed random target
 on observations (prefers next_obs if provided). Optional running RMS can
 normalize outputs locally; by default the trainer handles global scaling.
 
+This module participates in the unified normalization contract:
+- `self.outputs_normalized` reflects whether intrinsic values are already
+  normalized *inside* the module. When True, the trainer must NOT apply
+  global normalization again (only clip+scale).
+- For diagnostics, `.rms` exposes the current RMS used when internal
+  normalization is enabled.
+
 See: devspec/dev_spec_and_plan.md §5.3.3.
 """
 
@@ -33,7 +40,9 @@ class RNDConfig:
     grad_clip: float = 5.0
     rms_beta: float = 0.99
     rms_eps: float = 1e-8
-    normalize_intrinsic: bool = False  # trainer supplies global normalizer by default
+    # When True, the module normalizes intrinsic internally and sets
+    # `outputs_normalized=True` so the trainer will not normalize again.
+    normalize_intrinsic: bool = False
 
 
 class RND(BaseIntrinsicModule, nn.Module):
@@ -66,7 +75,19 @@ class RND(BaseIntrinsicModule, nn.Module):
         # Running RMS over unnormalized intrinsic values
         self.register_buffer("_r2_ema", torch.tensor(1.0, dtype=torch.float32))  # start non-zero
 
+        # ---- Unified normalization contract --------------------------------
+        # If normalize_intrinsic=True, the module's outputs are already normalized.
+        # The trainer should then skip its own global RMS normalization.
+        self.outputs_normalized: bool = bool(self.cfg.normalize_intrinsic)
+
         self.to(self.device)
+
+    # -------------------------- Diagnostics ---------------------------
+
+    @property
+    def rms(self) -> float:
+        """Current RMS used by the internal normalizer (if enabled)."""
+        return float(torch.sqrt(self._r2_ema + self.cfg.rms_eps).detach().item())
 
     # -------------------------- Core compute ---------------------------
 
@@ -83,6 +104,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         return F.mse_loss(p, t, reduction="none").mean(dim=-1)
 
     def _normalize_intrinsic(self, r: Tensor) -> Tensor:
+        """Optionally normalize with the module's running RMS."""
         if not self.cfg.normalize_intrinsic:
             return r
         denom = torch.sqrt(self._r2_ema + self.cfg.rms_eps)
@@ -140,6 +162,6 @@ class RND(BaseIntrinsicModule, nn.Module):
             metrics = {
                 "loss_total": float(out["total"].detach().item()),
                 "intrinsic_mean": float(out["intrinsic_mean"].detach().item()),
-                "rms": float(torch.sqrt(self._r2_ema + self.cfg.rms_eps).detach().item()),
+                "rms": self.rms,
             }
         return metrics
