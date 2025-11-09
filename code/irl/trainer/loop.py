@@ -482,23 +482,35 @@ def train(
 
             # --- Logging ---
             with torch.no_grad():
+                # Last-step entropy (legacy)
                 last_obs = torch.as_tensor(
                     obs_seq_final[-1], device=device, dtype=torch.float32
                 )  # [B,...]
-                ent = float(policy.entropy(last_obs).mean().item())
+                ent_last = float(policy.entropy(last_obs).mean().item())
+
+                # NEW: mean policy entropy across the whole update (T*B samples)
+                obs_flat_t = torch.as_tensor(
+                    obs_flat_for_ppo, device=device, dtype=torch.float32
+                )
+                ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
             log_payload = {
-                "policy_entropy": float(ent),
+                # Kept for backward compatibility (last step)
+                "policy_entropy": float(ent_last),
+                # New metric as requested: mean across update batch
+                "policy_entropy_mean": float(ent_mean_update),
                 "reward_mean": float(rew_ext_seq.mean()),
                 "reward_total_mean": float(rew_total_seq.mean()),
             }
-            # NEW: add PPO monitor stats when available
+            # NEW: add PPO monitor stats when available (+ percentage for clip_frac)
             if isinstance(ppo_stats, dict):
                 try:
+                    clip_frac = float(ppo_stats.get("clip_frac", float("nan")))
                     log_payload.update(
                         {
                             "approx_kl": float(ppo_stats.get("approx_kl", float("nan"))),
-                            "clip_frac": float(ppo_stats.get("clip_frac", float("nan"))),
+                            "clip_frac": clip_frac,
+                            "clip_frac_pct": (100.0 * clip_frac) if np.isfinite(clip_frac) else float("nan"),
                             "ppo_entropy": float(ppo_stats.get("entropy", float("nan"))),
                             "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
                             "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
@@ -527,6 +539,7 @@ def train(
                         try:
                             imp_rms_val = float(getattr(intrinsic_module, "impact_rms"))
                             lp_rms_val = float(getattr(intrinsic_module, "lp_rms"))
+                            # Explicitly log both RMS tracks for Proposed
                             log_payload["impact_rms"] = imp_rms_val
                             log_payload["lp_rms"] = lp_rms_val
                             r_int_rms_val = 0.5 * (imp_rms_val + lp_rms_val)
