@@ -74,11 +74,27 @@ irl-train --config code/configs/mujoco/humanoid_proposed.yaml   --total-steps 10
 
 ### 4) Resume training safely
 
-The trainer stores a **config hash** in checkpoints and refuses to resume if the current config doesn’t match.
+The trainer stores a **config hash** in checkpoints and **refuses to resume** if the current config doesn’t match.
 
 ```bash
 irl-train --config code/configs/mountaincar_ride.yaml --total-steps 200000 --resume --run-dir runs/<your-run-dir>
 ```
+
+**What gets restored on `--resume`:**
+
+* **Policy & value weights** (exact network parameters).
+* **PPO optimizer states (Adam)** for both policy and value — momentum/EMA is preserved for stable continuation.
+* **Intrinsic module state** (if present and method matches), including any per-module RMS and region/gating statistics.
+* **Global intrinsic RMS** (when the selected module is *not* normalized internally).
+* **Observation normalizer** (for vector observations).
+* **Counters/metadata** (current `step`, update counter) so training continues until the requested `--total-steps` (no extra offset).
+
+**Safety & portability:**
+
+* A **config-hash mismatch** aborts resume to prevent accidental cross-run continuation (e.g., different `env.id`, `method`, or PPO settings).
+* On resume, optimizer tensors are moved to the active device automatically (CPU↔GPU) before training continues.
+
+> Start fresh in the same directory by omitting `--resume` (default) or passing `--no-resume`. This will **not** load the latest checkpoint.
 
 ### 5) Evaluate a checkpoint (deterministic, no intrinsic)
 
