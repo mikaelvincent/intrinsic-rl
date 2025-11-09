@@ -20,6 +20,7 @@ from torch.nn import functional as F
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput, Transition
 from irl.utils.torchops import as_tensor, ensure_2d, one_hot
 from irl.models import ConvEncoder, ConvEncoderConfig  # CNN path for image observations
+from irl.utils.image import preprocess_image, ImagePreprocessConfig
 
 from .encoder import mlp
 from .heads import ContinuousInverseHead, ForwardHead
@@ -47,7 +48,7 @@ class ICM(BaseIntrinsicModule, nn.Module):
     """Intrinsic Curiosity Module with φ, inverse, and forward heads.
 
     * Vector observations → φ via an MLP.
-    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly).
+    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly) with centralized preprocessing.
     """
 
     def __init__(
@@ -93,6 +94,11 @@ class ICM(BaseIntrinsicModule, nn.Module):
                 in_channels = shape[-1]
             cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.phi_dim))
             self.encoder = ConvEncoder(cnn_cfg)  # lazy projection init handled internally
+
+            # Centralized image preprocessing config: keep original channels; output NCHW; scale uint8 → [0,1]
+            self._img_pre_cfg = ImagePreprocessConfig(
+                grayscale=False, scale_uint8=True, normalize_mean=None, normalize_std=None, channels_first=True
+            )
         else:
             # Vector path: simple MLP
             # Note: first layer of mlp() includes FlattenObs so [T,B,D]/[B,D]/[D] are all handled.
@@ -119,26 +125,17 @@ class ICM(BaseIntrinsicModule, nn.Module):
     def _phi(self, obs: Any) -> Tensor:
         """Return φ(s) for a batch or single observation.
 
-        * If image: auto-convert layout to NCHW and auto-scale to [0,1] when inputs
-          appear to be 0–255 (uint8 or float range > 1.0).
+        * If image: centralized preprocessing to NCHW float32 in [0,1] via `utils.image.preprocess_image`,
+          tolerant to HWC/NHWC/CHW/NCHW and extra leading dims (e.g., (T,B,H,W,C)).
         * If vector: flatten to [B, D] before passing to the MLP encoder.
         """
         if self.is_image_obs:
             t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
-            t = t.to(self.device)
-            # Convert to float32; if values look like 0..255 (or dtype integer), scale to [0, 1].
-            if not torch.is_floating_point(t):
-                t = t.to(torch.float32) / 255.0
-            else:
-                t = t.to(torch.float32)
-                # Heuristic: auto-scale if max > 1.0 (common for raw 0..255 floats)
-                try:
-                    if torch.isfinite(t).any() and float(t.max().item()) > 1.0 + 1e-6:
-                        t = t / 255.0
-                except Exception:
-                    # Be conservative: leave as-is if reduction fails
-                    pass
-            return self.encoder(t)
+            if t.dim() >= 5:
+                # Collapse leading dims to a simple NCHW/NHWC batch
+                t = t.reshape(-1, *t.shape[-3:])
+            x = preprocess_image(t, cfg=self._img_pre_cfg, device=self.device)  # -> NCHW float32 [0,1]
+            return self.encoder(x)
         else:
             x = as_tensor(obs, self.device)
             return self.encoder(ensure_2d(x))
