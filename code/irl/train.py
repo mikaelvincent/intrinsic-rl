@@ -1,4 +1,4 @@
-"""PPO training CLI â€” thin wrapper around irl.trainer.train().
+"""PPO training CLI — thin wrapper around irl.trainer.train().
 
 This keeps the public CLI stable while moving the heavy training logic into the irl.trainer subpackage to meet Sprint 5
 refactor goals.
