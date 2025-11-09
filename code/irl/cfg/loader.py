@@ -89,6 +89,39 @@ def loads_config(yaml_text: str) -> Config:
     return cfg
 
 
+# ----- Helpers for friendlier validation messages ---------------------------
+
+def _divisors(n: int) -> list[int]:
+    """Return all positive divisors of n (sorted)."""
+    n = int(abs(n))
+    if n == 0:
+        return []
+    small, large = [], []
+    d = 1
+    while d * d <= n:
+        if n % d == 0:
+            small.append(d)
+            if d != n // d:
+                large.append(n // d)
+        d += 1
+    return sorted(small + large[::-1])
+
+
+def _nearest_divisor_suggestions(target: int, candidates: list[int]) -> tuple[int | None, int | None]:
+    """Given a sorted candidate list, return (nearest_lower, nearest_higher) around target (excluding target)."""
+    if not candidates:
+        return None, None
+    lower = None
+    higher = None
+    for d in candidates:
+        if d < target:
+            lower = d
+        elif d > target and higher is None:
+            higher = d
+            break
+    return lower, higher
+
+
 def validate_config(cfg: Config) -> None:
     """Check common PPO/env invariants (ranges, divisibility, gentle hints)."""
     # Basic ranges
@@ -137,9 +170,36 @@ def validate_config(cfg: Config) -> None:
     total_a = cfg.ppo.steps_per_update
     total_b = cfg.ppo.steps_per_update * cfg.env.vec_envs
     if (total_a % cfg.ppo.minibatches != 0) and (total_b % cfg.ppo.minibatches != 0):
+        # Build actionable suggestions for ppo.minibatches based on divisors of totals.
+        divs_a = _divisors(total_a)
+        divs_b = _divisors(total_b)
+        # Merge, unique, sorted
+        valid = sorted(set(divs_a + divs_b))
+        # exclude the current (invalid) choice to avoid echoing it back
+        try:
+            valid.remove(int(cfg.ppo.minibatches))
+        except ValueError:
+            pass
+        lower, higher = _nearest_divisor_suggestions(int(cfg.ppo.minibatches), valid)
+        # Trim a tiny showcase of nearby/typical divisors to keep message concise
+        showcase = [d for d in valid if d in {1, 2, 4, 8, 16, 32, 64, 128, 256} or d in (lower, higher)]
+        showcase = sorted(set(showcase))
+        hint_bits: list[str] = []
+        if lower is not None and higher is not None:
+            hint_bits.append(f"try ppo.minibatches={lower} or {higher}")
+        elif lower is not None:
+            hint_bits.append(f"try ppo.minibatches={lower}")
+        elif higher is not None:
+            hint_bits.append(f"try ppo.minibatches={higher}")
+        if showcase:
+            hint_bits.append(f"valid examples: {showcase}")
+        hint = " — " + "; ".join(hint_bits) if hint_bits else ""
+
         raise ConfigError(
             "Minibatch divisibility violated: either `ppo.steps_per_update` or "
-            "`ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches`."
+            "`ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches`.\n"
+            f"(steps_per_update={total_a}, vec_envs={cfg.env.vec_envs}, "
+            f"minibatches={cfg.ppo.minibatches}){hint}"
         )
 
     # Method-specific hints (soft checks)
