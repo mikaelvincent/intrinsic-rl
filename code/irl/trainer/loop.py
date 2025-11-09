@@ -145,6 +145,7 @@ def train(
         discrete_actions=cfg.env.discrete_actions,
         render_mode=None,
         async_vector=False,
+        make_kwargs=None,
     )
     env = manager.make()
     obs_space, act_space = single_spaces(env)
@@ -202,7 +203,35 @@ def train(
     ml.log_hparams(to_dict(cfg))
 
     # --- Reset env(s) & init norm ---
-    obs, _ = env.reset()
+    printed_dr_hint = False  # one-time DR diagnostics notice (if provided by wrapper)
+    obs, info = env.reset()
+    try:
+        if isinstance(info, dict) and ("dr_applied" in info) and not printed_dr_hint:
+            diag = info.get("dr_applied")
+            msg = ""
+            if isinstance(diag, dict):
+                mj = int(diag.get("mujoco", 0))
+                b2 = int(diag.get("box2d", 0))
+                msg = f"mujoco={mj}, box2d={b2}"
+            elif isinstance(diag, (list, tuple)):
+                # Vector envs may return per-env diagnostics; aggregate counts
+                mj = 0
+                b2 = 0
+                n = 0
+                for d in diag:
+                    if isinstance(d, dict):
+                        mj += int(d.get("mujoco", 0))
+                        b2 += int(d.get("box2d", 0))
+                        n += 1
+                msg = f"mujoco={mj}, box2d={b2} (across {n} envs)"
+            else:
+                msg = str(diag)
+            print(f"[info] Domain randomization applied on env.reset(): {msg}")
+            printed_dr_hint = True
+    except Exception:
+        # Diagnostics are best-effort; ignore unexpected info formats
+        pass
+
     B = int(getattr(env, "num_envs", 1))
 
     obs_norm = None if is_image else RunningObsNorm(shape=int(obs_space.shape[0]))
