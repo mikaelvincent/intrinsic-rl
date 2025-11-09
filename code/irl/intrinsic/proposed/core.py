@@ -1,7 +1,7 @@
 """Proposed unified intrinsic: α_impact·impact + α_LP·LP with region gating.
 
 - Impact: ||φ(s') − φ(s)||₂ (RIDE-like)
-- LP: region-wise learning progress from long/short EMAs (R‑IAC-like)
+- LP: region-wise learning progress from long/short EMAs (R-IAC-like)
 - Gating: suppress regions with low LP and high stochasticity (hysteresis)
 - Per-component RMS normalization; outputs flagged as normalized.
 
@@ -204,7 +204,12 @@ class Proposed(nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized intrinsic with gating and per-component RMS."""
+        """Vectorized intrinsic with gating and per-component RMS.
+
+        Optimization: group samples by region id and update region EMAs once per
+        region using that region's mean error. Gates are then refreshed per region.
+        Per-sample LP/gate inherit their region's post-update values.
+        """
         o = obs
         op = next_obs
         a = actions
@@ -212,24 +217,49 @@ class Proposed(nn.Module):
         impact_raw = self._impact_per_sample(o, op)  # [B]
         err, phi_t = self._forward_error_and_phi(o, op, a)  # [B], [B, D]
 
+        # Map each sample to a region
         phi_np = phi_t.detach().cpu().numpy()
-        rids = self.store.bulk_insert(phi_np)  # [B]
+        rids = self.store.bulk_insert(phi_np)  # (B,)
+        err_np = err.detach().cpu().numpy().astype(np.float64)
 
-        lp_vals: list[float] = []
-        gates: list[int] = []
-        for i in range(impact_raw.shape[0]):
-            rid = int(rids[i])
-            lp = self._update_region(rid, float(err[i].item()))
-            lp_vals.append(lp)
-            g = self._maybe_update_gate(rid, float(lp)) if self.gating_enabled else 1
-            gates.append(int(g))
+        # Group errors by region id -> mean error per region
+        uniq, inv = np.unique(rids, return_inverse=True)
+        sums = np.zeros(len(uniq), dtype=np.float64)
+        cnts = np.zeros(len(uniq), dtype=np.int64)
+        np.add.at(sums, inv, err_np)
+        np.add.at(cnts, inv, 1)
+        means = sums / np.maximum(1, cnts)
 
+        # 1) Update EMAs once per region
+        lp_per_region = np.zeros(len(uniq), dtype=np.float32)
+        for i, rid in enumerate(uniq):
+            rid_i = int(rid)
+            e_mean = float(means[i])
+            st = self._stats.get(rid_i)
+            if st is None or st.count == 0:
+                self._stats[rid_i] = _RegionStats(ema_long=e_mean, ema_short=e_mean, count=int(cnts[i]))
+                lp = 0.0
+            else:
+                st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * e_mean
+                st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * e_mean
+                st.count += int(cnts[i])
+                lp = max(0.0, float(st.ema_long - st.ema_short))
+            lp_per_region[i] = float(lp)
+
+        # 2) Refresh gating per region (after EMAs are updated) and broadcast
+        gate_per_region = np.ones(len(uniq), dtype=np.int64)
+        if self.gating_enabled:
+            for i, rid in enumerate(uniq):
+                gate_per_region[i] = int(self._maybe_update_gate(int(rid), float(lp_per_region[i])))
+
+        # Broadcast region stats back to samples
+        lp_arr = lp_per_region[inv].astype(np.float32)                # (B,)
+        gates = gate_per_region[inv].astype(np.float32)               # (B,)
+
+        # Update RMS/normalize per component on a per-sample basis
         imp_np = impact_raw.detach().cpu().numpy().astype(np.float32)
-        lp_np = np.asarray(lp_vals, dtype=np.float32)
-
-        # update RMS and normalize
-        self._rms.update(imp_np, lp_np)
-        imp_norm, lp_norm = self._rms.normalize(imp_np, lp_np)
+        self._rms.update(imp_np, lp_arr)
+        imp_norm, lp_norm = self._rms.normalize(imp_np, lp_arr)
 
         imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
         lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
