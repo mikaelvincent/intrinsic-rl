@@ -8,6 +8,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+from torch.optim import Adam  # NEW: persistent PPO optimizers
 
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
@@ -33,6 +34,14 @@ from irl.utils.checkpoint import compute_cfg_hash
 
 def _is_image_space(space) -> bool:
     return hasattr(space, "shape") and len(space.shape) >= 2
+
+
+# NEW: ensure loaded optimizer state tensors are on the right device
+def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
+    for state in opt.state.values():
+        for k, v in list(state.items()):
+            if torch.is_tensor(v):
+                state[k] = v.to(device)
 
 
 def train(
@@ -122,6 +131,10 @@ def train(
     policy = PolicyNetwork(obs_space, act_space).to(device)
     value = ValueNetwork(obs_space).to(device)
 
+    # NEW: persistent PPO optimizers (reused each update, saved in checkpoints)
+    pol_opt = Adam(policy.parameters(), lr=float(cfg.ppo.learning_rate))
+    val_opt = Adam(value.parameters(), lr=float(cfg.ppo.learning_rate))
+
     # --- Intrinsic module (optional) ---
     method_l = str(cfg.method).lower()
     eta = float(cfg.intrinsic.eta)
@@ -209,6 +222,20 @@ def train(
                     intrinsic_module.load_state_dict(intr["state_dict"])  # type: ignore[attr-defined]
         except Exception:
             print("[resume] Warning: intrinsic module state not restored.")
+
+        # NEW: Load optimizer states (if present) and move tensors to correct device
+        try:
+            opt_payload = resume_payload.get("optimizers", {})
+            pol_state = opt_payload.get("policy", None)
+            val_state = opt_payload.get("value", None)
+            if pol_state is not None:
+                pol_opt.load_state_dict(pol_state)
+                _move_optimizer_state_to_device(pol_opt, next(policy.parameters()).device)
+            if val_state is not None:
+                val_opt.load_state_dict(val_state)
+                _move_optimizer_state_to_device(val_opt, next(value.parameters()).device)
+        except Exception:
+            print("[resume] Warning: PPO optimizer state not restored; continuing with fresh optimizers.")
 
         # Counters
         global_step = int(resume_step)
@@ -376,7 +403,17 @@ def train(
                 "rewards": rew_total_seq.reshape(T * B),
                 "dones": done_seq.reshape(T * B),
             }
-            ppo_update(policy, value, batch, adv, v_targets, cfg.ppo)
+            # NEW: pass persistent optimizers; capture optional stats for logging
+            ppo_stats = ppo_update(
+                policy,
+                value,
+                batch,
+                adv,
+                v_targets,
+                cfg.ppo,
+                optimizers=(pol_opt, val_opt),
+                return_stats=True,
+            )
             update_idx += 1
 
             # --- Logging ---
@@ -391,6 +428,21 @@ def train(
                 "reward_mean": float(rew_ext_seq.mean()),
                 "reward_total_mean": float(rew_total_seq.mean()),
             }
+            # NEW: add PPO monitor stats when available
+            if isinstance(ppo_stats, dict):
+                try:
+                    log_payload.update(
+                        {
+                            "approx_kl": float(ppo_stats.get("approx_kl", float("nan"))),
+                            "clip_frac": float(ppo_stats.get("clip_frac", float("nan"))),
+                            "ppo_entropy": float(ppo_stats.get("entropy", float("nan"))),
+                            "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
+                            "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
+                        }
+                    )
+                except Exception:
+                    pass
+
             if r_int_raw_flat is not None and r_int_scaled_flat is not None:
                 outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False)) if intrinsic_module else False
                 if outputs_norm and hasattr(intrinsic_module, "lp_rms"):
@@ -445,6 +497,8 @@ def train(
                     "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
                     "intrinsic_norm": int_rms.state_dict(),
                     "meta": {"updates": update_idx},
+                    # NEW: persist PPO optimizers
+                    "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
                 }
                 if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
                     try:
@@ -466,6 +520,8 @@ def train(
             "obs_norm": None if is_image else {"count": obs_norm.count, "mean": obs_norm.mean, "var": obs_norm.var},  # type: ignore[union-attr]
             "intrinsic_norm": int_rms.state_dict(),
             "meta": {"updates": update_idx},
+            # NEW: persist PPO optimizers
+            "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
         }
         if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
             try:
