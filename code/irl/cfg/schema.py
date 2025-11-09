@@ -62,6 +62,12 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.2
     entropy_coef: float = 0.0
+    # NEW: value loss weighting and optional value function clipping
+    value_coef: float = 0.5
+    value_clip_range: float = 0.0  # <= 0 disables value clipping
+    # NEW: KL control (penalty and/or early stop); both disabled by default
+    kl_penalty_coef: float = 0.0   # add kl_penalty_coef * |approx_kl| to policy loss
+    kl_stop: float = 0.0           # if |approx_kl| > kl_stop: early stop PPO epochs
 
 
 @dataclass(frozen=True)
