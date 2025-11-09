@@ -13,6 +13,13 @@ representation is trained here.
 Supports both vector and **image** observations: image inputs are routed
 through the ICM's ConvEncoder path (auto HWC/CHW and auto-scaling).
 See: devspec/dev_spec_and_plan.md §5.3.4 (RIDE) and §5.5 (binning).
+
+Note
+----
+Previously, this module exposed an `obs_dim` attribute that was computed as
+`obs_space.shape[0]`, which is only meaningful for vector observations and
+misleading for images (HWC/CHW). That attribute has been removed to avoid
+confusion; shape handling is centralized in the ICM encoder.
 """
 
 from __future__ import annotations
@@ -53,7 +60,6 @@ class RIDE(BaseIntrinsicModule, nn.Module):
         # Convenience mirrors (no new parameters here)
         self.encoder = self.icm.encoder  # weight sharing
         self.is_discrete = self.icm.is_discrete
-        self.obs_dim = int(obs_space.shape[0])
 
         # Episodic binning config
         self.bin_size: float = float(bin_size)
