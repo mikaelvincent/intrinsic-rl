@@ -112,6 +112,18 @@ def validate_config(cfg: Config) -> None:
     if cfg.ppo.clip_range <= 0.0:
         raise ConfigError("ppo.clip_range must be > 0")
 
+    # NEW: value loss & clipping checks
+    if cfg.ppo.value_coef <= 0.0:
+        raise ConfigError("ppo.value_coef must be > 0")
+    if cfg.ppo.value_clip_range < 0.0:
+        raise ConfigError("ppo.value_clip_range must be >= 0 (0 disables value clipping)")
+
+    # NEW: KL controls
+    if cfg.ppo.kl_penalty_coef < 0.0:
+        raise ConfigError("ppo.kl_penalty_coef must be >= 0")
+    if cfg.ppo.kl_stop < 0.0:
+        raise ConfigError("ppo.kl_stop must be >= 0 (0 disables early stop)")
+
     if cfg.intrinsic.r_clip <= 0.0:
         raise ConfigError("intrinsic.r_clip must be > 0")
 
