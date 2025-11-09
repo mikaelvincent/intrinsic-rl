@@ -21,6 +21,7 @@ from torch import Tensor, nn
 from .distributions import CategoricalDist, DiagGaussianDist
 from .layers import mlp  # re-exported for backward compatibility
 from .cnn import ConvEncoder, ConvEncoderConfig
+from irl.utils.image import preprocess_image, ImagePreprocessConfig
 
 
 def _space_dims(space: gym.Space) -> int:
@@ -60,34 +61,28 @@ def _prep_vector(x: Tensor, obs_dim: int) -> Tensor:
     return t.view(-1, obs_dim)
 
 
-def _prep_images_to_nchw(x: Tensor, expected_c: int) -> Tensor:
-    """Return [N, C, H, W] floats in [0,1] from inputs with arbitrary leading dims.
+def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.device) -> Tensor:
+    """Return [N, C, H, W] float32 in [0,1] from inputs with arbitrary leading dims.
 
-    Assumes the last 3 dims correspond to the image (HWC or CHW).
+    Centralized pathway that delegates scaling/layout to `utils.image.preprocess_image`.
+    Accepts HWC/CHW/NHWC/NCHW and also collapses extra leading dims (e.g., (T,B,H,W,C)).
     """
-    t = x
-    if t.dim() < 3:
-        raise ValueError(f"Expected image tensor with rank >=3, got {t.shape}")
-    # Collapse leading dims except image dims
-    if t.dim() >= 5:
-        # Use reshape to tolerate non-contiguous inputs (e.g., (T,B,H,W,C))
-        t = t.reshape(-1, *t.shape[-3:])  # -> [N, H, W, C] or [N, C, H, W]
-    elif t.dim() == 3:
-        t = t.unsqueeze(0)  # -> [1, H, W, C] or [1, C, H, W]
-    # Convert to float and scale to [0,1] when needed
-    if not torch.is_floating_point(t):
-        t = t.to(torch.float32) / 255.0
-    else:
-        t = t.to(torch.float32)
-        try:
-            if torch.isfinite(t).any() and float(t.max().item()) > 1.0 + 1e-6:
-                t = t / 255.0
-        except Exception:
-            pass
-    # Reorder to NCHW
-    # Reuse ConvEncoder's utility for CHW/NCHW/NHWC/HWC inference
-    t = ConvEncoder._ensure_nchw(t, expected_c)  # type: ignore[attr-defined]
-    return t
+    # Convert to a tensor only to inspect rank; avoid forcing float32 here so we retain uint8 scaling semantics.
+    xt = x if torch.is_tensor(x) else torch.as_tensor(x)
+    if xt.dim() >= 5:
+        # Collapse leading dims to [N, H, W, C] or [N, C, H, W]
+        xt = xt.reshape(-1, *xt.shape[-3:])
+    # Use a shared, explicit preprocessing config: keep channel count as-is (no grayscale), channels-first output.
+    cfg = ImagePreprocessConfig(grayscale=False, scale_uint8=True, normalize_mean=None, normalize_std=None, channels_first=True)
+    out = preprocess_image(xt, cfg=cfg, device=device)  # -> NCHW float32 in [0,1]
+    # Sanity: channel count must match ConvEncoder's configured in_channels to avoid silent mismatches.
+    c = int(out.shape[1])
+    if c != int(expected_c):
+        raise ValueError(
+            f"Image channel mismatch: model expects C={expected_c}, but preprocessed input has C={c}. "
+            "Ensure the observation space shape matches the configured encoder channels."
+        )
+    return out
 
 
 # -------------------- Networks --------------------
@@ -141,8 +136,7 @@ class PolicyNetwork(nn.Module):
     def distribution(self, obs: Tensor | object) -> Union[CategoricalDist, DiagGaussianDist]:
         device = self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device  # type: ignore[union-attr]
         if self.is_image:
-            x = _to_tensor(obs, device)
-            x = _prep_images_to_nchw(x, expected_c=self.cnn.in_channels)  # type: ignore[attr-defined]
+            x = _prep_images_to_nchw(obs, expected_c=self.cnn.in_channels, device=device)  # type: ignore[attr-defined]
             feats = self.cnn(x)
         else:
             x = _to_tensor(obs, device)
@@ -199,8 +193,7 @@ class ValueNetwork(nn.Module):
     def forward(self, obs: Tensor | object) -> Tensor:
         device = next(self.parameters()).device
         if self.is_image:
-            x = _to_tensor(obs, device)
-            x = _prep_images_to_nchw(x, expected_c=self.cnn.in_channels)  # type: ignore[attr-defined]
+            x = _prep_images_to_nchw(obs, expected_c=self.cnn.in_channels, device=device)  # type: ignore[attr-defined]
             z = self.cnn(x)
             v = self.head(z).squeeze(-1)
             return v
