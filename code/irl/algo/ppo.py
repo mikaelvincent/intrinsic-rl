@@ -1,13 +1,19 @@
-"""Minimal PPO update over minibatches.
+"""Minimal PPO update over minibatches (with reusable optimizers).
 
 Batch must contain observations and actions; `old_log_probs` is optional.
-Advantages/targets are 1‑D tensors from `irl.algo.advantage.compute_gae`.
-See devspec/dev_spec_and_plan.md §5.1.
+Advantages/targets are 1-D tensors from `irl.algo.advantage.compute_gae`.
+
+New (backward-compatible):
+- Optional `optimizers=(pol_opt, val_opt)` parameter allows callers (the
+  trainer) to pass persistent Adam optimizers so momentum/state is reused
+  across updates and can be checkpointed/resumed.
+- Optional `return_stats=True` returns a small dict with `approx_kl`,
+  `clip_frac`, `entropy`, `policy_loss`, `value_loss` for logging.
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Tuple, Dict
 
 import torch
 from torch import Tensor, nn
@@ -28,9 +34,34 @@ def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -
 
 
 def ppo_update(
-    policy: Any, value: Any, batch: Any, advantages: Any, value_targets: Any, cfg: Any
-) -> None:
-    """Run PPO for several epochs over shuffled minibatches."""
+    policy: Any,
+    value: Any,
+    batch: Any,
+    advantages: Any,
+    value_targets: Any,
+    cfg: Any,
+    *,
+    optimizers: Optional[Tuple[Adam, Adam]] = None,
+    return_stats: bool = False,
+) -> Optional[Dict[str, float]]:
+    """Run PPO for several epochs over shuffled minibatches.
+
+    Parameters
+    ----------
+    policy, value
+        Modules with `.distribution(obs)` and `value(obs)`.
+    batch
+        Mapping with 'obs' (or 'observations') and 'actions', optionally 'old_log_probs'.
+    advantages, value_targets
+        1-D tensors aligned with flattened observations (N,).
+    cfg
+        PPOConfig-like with learning_rate, minibatches, epochs, clip_range, entropy_coef.
+    optimizers
+        Optional tuple (policy_opt, value_opt). If omitted, fresh Adam optimizers
+        are created for this call (keeps unit tests/backward compatibility working).
+    return_stats
+        If True, returns a dict of logging stats; otherwise returns None.
+    """
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
@@ -60,14 +91,25 @@ def ppo_update(
             old_logp = dist0.log_prob(act_t)
     old_logp_t = _to_tensor(old_logp, device, dtype=torch.float32).reshape(-1)
 
-    # Optimizers (kept local for now)
-    pol_opt = Adam(policy.parameters(), lr=float(cfg.learning_rate))
-    val_opt = Adam(value.parameters(), lr=float(cfg.learning_rate))
+    # Optimizers: persistent (preferred) or per-call (backward compatible)
+    if optimizers is None:
+        pol_opt = Adam(policy.parameters(), lr=float(cfg.learning_rate))
+        val_opt = Adam(value.parameters(), lr=float(cfg.learning_rate))
+    else:
+        pol_opt, val_opt = optimizers
 
     # Determine minibatch size
     mbs = int(max(1, N // int(max(1, int(cfg.minibatches)))))  # safe guard
     clip_eps = float(cfg.clip_range)
     ent_coef = float(getattr(cfg, "entropy_coef", 0.0))
+
+    # Accumulators for logging
+    tot_samples = 0
+    sum_entropy = 0.0
+    sum_kl = 0.0
+    sum_clip_frac = 0.0
+    last_pol_loss = 0.0
+    last_val_loss = 0.0
 
     for _ in range(int(cfg.epochs)):
         # Fresh permutation each epoch
@@ -103,3 +145,26 @@ def ppo_update(
             v_loss.backward()
             nn.utils.clip_grad_norm_(value.parameters(), max_norm=1.0)
             val_opt.step()
+
+            # Logging accumulators
+            bsz = int(o.shape[0])
+            tot_samples += bsz
+            sum_entropy += float(entropy.detach().item()) * bsz
+            # Common approximate KL used for monitoring
+            sum_kl += float((logp_old - logp).mean().detach().item()) * bsz
+            # Fraction of samples where ratio got clipped
+            clip_mask = (ratio > (1.0 + clip_eps)) | (ratio < (1.0 - clip_eps))
+            sum_clip_frac += float(clip_mask.float().mean().detach().item()) * bsz
+            last_pol_loss = float(policy_loss.detach().item())
+            last_val_loss = float(v_loss.detach().item())
+
+    if return_stats:
+        denom = max(1, tot_samples)
+        return {
+            "approx_kl": sum_kl / denom,
+            "clip_frac": sum_clip_frac / denom,
+            "entropy": sum_entropy / denom,
+            "policy_loss": last_pol_loss,
+            "value_loss": last_val_loss,
+        }
+    return None
