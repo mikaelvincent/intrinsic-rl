@@ -76,12 +76,30 @@ logging:
   * `icm`: requires actions and `next_obs`.
   * `rnd`: uses (next_)observations only.
   * `ride`: uses impact + optional episodic binning (trainer uses raw impact path by default).
-  * `riac`: uses per-region learning progress (LP) normalized by a running RMS.
+  * `riac`: uses per-region learning progress (LP) normalized internally.
   * `proposed`: combines **normalized** impact and LP, then applies **region gating**.
-* **Normalization paths:**
 
-  * Some modules (RIAC, Proposed) set `outputs_normalized=True` and are normalized internally before clipping.
-  * Others use a **global** `RunningRMS` in the trainer and then clip to `[-r_clip, r_clip]`.
+### Normalization contract (unified)
+
+To avoid accidental double-normalization, intrinsic modules and the trainer follow a single contract:
+
+* Every intrinsic module exposes **`outputs_normalized: bool`**.
+
+  * If **False** (default for *RIDE* and **RND** in this codebase), the **trainer** applies a global `RunningRMS` to the module's raw intrinsic before clipping and scaling.
+  * If **True** (*RIAC*, *Proposed*, and **RND** when its internal normalizer is enabled programmatically), the **trainer skips** global normalization and only applies clipping and scaling by `η`.
+* **Diagnostics**:
+
+  * A module may expose a single **`.rms`** (e.g., RND with internal normalization) or per-component RMS values (e.g., Proposed: **`.impact_rms`** and **`.lp_rms`**).
+  * The trainer logs:
+
+    * `r_int_rms`:
+
+      * Module `.rms` when available, or
+      * The mean of `impact_rms` and `lp_rms` for Proposed, or
+      * The trainer’s global RMS when the module is not normalized internally.
+    * For Proposed, both `impact_rms` and `lp_rms` are also logged.
+
+> **Note:** In this repository, RND’s internal normalizer exists but is **disabled by default**; the trainer’s global RMS is used unless you enable it in code by setting `RNDConfig.normalize_intrinsic=True` when constructing the module.
 
 ---
 
