@@ -18,10 +18,8 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.0",
   "matplotlib>=3.7",
-  "tensorboard>=2.13",
   "typer>=0.9",
   "pyyaml>=6.0",
-  "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +30,11 @@ dev = [
   "ruff>=0.5",
   "mypy>=1.8",
   "types-PyYAML>=6.0",
+]
+
+# TensorBoard logging is optional; the code gracefully disables TB when not installed.
+tb = [
+  "tensorboard>=2.13",
 ]
 
 # Box2D environments (BipedalWalker, CarRacing):
