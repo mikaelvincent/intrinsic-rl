@@ -20,11 +20,14 @@ class _DummyImageEnv(gym.Env):
     - Action: Discrete(3)
     - Reward: +0.1 per step
     - Episode terminates at t >= 5
+
+    Note: Default H,W=32 so the ConvEncoder (k=(8,4,3), s=(4,2,1)) has valid spatial sizes:
+          32 -> 7 -> 2 -> 2
     """
 
     metadata = {"render_modes": []}
 
-    def __init__(self, h: int = 16, w: int = 16, seed: int | None = None) -> None:
+    def __init__(self, h: int = 32, w: int = 32, seed: int | None = None) -> None:
         super().__init__()
         self.H, self.W = int(h), int(w)
         self.observation_space = gym.spaces.Box(
