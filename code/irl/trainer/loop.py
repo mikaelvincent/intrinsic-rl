@@ -273,6 +273,8 @@ def train(
             if intrinsic_module is not None and isinstance(intr, dict):
                 if intr.get("method") == method_l and "state_dict" in intr:
                     intrinsic_module.load_state_dict(intr["state_dict"])  # type: ignore[attr-defined]
+                    # NEW: ensure any loaded params/buffers are on the active device
+                    intrinsic_module.to(device)  # type: ignore[attr-defined]
         except Exception:
             print("[resume] Warning: intrinsic module state not restored.")
 
