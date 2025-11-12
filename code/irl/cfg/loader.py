@@ -190,6 +190,15 @@ def validate_config(cfg: Config) -> None:
                 UserWarning,
             )
 
+    # Gating sanity checks only when Proposed is selected
+    if method == "proposed":
+        if cfg.intrinsic.gate.min_consec_to_gate <= 0:
+            raise ConfigError("intrinsic.gate.min_consec_to_gate must be > 0 for method 'proposed'")
+        if cfg.intrinsic.gate.min_regions_for_gating <= 0:
+            raise ConfigError(
+                "intrinsic.gate.min_regions_for_gating must be > 0 for method 'proposed'"
+            )
+
     # Minibatch divisibility: accept either interpretation of steps_per_update
     total_a = cfg.ppo.steps_per_update
     total_b = cfg.ppo.steps_per_update * cfg.env.vec_envs
