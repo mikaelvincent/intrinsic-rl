@@ -46,15 +46,14 @@ def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
 
 # ---------------- new helper: enforce time-major (T,B,...) ---------------- #
 
+
 def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarray:
     """Return array with leading dims (T,B,...) from (T,B,...) or (B,T,...).
 
     Raises ValueError with a clear message if shapes are inconsistent.
     """
     if x.ndim < 2:
-        raise ValueError(
-            f"{name}: expected at least 2 dims (T,B,...), got shape={x.shape}"
-        )
+        raise ValueError(f"{name}: expected at least 2 dims (T,B,...), got shape={x.shape}")
     t0, b0 = int(x.shape[0]), int(x.shape[1])
     if t0 == T and b0 == B:
         return x
@@ -128,7 +127,9 @@ def train(
                 )
             resume_payload = payload_cpu
             resume_step = int(step_cpu)
-            print(f"[resume] Loaded latest checkpoint at step={resume_step} from {ckpt.latest_path}")
+            print(
+                f"[resume] Loaded latest checkpoint at step={resume_step} from {ckpt.latest_path}"
+            )
         except FileNotFoundError:
             print("[resume] No checkpoint found; starting a new run.")
         except Exception as exc:
@@ -287,7 +288,9 @@ def train(
                 val_opt.load_state_dict(val_state)
                 _move_optimizer_state_to_device(val_opt, next(value.parameters()).device)
         except Exception:
-            print("[resume] Warning: PPO optimizer state not restored; continuing with fresh optimizers.")
+            print(
+                "[resume] Warning: PPO optimizer state not restored; continuing with fresh optimizers."
+            )
 
         # Counters
         global_step = int(resume_step)
@@ -324,9 +327,11 @@ def train(
             )
             rew_ext_seq = np.zeros((T, B), dtype=np.float32)
             done_seq = np.zeros((T, B), dtype=np.float32)
-            r_int_raw_seq = np.zeros((T, B), dtype=np.float32) if (
-                intrinsic_module is not None and method_l == "ride"
-            ) else None
+            r_int_raw_seq = (
+                np.zeros((T, B), dtype=np.float32)
+                if (intrinsic_module is not None and method_l == "ride")
+                else None
+            )
 
             for t in range(T):
                 obs_b = obs if B > 1 else obs[None, ...]
@@ -334,16 +339,23 @@ def train(
                     obs_norm.update(obs_b)  # type: ignore[union-attr]
                     obs_b_norm = obs_norm.normalize(obs_b)  # type: ignore[union-attr]
                 else:
-                    obs_b_norm = obs_b  # images: no vector obs-norm (handled inside nets)
+                    obs_b_norm = (
+                        obs_b  # images: keep raw dtype (e.g., uint8) for proper scaling downstream
+                    )
 
                 if not is_image:
                     obs_seq[t] = obs_b_norm.astype(np.float32)
                 else:
-                    obs_seq_list.append(obs_b_norm.astype(np.float32))
+                    # Preserve original dtype (uint8), let model preprocess scale to [0,1]
+                    obs_seq_list.append(obs_b_norm)
 
                 with torch.no_grad():
-                    obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
-                    a_tensor, _ = policy.act(obs_tensor)
+                    if is_image:
+                        # Pass raw images; the policy will preprocess (layout + scaling)
+                        a_tensor, _ = policy.act(obs_b_norm)
+                    else:
+                        obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
+                        a_tensor, _ = policy.act(obs_tensor)
                 a_np = a_tensor.detach().cpu().numpy()
                 if is_discrete:
                     a_np = a_np.astype(np.int64).reshape(B)
@@ -367,7 +379,10 @@ def train(
                 if not is_image:
                     next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
                 else:
-                    next_obs_seq_list.append(next_obs_b_norm.astype(np.float32))
+                    # Keep original dtype
+                    next_obs_seq_list.append(
+                        next_obs_b_norm.astype(next_obs_b_norm.dtype, copy=False)
+                    )
 
                 if r_int_raw_seq is not None:
                     r_step = intrinsic_module.compute_impact_binned(  # type: ignore[union-attr]
@@ -376,9 +391,7 @@ def train(
                         dones=done_flags,
                         reduction="none",
                     )
-                    r_int_raw_seq[t] = (
-                        r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
-                    )
+                    r_int_raw_seq[t] = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
 
                 obs = next_obs
                 global_step += B
@@ -411,7 +424,9 @@ def train(
                 else:
                     obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
                     next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
-                    acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+                    acts_flat = (
+                        acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+                    )
                     r_int_raw_t = compute_intrinsic_batch(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat
                     )
@@ -432,7 +447,9 @@ def train(
                     if method_l == "ride":
                         obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
                         next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
-                        acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+                        acts_flat = (
+                            acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+                        )
                     mod_metrics = update_module(
                         intrinsic_module, method_l, obs_flat, next_obs_flat, acts_flat  # type: ignore[arg-type]
                     )
@@ -456,7 +473,9 @@ def train(
             )
 
             obs_flat_for_ppo = (
-                obs_seq_final.reshape(T * B, -1) if not is_image else obs_seq_final.reshape((T * B,) + obs_shape)
+                obs_seq_final.reshape(T * B, -1)
+                if not is_image
+                else obs_seq_final.reshape((T * B,) + obs_shape)
             )
             acts_flat_for_ppo = (
                 acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
@@ -483,16 +502,21 @@ def train(
             # --- Logging ---
             with torch.no_grad():
                 # Last-step entropy (legacy)
-                last_obs = torch.as_tensor(
-                    obs_seq_final[-1], device=device, dtype=torch.float32
-                )  # [B,...]
-                ent_last = float(policy.entropy(last_obs).mean().item())
+                last_obs = obs_seq_final[-1]  # [B,...]
+                if is_image:
+                    ent_last = float(policy.entropy(last_obs).mean().item())
+                else:
+                    last_obs_t = torch.as_tensor(last_obs, device=device, dtype=torch.float32)
+                    ent_last = float(policy.entropy(last_obs_t).mean().item())
 
                 # NEW: mean policy entropy across the whole update (T*B samples)
-                obs_flat_t = torch.as_tensor(
-                    obs_flat_for_ppo, device=device, dtype=torch.float32
-                )
-                ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
+                if is_image:
+                    ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
+                else:
+                    obs_flat_t = torch.as_tensor(
+                        obs_flat_for_ppo, device=device, dtype=torch.float32
+                    )
+                    ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
             log_payload = {
                 # Kept for backward compatibility (last step)
@@ -510,7 +534,9 @@ def train(
                         {
                             "approx_kl": float(ppo_stats.get("approx_kl", float("nan"))),
                             "clip_frac": clip_frac,
-                            "clip_frac_pct": (100.0 * clip_frac) if np.isfinite(clip_frac) else float("nan"),
+                            "clip_frac_pct": (
+                                (100.0 * clip_frac) if np.isfinite(clip_frac) else float("nan")
+                            ),
                             "ppo_entropy": float(ppo_stats.get("entropy", float("nan"))),
                             "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
                             "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
@@ -523,7 +549,11 @@ def train(
                     pass
 
             if r_int_raw_flat is not None and r_int_scaled_flat is not None:
-                outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False)) if intrinsic_module else False
+                outputs_norm = (
+                    bool(getattr(intrinsic_module, "outputs_normalized", False))
+                    if intrinsic_module
+                    else False
+                )
 
                 # Prefer module-provided RMS diagnostics to avoid double-normalization ambiguity.
                 r_int_rms_val = float(int_rms.rms)
@@ -535,7 +565,9 @@ def train(
                         except Exception:
                             pass
                     # Multi-component modules (Proposed): log both and average for r_int_rms
-                    if hasattr(intrinsic_module, "impact_rms") and hasattr(intrinsic_module, "lp_rms"):
+                    if hasattr(intrinsic_module, "impact_rms") and hasattr(
+                        intrinsic_module, "lp_rms"
+                    ):
                         try:
                             imp_rms_val = float(getattr(intrinsic_module, "impact_rms"))
                             lp_rms_val = float(getattr(intrinsic_module, "lp_rms"))
@@ -565,7 +597,11 @@ def train(
                     except Exception:
                         pass
 
-            if intrinsic_module is not None and method_l == "proposed" and hasattr(intrinsic_module, "gate_rate"):
+            if (
+                intrinsic_module is not None
+                and method_l == "proposed"
+                and hasattr(intrinsic_module, "gate_rate")
+            ):
                 try:
                     gr = float(getattr(intrinsic_module, "gate_rate"))
                     log_payload["gate_rate"] = gr
@@ -628,7 +664,10 @@ def train(
         }
         if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
             try:
-                payload["intrinsic"] = {"method": method_l, "state_dict": intrinsic_module.state_dict()}
+                payload["intrinsic"] = {
+                    "method": method_l,
+                    "state_dict": intrinsic_module.state_dict(),
+                }
             except Exception:
                 pass
         ckpt.save(step=int(global_step), payload=payload)
