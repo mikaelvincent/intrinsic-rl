@@ -8,6 +8,15 @@
 Supports both vector and **image** observations by delegating φ(s) to ICM,
 which routes vectors through an MLP and images through a ConvEncoder.
 
+Image dtype contract
+--------------------
+This module accepts **raw uint8 images** (HWC/NHWC/CHW/NCHW) or **float images already
+in [0, 1]**. If floats appear to be in [0, 255], the shared preprocessing pipeline
+(`utils.image.preprocess_image`) will defensively scale them to [0, 1]. To avoid
+accidentally bypassing scaling, do **not** pre-cast images to float32 unless you also
+scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
+layout and normalization.
+
 See: devspec/dev_spec_and_plan.md §5.4 and Sprint 6.
 """
 
@@ -237,7 +246,9 @@ class Proposed(nn.Module):
             e_mean = float(means[i])
             st = self._stats.get(rid_i)
             if st is None or st.count == 0:
-                self._stats[rid_i] = _RegionStats(ema_long=e_mean, ema_short=e_mean, count=int(cnts[i]))
+                self._stats[rid_i] = _RegionStats(
+                    ema_long=e_mean, ema_short=e_mean, count=int(cnts[i])
+                )
                 lp = 0.0
             else:
                 st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * e_mean
@@ -253,8 +264,8 @@ class Proposed(nn.Module):
                 gate_per_region[i] = int(self._maybe_update_gate(int(rid), float(lp_per_region[i])))
 
         # Broadcast region stats back to samples
-        lp_arr = lp_per_region[inv].astype(np.float32)                # (B,)
-        gates = gate_per_region[inv].astype(np.float32)               # (B,)
+        lp_arr = lp_per_region[inv].astype(np.float32)  # (B,)
+        gates = gate_per_region[inv].astype(np.float32)  # (B,)
 
         # Update RMS/normalize per component on a per-sample basis
         imp_np = impact_raw.detach().cpu().numpy().astype(np.float32)
