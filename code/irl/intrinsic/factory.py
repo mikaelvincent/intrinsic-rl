@@ -73,6 +73,7 @@ def create_intrinsic_module(
             "gate_tau_s",
             "gate_hysteresis_up_mult",
             "gate_min_consec_to_gate",
+            "gate_min_regions_for_gating",  # NEW
         ):
             if k in kwargs and kwargs[k] is not None:
                 prop_kwargs[k] = float(kwargs[k]) if ("alpha" in k or "beta" in k or "tau" in k) else int(kwargs[k])  # type: ignore[assignment]
