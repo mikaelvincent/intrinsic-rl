@@ -1,6 +1,6 @@
 """YAML → dataclass loader and validators for IRL configs.
 
-Concise loader/validator utilities. See devspec/dev_spec_and_plan.md §6.
+Provides concise helpers for reading, parsing, and validating configs.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ _UNION_TYPES = (Union,) + ((_UnionType,) if _UnionType is not None else ())
 def load_config(path: Union[str, "Path"]) -> Config:
     """Load and validate a `Config` from a YAML file.
 
-    See devspec §6 for schema & invariants. Raises ConfigError on read/parse/validation issues.
+    Raises ``ConfigError`` with a descriptive message on read/parse/validation issues.
     """
     p = Path(path)
     if not p.exists():
@@ -76,7 +76,7 @@ def load_config(path: Union[str, "Path"]) -> Config:
 
 
 def loads_config(yaml_text: str) -> Config:
-    """Load and validate a `Config` from YAML text (see devspec §6)."""
+    """Load and validate a `Config` from YAML text."""
     try:
         data = yaml.safe_load(yaml_text) or {}
     except Exception as exc:

@@ -1,1 +1,1 @@
-# Unit test package (skeleton).
+# Unit test package.

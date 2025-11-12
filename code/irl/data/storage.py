@@ -1,4 +1,4 @@
-"""Rollout storage abstractions (skeleton)."""
+"""Rollout storage abstractions used by PPO training."""
 
 from __future__ import annotations
 

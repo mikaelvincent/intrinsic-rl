@@ -14,8 +14,6 @@ in [0, 1]**. If floats appear to be in [0, 255], the shared preprocessing pipeli
 accidentally bypassing scaling, do **not** pre-cast images to float32 unless you also
 scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
 layout and normalization.
-
-See: devspec/dev_spec_and_plan.md §5.3.5 (R-IAC) and §5.7 (nets/losses).
 """
 
 from __future__ import annotations

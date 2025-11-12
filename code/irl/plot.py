@@ -1,9 +1,9 @@
 """Plotting utilities and CLI for learning curves and summaries.
 
-This module implements the plotting scripts described in Sprint 8 (Step 3):
+Includes commands for:
 - Learning curves with optional smoothing and shaded standard deviation across seeds.
 - Overlays of multiple method groups (each group may include many runs).
-- Bar charts from aggregated sweep results (results/summary.csv).
+- Bar charts from aggregated sweep results (``results/summary.csv``).
 
 Typical usage
 -------------

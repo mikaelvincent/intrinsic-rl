@@ -1,1 +1,1 @@
-"""Algorithms package: PPO and advantage estimation (skeleton)."""
+"""Algorithms package: PPO updates and advantage estimation."""

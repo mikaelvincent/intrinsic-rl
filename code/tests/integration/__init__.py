@@ -1,1 +1,1 @@
-# Integration test package (skeleton).
+# Integration test package.

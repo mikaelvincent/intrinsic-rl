@@ -1,7 +1,4 @@
-"""Typed config schemas, YAML loader, and validators.
-
-See devspec/dev_spec_and_plan.md §6 for the full schema.
-"""
+"""Typed configuration dataclasses, YAML loader, and validators."""
 
 from __future__ import annotations
 

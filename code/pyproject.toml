@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "intrinsic-rl"
 dynamic = ["version"]
-description = "Intrinsic RL research codebase (sprint-0 skeleton)."
+description = "Intrinsic RL research codebase for impact and learning-progress signals."
 requires-python = ">=3.10,<3.12"
 authors = [{ name = "Intrinsic RL Team" }]
 keywords = ["reinforcement-learning", "intrinsic-motivation", "ppo", "research"]
@@ -59,7 +59,7 @@ sb3 = [
 ]
 
 [project.scripts]
-# Stub CLIs (currently print placeholders as per Sprint 0)
+# Stub CLIs (lightweight entry points; see README for details)
 intrinsic-rl = "irl.__main__:main"
 irl-train     = "irl.train:main"
 irl-eval      = "irl.eval:main"
@@ -73,7 +73,7 @@ include = ["irl", "irl.*"]
 [tool.setuptools.dynamic]
 version = { attr = "irl._version.__version__" }
 
-# ---- Tooling configs (lightweight, Sprint 0 friendly) ----
+# ---- Tooling configs (kept lightweight for rapid iteration) ----
 [tool.black]
 target-version = ["py310"]
 line-length = 100
