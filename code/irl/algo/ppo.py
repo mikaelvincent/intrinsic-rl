@@ -37,9 +37,16 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
+    """Convert to Tensor on device, preserving dtype unless explicitly set.
+
+    We intentionally *do not* force float32 here; image observations may be uint8 so that downstream preprocessors can
+    scale them correctly.
+    """
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
+    if dtype is None:
+        return torch.as_tensor(x, device=device)
+    return torch.as_tensor(x, device=device, dtype=dtype)
 
 
 def ppo_update(
@@ -189,7 +196,9 @@ def ppo_update(
             bsz = int(o.shape[0])
             tot_samples += bsz
             sum_entropy += float(entropy.detach().item()) * bsz
-            sum_kl += float((logp_old - logp).mean().detach().item()) * bsz  # keep sign for continuity with older logs
+            sum_kl += (
+                float((logp_old - logp).mean().detach().item()) * bsz
+            )  # keep sign for continuity with older logs
             # Fraction of samples where ratio got clipped
             clip_mask = (ratio > (1.0 + clip_eps)) | (ratio < (1.0 - clip_eps))
             sum_clip_frac += float(clip_mask.float().mean().detach().item()) * bsz
