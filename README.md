@@ -29,10 +29,16 @@ pip install -e .
 # Optional dev/test tools
 pip install -e ".[dev]"
 
-# Box2D envs (BipedalWalker, CarRacing)
-# - On Windows this pulls prebuilt wheels; on non-Windows uses gymnasium extras.
+# Optional env extras:
+# - Box2D envs (BipedalWalker, CarRacing)
 pip install -e ".[box2d]"
+
+# - MuJoCo envs (Ant, HalfCheetah, Humanoid)
+pip install -e ".[mujoco]"
 ```
+
+> Why extras? Keeping heavy environment backends optional makes the base install fast
+> and avoids pulling large native wheels unless you actually need those tasks.
 
 > GPU is optional. For MuJoCo control on Linux servers:
 
@@ -65,7 +71,8 @@ irl-train --config code/configs/bipedal_ride.yaml --total-steps 10000
 **MuJoCo (Ant/HalfCheetah/Humanoid) — proposed:**
 
 ```bash
-# Ensure MUJOCO_GL and a GPU driver if you want CUDA
+# Ensure MUJOCO_GL and that you've installed the extras:
+# pip install -e ".[mujoco]"
 export MUJOCO_GL=egl   # Linux headless
 irl-train --config code/configs/mujoco/ant_proposed.yaml        --total-steps 100000
 irl-train --config code/configs/mujoco/halfcheetah_proposed.yaml --total-steps 100000
