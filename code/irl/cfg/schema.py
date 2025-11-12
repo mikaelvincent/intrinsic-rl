@@ -14,12 +14,20 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Region gating thresholds (Proposed)."""
+    """Region gating thresholds (Proposed).
+
+    Note
+    ----
+    The global medians used by the gating rule (LP and error) only become
+    active once *enough* regions have seen samples. This threshold is
+    controlled by `min_regions_for_gating` (default: 3).
+    """
 
     tau_lp_mult: float = 0.01  # multiply median LP
     tau_s: float = 2.0
     hysteresis_up_mult: float = 2.0
     min_consec_to_gate: int = 5
+    min_regions_for_gating: int = 3  # NEW: regions needed before using medians
 
 
 @dataclass(frozen=True)
@@ -66,8 +74,8 @@ class PPOConfig:
     value_coef: float = 0.5
     value_clip_range: float = 0.0  # <= 0 disables value clipping
     # NEW: KL control (penalty and/or early stop); both disabled by default
-    kl_penalty_coef: float = 0.0   # add kl_penalty_coef * |approx_kl| to policy loss
-    kl_stop: float = 0.0           # if |approx_kl| > kl_stop: early stop PPO epochs
+    kl_penalty_coef: float = 0.0  # add kl_penalty_coef * |approx_kl| to policy loss
+    kl_stop: float = 0.0  # if |approx_kl| > kl_stop: early stop PPO epochs
 
 
 @dataclass(frozen=True)
