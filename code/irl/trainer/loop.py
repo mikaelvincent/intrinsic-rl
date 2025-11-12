@@ -519,10 +519,9 @@ def train(
                     ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
             log_payload = {
-                # Kept for backward compatibility (last step)
-                "policy_entropy": float(ent_last),
-                # New metric as requested: mean across update batch
-                "policy_entropy_mean": float(ent_mean_update),
+                # Renamed for clarity: entropy on last obs vs mean over update
+                "entropy_last": float(ent_last),
+                "entropy_update_mean": float(ent_mean_update),
                 "reward_mean": float(rew_ext_seq.mean()),
                 "reward_total_mean": float(rew_total_seq.mean()),
             }
@@ -537,7 +536,8 @@ def train(
                             "clip_frac_pct": (
                                 (100.0 * clip_frac) if np.isfinite(clip_frac) else float("nan")
                             ),
-                            "ppo_entropy": float(ppo_stats.get("entropy", float("nan"))),
+                            # Renamed: mean entropy over minibatches from PPO loop
+                            "entropy_minibatch_mean": float(ppo_stats.get("entropy", float("nan"))),
                             "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
                             "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
                             # NEW: KL early-stop + epochs ran
