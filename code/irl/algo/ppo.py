@@ -17,8 +17,10 @@ Enhancements:
   baseline `v_old`, i.e. max(MSE(v, vt), MSE(v_clipped, vt)).
 - Optional **value loss coefficient** via `cfg.value_coef` (default 0.5).
 - Optional **KL penalty** added to the policy loss (`cfg.kl_penalty_coef`)
-  and/or **early stop** when the (absolute) approximate KL exceeds
-  `cfg.kl_stop`. Both default to disabled (0.0).
+  and/or **early stop** when the approximate KL exceeds `cfg.kl_stop`.
+  The KL used here is the common, non-negative estimator:
+      approx_kl = mean((ratio - 1) - logratio)
+  with ratio = exp(logp_new - logp_old) and logratio = (logp_new - logp_old).
 """
 
 from __future__ import annotations
@@ -83,8 +85,8 @@ def ppo_update(
     Returns (when return_stats=True)
     --------------------------------
     Dict with *means across the entire update*:
-      - approx_kl, clip_frac, entropy, policy_loss, value_loss,
-        plus early_stop (0/1) and epochs_ran.
+      - approx_kl (mean((ratio-1)-logratio)), clip_frac, entropy,
+        policy_loss, value_loss, plus early_stop (0/1) and epochs_ran.
     """
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
@@ -165,19 +167,20 @@ def ppo_update(
             # Policy loss (clipped surrogate) + entropy bonus (+ optional KL penalty)
             dist = policy.distribution(o)
             logp = dist.log_prob(a)
-            ratio = (logp - logp_old).exp()
+            logratio = logp - logp_old
+            ratio = logratio.exp()
+
             surr1 = ratio * adv
             surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
             policy_loss = -torch.min(surr1, surr2).mean()
             entropy = dist.entropy().mean()
 
-            # Approx KL for this minibatch (use abs for penalty/stop)
-            approx_kl = (logp_old - logp).mean()
-            approx_kl_abs = approx_kl.abs().detach()
+            # Non-negative approximate KL: mean((ratio - 1) - logratio)
+            approx_kl = ((ratio - 1.0) - logratio).mean().detach()
 
             pol_total = policy_loss - ent_coef * entropy
             if kl_penalty_coef > 0.0:
-                pol_total = pol_total + float(kl_penalty_coef) * approx_kl_abs
+                pol_total = pol_total + float(kl_penalty_coef) * approx_kl
 
             pol_opt.zero_grad(set_to_none=True)
             pol_total.backward()
@@ -206,7 +209,7 @@ def ppo_update(
             tot_samples += bsz
             # Weighted means
             sum_entropy += float(entropy.detach().item()) * bsz
-            sum_kl += float((logp_old - logp).mean().detach().item()) * bsz  # keep sign
+            sum_kl += float(approx_kl.item()) * bsz
             clip_mask = (ratio > (1.0 + clip_eps)) | (ratio < (1.0 - clip_eps))
             sum_clip_frac += float(clip_mask.float().mean().detach().item()) * bsz
 
@@ -216,8 +219,8 @@ def ppo_update(
             sum_pol_loss += last_pol_loss * bsz
             sum_val_loss += last_val_loss * bsz
 
-            # Early stop if KL too large (absolute)
-            if kl_stop > 0.0 and float(approx_kl_abs.item()) > kl_stop:
+            # Early stop if KL too large (non-negative approx KL)
+            if kl_stop > 0.0 and float(approx_kl.item()) > kl_stop:
                 early_stop_triggered = True
                 break  # break minibatch loop
 
