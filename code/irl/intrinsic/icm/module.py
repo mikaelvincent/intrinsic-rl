@@ -4,6 +4,15 @@ Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and upda
 routines for both discrete and continuous actions. Now supports **image**
 observations by routing through a ConvEncoder when the observation space has
 rank ≥ 2 (HWC or CHW). See devspec §5.3.2 and §6 (Sprint 6).
+
+Image dtype contract
+--------------------
+This module accepts **raw uint8 images** (HWC/NHWC/CHW/NCHW) or **float images already
+in [0, 1]**. If floats appear to be in [0, 255], the shared preprocessing pipeline
+(`utils.image.preprocess_image`) will defensively scale them to [0, 1]. To avoid
+accidentally bypassing scaling, do **not** pre-cast images to float32 unless you also
+scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
+layout and normalization.
 """
 
 from __future__ import annotations
@@ -67,8 +76,10 @@ class ICM(BaseIntrinsicModule, nn.Module):
         # ----- Spaces -----
         self.is_image_obs = len(obs_space.shape) >= 2  # HWC/CHW or higher rank
         # For vectors this is the feature dimension; for images it's unused by encoder logic
-        self.obs_dim = int(np.prod(obs_space.shape)) if not self.is_image_obs else int(
-            np.prod(obs_space.shape)
+        self.obs_dim = (
+            int(np.prod(obs_space.shape))
+            if not self.is_image_obs
+            else int(np.prod(obs_space.shape))
         )
 
         self.is_discrete = isinstance(act_space, gym.spaces.Discrete)
@@ -97,7 +108,11 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
             # Centralized image preprocessing config: keep original channels; output NCHW; scale uint8 → [0,1]
             self._img_pre_cfg = ImagePreprocessConfig(
-                grayscale=False, scale_uint8=True, normalize_mean=None, normalize_std=None, channels_first=True
+                grayscale=False,
+                scale_uint8=True,
+                normalize_mean=None,
+                normalize_std=None,
+                channels_first=True,
             )
         else:
             # Vector path: simple MLP
@@ -134,7 +149,9 @@ class ICM(BaseIntrinsicModule, nn.Module):
             if t.dim() >= 5:
                 # Collapse leading dims to a simple NCHW/NHWC batch
                 t = t.reshape(-1, *t.shape[-3:])
-            x = preprocess_image(t, cfg=self._img_pre_cfg, device=self.device)  # -> NCHW float32 [0,1]
+            x = preprocess_image(
+                t, cfg=self._img_pre_cfg, device=self.device
+            )  # -> NCHW float32 [0,1]
             return self.encoder(x)
         else:
             x = as_tensor(obs, self.device)
@@ -160,9 +177,7 @@ class ICM(BaseIntrinsicModule, nn.Module):
             s_next = tr.s_next
             a = tr.a
 
-            r = self.compute_batch(
-                s, s_next, a, reduction="none"
-            )
+            r = self.compute_batch(s, s_next, a, reduction="none")
             return IntrinsicOutput(r_int=float(r.view(-1)[0].item()))
 
     def compute_batch(
