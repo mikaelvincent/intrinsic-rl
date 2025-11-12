@@ -2,5 +2,5 @@
 
 __all__ = ["__version__"]
 
-# Semantic version for the skeleton stage (PEP 440 compliant).
-__version__ = "0.0.0.dev0+sprint0"
+# Semantic version placeholder (PEP 440 compliant).
+__version__ = "0.0.0.dev0"

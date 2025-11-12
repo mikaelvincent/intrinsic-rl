@@ -2,8 +2,6 @@
 
 Research codebase for intrinsic-motivation RL that combines **RIDE** (impact) and **R-IAC** (region learning progress) with a **randomness-aware gate**. It includes a PPO backbone, pluggable intrinsic modules (vanilla, ICM, RND, RIDE, RIAC, proposed), multi-seed evaluation, and plotting tools.
 
-> If you’re new here, start with **Quickstart** and the **Configs guide**: [`docs/CONFIGS.md`](docs/CONFIGS.md)
-
 ---
 
 ## Quickstart
@@ -150,15 +148,19 @@ irl-sweep stats \
 
 ## Configuration guide
 
-All configs are plain YAML and validated strictly. See the full explanation and examples in
-👉 **[`docs/CONFIGS.md`](docs/CONFIGS.md)**
+All configs are plain YAML and validated strictly. Key sections:
 
-* Minimal vanilla example: `code/configs/mountaincar_vanilla.yaml`
-* Baselines: `code/configs/*` and `code/configs/mujoco/*`
-* Methods: `vanilla | icm | rnd | ride | riac | proposed`
-* Intrinsic knobs are surfaced in `intrinsic: { … }` with gating under `intrinsic.gate: { … }`.
+* **`seed` / `device` / `method`** – Set reproducibility, hardware target (`cpu`/`cuda:X`), and the intrinsic method. CLI flags such as `--method`, `--env`, and `--device` replace the corresponding YAML values.
+* **`env`** – Environment id, number of vector envs, frame skip, domain randomization, and (for CarRacing) whether to use the discrete wrapper.
+* **`ppo`** – Batch size, minibatch count, epochs, learning rate, and PPO clipping/penalty knobs. The trainer enforces the **minibatch divisibility rule**: either `steps_per_update` or `steps_per_update * env.vec_envs` must divide evenly by `ppo.minibatches`.
+* **`intrinsic`** – Intrinsic reward weights and structure. `alpha_impact`, `alpha_lp`, `bin_size`, and region settings tune RIDE/R-IAC behaviour. Nested `gate` fields configure the hysteretic gate thresholds.
+* **`adaptation` / `evaluation` / `logging`** – Optional intrinsic-weight adaptation cadence, evaluation frequency, CSV/TensorBoard cadence, and checkpoint interval.
 
-You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--device`).
+### Intrinsic normalization contract
+
+Some intrinsic modules normalize their own outputs (e.g., RIAC and Proposed). These modules expose `outputs_normalized=True`, signaling the trainer to skip its global intrinsic RMS. Modules that leave `outputs_normalized=False` rely on the trainer’s shared `RunningRMS` (`trainer.intrinsic_rms`) for scaling, so mixed-method sweeps stay comparable.
+
+Example YAMLs live in `code/configs/` (with MuJoCo variants under `code/configs/mujoco/`).
 
 ---
 
@@ -168,7 +170,6 @@ You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--de
 code/irl/         # library (trainer, models, intrinsic modules, utils)
 code/configs/     # ready-to-run YAMLs (Box2D + MuJoCo)
 code/tests/       # unit & integration tests (pytest)
-devspec/          # design spec and sprint plan
 ```
 
 Artifacts per run:
@@ -202,4 +203,4 @@ pytest -q
 
 ## Citation / Use
 
-This is a research scaffold intended for experiments and comparisons across intrinsic-motivation methods. See the dev spec for design choices and sprint plan: `devspec/dev_spec_and_plan.md`.
+This is a research scaffold intended for experiments and comparisons across intrinsic-motivation methods. Design choices and usage guidance live in this README and the inline module documentation.

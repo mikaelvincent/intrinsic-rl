@@ -1,7 +1,7 @@
 """Factory/helpers for intrinsic modules (ICM, RND, RIDE, RIAC, Proposed).
 
-Unified construction plus compute/update helpers used by the trainer. See devspec/dev_spec_and_plan.md §5 for method
-details.
+Provides construction utilities plus batched compute/update helpers used by the
+trainer to integrate intrinsic rewards consistently across methods.
 """
 
 from __future__ import annotations
