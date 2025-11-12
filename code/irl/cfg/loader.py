@@ -23,6 +23,7 @@ from typing import (
 )
 from collections.abc import Sequence as ABCSequence, Mapping as ABCMapping
 
+import warnings
 import yaml  # PyYAML
 
 from .schema import (
@@ -91,6 +92,7 @@ def loads_config(yaml_text: str) -> Config:
 
 # ----- Helpers for friendlier validation messages ---------------------------
 
+
 def _divisors(n: int) -> list[int]:
     """Return all positive divisors of n (sorted)."""
     n = int(abs(n))
@@ -107,7 +109,9 @@ def _divisors(n: int) -> list[int]:
     return sorted(small + large[::-1])
 
 
-def _nearest_divisor_suggestions(target: int, candidates: list[int]) -> tuple[int | None, int | None]:
+def _nearest_divisor_suggestions(
+    target: int, candidates: list[int]
+) -> tuple[int | None, int | None]:
     """Given a sorted candidate list, return (nearest_lower, nearest_higher) around target (excluding target)."""
     if not candidates:
         return None, None
@@ -157,14 +161,34 @@ def validate_config(cfg: Config) -> None:
     if cfg.ppo.kl_stop < 0.0:
         raise ConfigError("ppo.kl_stop must be >= 0 (0 disables early stop)")
 
+    # Always require a sane intrinsic clipping bound (trainer relies on this).
     if cfg.intrinsic.r_clip <= 0.0:
         raise ConfigError("intrinsic.r_clip must be > 0")
 
-    # RIDE/Proposed knobs (sanity only; harmless if unused)
-    if cfg.intrinsic.bin_size <= 0.0:
-        raise ConfigError("intrinsic.bin_size must be > 0")
-    if cfg.intrinsic.alpha_impact <= 0.0:
-        raise ConfigError("intrinsic.alpha_impact must be > 0")
+    # Method-specific knobs: enforce only when the selected method uses them.
+    method = str(cfg.method).lower()
+
+    # alpha_impact is meaningful for RIDE and Proposed (impact component weight)
+    if method in {"ride", "proposed"}:
+        if cfg.intrinsic.alpha_impact <= 0.0:
+            raise ConfigError("intrinsic.alpha_impact must be > 0 for methods 'ride' or 'proposed'")
+    else:
+        if cfg.intrinsic.alpha_impact <= 0.0:
+            warnings.warn(
+                f"intrinsic.alpha_impact<=0 has no effect for method '{method}'; ignoring.",
+                UserWarning,
+            )
+
+    # bin_size controls episodic binning used only by RIDE
+    if method == "ride":
+        if cfg.intrinsic.bin_size <= 0.0:
+            raise ConfigError("intrinsic.bin_size must be > 0 for method 'ride'")
+    else:
+        if cfg.intrinsic.bin_size <= 0.0:
+            warnings.warn(
+                f"intrinsic.bin_size<=0 is irrelevant for method '{method}'; ignoring.",
+                UserWarning,
+            )
 
     # Minibatch divisibility: accept either interpretation of steps_per_update
     total_a = cfg.ppo.steps_per_update
@@ -182,7 +206,9 @@ def validate_config(cfg: Config) -> None:
             pass
         lower, higher = _nearest_divisor_suggestions(int(cfg.ppo.minibatches), valid)
         # Trim a tiny showcase of nearby/typical divisors to keep message concise
-        showcase = [d for d in valid if d in {1, 2, 4, 8, 16, 32, 64, 128, 256} or d in (lower, higher)]
+        showcase = [
+            d for d in valid if d in {1, 2, 4, 8, 16, 32, 64, 128, 256} or d in (lower, higher)
+        ]
         showcase = sorted(set(showcase))
         hint_bits: list[str] = []
         if lower is not None and higher is not None:
