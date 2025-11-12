@@ -503,7 +503,7 @@ def train(
 
             # --- Logging ---
             with torch.no_grad():
-                # Last-step entropy (legacy)
+                # Last-step entropy (cheap)
                 last_obs = obs_seq_final[-1]  # [B,...]
                 if is_image:
                     ent_last = float(policy.entropy(last_obs).mean().item())
@@ -511,14 +511,25 @@ def train(
                     last_obs_t = torch.as_tensor(last_obs, device=device, dtype=torch.float32)
                     ent_last = float(policy.entropy(last_obs_t).mean().item())
 
-                # NEW: mean policy entropy across the whole update (T*B samples)
-                if is_image:
-                    ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
-                else:
-                    obs_flat_t = torch.as_tensor(
-                        obs_flat_for_ppo, device=device, dtype=torch.float32
-                    )
-                    ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
+                # Update-wide entropy: compute only if TB enabled or small batch; subsample large batches.
+                ENTROPY_MAX_SAMPLES = 1024
+                total_samples = int(T * B)
+                want_update_entropy = (ml.tb is not None) or (total_samples <= ENTROPY_MAX_SAMPLES)
+
+                ent_mean_update = float("nan")
+                if want_update_entropy:
+                    if total_samples > ENTROPY_MAX_SAMPLES:
+                        # Evenly spaced deterministic subsample to bound cost
+                        idx = np.linspace(0, total_samples - 1, ENTROPY_MAX_SAMPLES, dtype=np.int64)
+                        obs_subset = obs_flat_for_ppo[idx]
+                    else:
+                        obs_subset = obs_flat_for_ppo
+
+                    if is_image:
+                        ent_mean_update = float(policy.entropy(obs_subset).mean().item())
+                    else:
+                        obs_flat_t = torch.as_tensor(obs_subset, device=device, dtype=torch.float32)
+                        ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
             log_payload = {
                 # Renamed for clarity: entropy on last obs vs mean over update
