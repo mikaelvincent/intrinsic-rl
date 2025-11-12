@@ -3,18 +3,23 @@
 Tolerates common batch key aliases to decouple PPO from data collection.
 If `next_observations` are absent, v_{t+1} is taken as a shift of v_t with a
 zero bootstrap on the last step; terminals nullify bootstraps via (1 - done).
-See devspec/dev_spec_and_plan.md §5.1.
 
 New:
 - Shape guards and canonicalization for time/batch:
   * Observations may be (T,B,...) or (B,T,...) — the latter is auto-swapped.
   * rewards/dones may be 1-D (N=T*B) or 2-D (T,B); we reshape to (T,B).
   * Helpful errors are raised on inconsistent shapes.
+- Optional *timeout-aware* handling:
+  * You may pass separate masks for **terminals** and **truncations/timeouts**.
+  * `bootstrap_on_timeouts=False` (default) preserves the current behavior
+    where *both* terminals and truncations break bootstrapping.
+  * Set `bootstrap_on_timeouts=True` to treat *truncations/timeouts* as
+    **non-terminal** for GAE bootstrapping (common for time-limit cutoffs).
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Tuple
+from typing import Any, Mapping, Tuple, Optional
 
 import torch
 from torch import Tensor, nn
@@ -131,13 +136,58 @@ def _ensure_time_batch_layout(
     return obs_t, next_obs_t, rew_t, done_t, T, B
 
 
-def compute_gae(batch: Any, value_fn: Any, gamma: float, lam: float) -> Tuple[Tensor, Tensor]:
+def _coerce_mask_to_TB(mask: Tensor, T: int, B: int, like_done: Tensor) -> Tensor:
+    """Best-effort reshape/transpose of a mask to (T,B) float32 on the same device as like_done."""
+    dev = like_done.device
+    m = mask.to(dev, dtype=torch.float32)
+    if m.dim() == 2:
+        if (int(m.size(0)), int(m.size(1))) == (T, B):
+            return m
+        if (int(m.size(0)), int(m.size(1))) == (B, T):
+            return m.transpose(0, 1)
+        if int(m.numel()) == T * B:
+            return m.reshape(T, B)
+        raise ValueError(
+            f"compute_gae: cannot align mask of shape {tuple(m.shape)} to (T,B)=({T},{B})."
+        )
+    if m.dim() == 1:
+        if int(m.numel()) == T * B:
+            return m.reshape(T, B)
+        if int(m.numel()) == T and B == 1:
+            return m.view(T, 1)
+        if int(m.numel()) == B and T == 1:
+            return m.view(1, B)
+        raise ValueError(
+            f"compute_gae: 1-D mask length {int(m.numel())} incompatible with T*B={T*B}."
+        )
+    raise ValueError(f"compute_gae: mask must be 1-D or 2-D, got shape {tuple(m.shape)}.")
+
+
+def compute_gae(
+    batch: Any,
+    value_fn: Any,
+    gamma: float,
+    lam: float,
+    *,
+    bootstrap_on_timeouts: bool = False,
+) -> Tuple[Tensor, Tensor]:
     """Return (advantages, value_targets) flattened to (N,).
 
     `batch` may use aliases like "obs"/"observations", "dones"/"done", etc.
     Shapes:
       * Observations: (T,B,...) or (B,T,...) — auto-swapped to time-major; B can be 1.
       * rewards/dones: (T,B) or 1-D length N=T*B — reshaped to (T,B) internally.
+
+    Timeout-aware handling
+    ----------------------
+    You can optionally provide **separate** masks for terminals and truncations/timeouts:
+      - terminals: keys accepted: "terminals", "terminal", "terms"
+      - truncations/timeouts: keys accepted: "truncations", "timeouts", "truncated", "time_limits"
+
+    The effective 'done' used in GAE is:
+      done_eff = terminals OR ( (not bootstrap_on_timeouts) AND truncations )
+
+    Defaults preserve current behavior (treat truncations as done).
     """
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
@@ -147,21 +197,51 @@ def compute_gae(batch: Any, value_fn: Any, gamma: float, lam: float) -> Tuple[Te
     obs = _pick(batch, "obs", "observations")
     next_obs = _pick(batch, "next_obs", "next_observations")
     rewards = _pick(batch, "rewards", "r_total", "r")
-    dones = _pick(batch, "dones", "terminals", "done")
+    # Primary 'dones' fallback; terminals/truncations may refine it
+    dones_any = _pick(batch, "dones", "done", "terminals")  # keep "terminals" as a loose alias
+    terminals_raw = _pick(batch, "terminals", "terminal", "terms")
+    trunc_raw = _pick(batch, "truncations", "timeouts", "truncated", "time_limits")
 
-    if obs is None or rewards is None or dones is None:
-        raise KeyError("batch must contain observations, rewards and dones.")
+    if obs is None or rewards is None:
+        raise KeyError("batch must contain observations and rewards.")
+    if dones_any is None and terminals_raw is None and trunc_raw is None:
+        raise KeyError("batch must contain 'dones' or separate 'terminals'/'truncations' masks.")
 
     # Convert to tensors on correct device
     obs_t = _to_tensor(obs, device)
     next_obs_t = None if next_obs is None else _to_tensor(next_obs, device)
     rew_t = _to_tensor(rewards, device, dtype=torch.float32)
-    done_t = _to_tensor(dones, device, dtype=torch.float32)
+
+    # If a coarse 'dones' is provided, use it to infer layout; refine later if separate masks exist
+    done_base = torch.zeros_like(rew_t, dtype=torch.float32)
+    if dones_any is not None:
+        done_base = _to_tensor(dones_any, device, dtype=torch.float32)
 
     # Canonicalize shapes/layout to time-major (T,B,...) and (T,B)
     obs_t, next_obs_t, rew_t, done_t, T, B = _ensure_time_batch_layout(
-        obs_t, next_obs_t, rew_t, done_t
+        obs_t, next_obs_t, rew_t, done_base
     )
+
+    # Prepare effective done mask (terminals vs timeouts)
+    term_t: Optional[Tensor] = None
+    trunc_t: Optional[Tensor] = None
+
+    if terminals_raw is not None:
+        term_t = _coerce_mask_to_TB(_to_tensor(terminals_raw, device), T, B, done_t)
+    if trunc_raw is not None:
+        trunc_t = _coerce_mask_to_TB(_to_tensor(trunc_raw, device), T, B, done_t)
+
+    if term_t is None and trunc_t is None:
+        done_eff = done_t  # fall back to whatever caller provided
+    else:
+        term = term_t if term_t is not None else torch.zeros_like(done_t)
+        if trunc_t is None:
+            done_eff = term
+        else:
+            if bootstrap_on_timeouts:
+                done_eff = term  # ignore truncations in 'done'
+            else:
+                done_eff = torch.clamp(term + trunc_t, max=1.0)
 
     # Values for s_t and s_{t+1}
     with torch.no_grad():
@@ -176,12 +256,12 @@ def compute_gae(batch: Any, value_fn: Any, gamma: float, lam: float) -> Tuple[Te
                 v_tp1[:-1] = v_t[1:]
             v_tp1[-1] = 0.0
 
-        # Backward GAE
+        # Backward GAE using the *effective* done mask
         adv = torch.zeros_like(v_t)
         last_adv = torch.zeros(B, device=device)
         for t in reversed(range(T)):
-            delta = rew_t[t] + gamma * (1.0 - done_t[t]) * v_tp1[t] - v_t[t]
-            last_adv = delta + gamma * lam * (1.0 - done_t[t]) * last_adv
+            delta = rew_t[t] + gamma * (1.0 - done_eff[t]) * v_tp1[t] - v_t[t]
+            last_adv = delta + gamma * lam * (1.0 - done_eff[t]) * last_adv
             adv[t] = last_adv
 
         v_targets = adv + v_t
