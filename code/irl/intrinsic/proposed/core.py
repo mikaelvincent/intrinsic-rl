@@ -61,6 +61,7 @@ class Proposed(nn.Module):
         gate_tau_s: float = 2.0,
         gate_hysteresis_up_mult: float = 2.0,
         gate_min_consec_to_gate: int = 5,
+        gate_min_regions_for_gating: int = 3,  # NEW: regions required before medians/gating engage
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
@@ -92,6 +93,8 @@ class Proposed(nn.Module):
         self.tau_s = float(gate_tau_s)
         self.hysteresis_up_mult = float(gate_hysteresis_up_mult)
         self.min_consec_to_gate = int(gate_min_consec_to_gate)
+        # NEW: minimum number of *populated* regions before medians are considered stable.
+        self.min_regions_for_gating = int(gate_min_regions_for_gating)
         self._eps = 1e-8
         self.gating_enabled: bool = True
 
@@ -149,13 +152,20 @@ class Proposed(nn.Module):
     # ----------------------------- gating -----------------------------
 
     def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
-        """Update region gate based on LP/stochasticity; return 0/1."""
+        """Update region gate based on LP/stochasticity; return 0/1.
+
+        Medians used by the gating rule only engage once at least
+        `self.min_regions_for_gating` regions have observed samples. Until
+        then, gating remains permissive (all regions 'on').
+        """
         st = self._stats.get(rid)
         if st is None:
             return 1
 
-        # Need ≥3 regions with stats for robust medians
-        sufficient = sum(1 for s in self._stats.values() if s.count > 0) >= 3
+        # Need ≥ min_regions_for_gating populated regions for robust medians
+        sufficient = sum(1 for s in self._stats.values() if s.count > 0) >= int(
+            self.min_regions_for_gating
+        )
         if not sufficient:
             st.bad_consec = 0
             st.good_consec = 0
