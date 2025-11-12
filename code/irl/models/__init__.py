@@ -1,7 +1,4 @@
-"""PPO backbone models (MLP policy/value).
-
-See devspec §5.1.
-"""
+"""PPO backbone models (MLP policy/value) with optional CNN encoders."""
 
 from __future__ import annotations
 

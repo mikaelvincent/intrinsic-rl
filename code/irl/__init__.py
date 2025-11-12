@@ -1,4 +1,4 @@
-"""Intrinsic RL research codebase (skeleton)."""
+"""Intrinsic RL research codebase for impact and learning-progress methods."""
 
 from ._version import __version__
 

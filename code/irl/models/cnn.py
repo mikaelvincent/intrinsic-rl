@@ -3,11 +3,10 @@ from __future__ import annotations
 """Lightweight CNN encoder for image observations.
 
 This module adds a configurable convolutional encoder that maps images
-(NCHW/NHWC; grayscale or RGB) to a fixed-size feature vector, intended for
-use by image-based agents (e.g., CarRacing) in later integration steps.
-
-Default architecture follows the spec (Sprint 6 §6): three conv blocks
-with strides (4, 2, 1) and a linear projection to 256 features.
+(NCHW/NHWC; grayscale or RGB) to a fixed-size feature vector for
+image-based agents (e.g., CarRacing). The default architecture uses three
+convolutional blocks with strides (4, 2, 1) followed by a linear
+projection to 256 features.
 
 Usage
 -----

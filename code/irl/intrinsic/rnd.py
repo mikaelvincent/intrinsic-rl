@@ -5,13 +5,11 @@ on observations (prefers next_obs if provided). Optional running RMS can
 normalize outputs locally; by default the trainer handles global scaling.
 
 This module participates in the unified normalization contract:
-- `self.outputs_normalized` reflects whether intrinsic values are already
-  normalized *inside* the module. When True, the trainer must NOT apply
-  global normalization again (only clip+scale).
-- For diagnostics, `.rms` exposes the current RMS used when internal
+- ``self.outputs_normalized`` reflects whether intrinsic values are already
+  normalized *inside* the module. When True, the trainer must not apply its
+  global normalization again (only clip + scale).
+- For diagnostics, ``.rms`` exposes the current RMS used when internal
   normalization is enabled.
-
-See: devspec/dev_spec_and_plan.md §5.3.3.
 """
 
 from __future__ import annotations

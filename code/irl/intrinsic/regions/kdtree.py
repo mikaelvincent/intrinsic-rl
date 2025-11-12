@@ -1,12 +1,10 @@
 """KD-tree region store for φ-space partitioning.
 
 Balanced-ish binary KD-tree over φ∈R^D with capacity-based splits:
-- Each leaf holds up to `capacity` samples; on overflow (and if depth < depth_max),
+- Each leaf holds up to ``capacity`` samples; on overflow (and if depth < ``depth_max``),
   split on the max-variance dimension at the median value.
-- Region IDs are assigned to leaves; on split, left child inherits the parent's ID
-  and right child gets a new ID for early ID stability.
-
-See: devspec/dev_spec_and_plan.md §5.6.
+- Region IDs are assigned to leaves; on split, the left child inherits the parent's ID
+  and the right child gets a new ID for early ID stability.
 """
 
 from __future__ import annotations

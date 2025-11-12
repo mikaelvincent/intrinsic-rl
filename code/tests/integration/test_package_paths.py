@@ -1,7 +1,7 @@
-def test_skeleton_modules_present():
+def test_package_modules_present():
     import importlib
 
-    # Modules that should exist at this stage
+    # Modules that should be importable from the packaged library
     for mod in [
         "irl",
         "irl.cfg",

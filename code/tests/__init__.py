@@ -1,1 +1,1 @@
-# Make tests a package (skeleton).
+# Make tests a package.
