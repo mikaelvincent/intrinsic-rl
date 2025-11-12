@@ -29,6 +29,9 @@ pip install -e .
 # Optional dev/test tools
 pip install -e ".[dev]"
 
+# Optional: enable TensorBoard logging support
+pip install -e ".[tb]"
+
 # Optional env extras:
 # - Box2D envs (BipedalWalker, CarRacing)
 pip install -e ".[box2d]"
