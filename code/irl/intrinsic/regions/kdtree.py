@@ -101,7 +101,7 @@ class RegionNode:
 
 
 class KDTreeRegionStore:
-    """KD‑tree region store with capacity‑based splitting."""
+    """KD-tree region store with capacity-based splitting."""
 
     def __init__(self, dim: int, capacity: int = 200, depth_max: int = 12) -> None:
         if dim <= 0:
@@ -133,13 +133,43 @@ class KDTreeRegionStore:
         return int(final_leaf.region_id)
 
     def bulk_insert(self, points: Array) -> Array:
-        """Insert a batch of points; returns an array of region_ids for each point."""
+        """Insert a batch of points; returns an array of region_ids for each point.
+
+        Optimized to perform a *single* tree traversal per point by avoiding the second post-split route that `insert()`
+        performs. For each point we:   1) route to the current leaf;   2) add the point and split the leaf if capacity
+        is reached;   3) compute the final leaf for that point *locally* using the split      metadata (no extra
+        root→leaf traversal). This preserves the exact insertion semantics and region-ID assignment order of the
+        sequential `insert()` implementation while reducing routing work.
+        """
         pts = np.asarray(points, dtype=np.float32)
         if pts.ndim != 2 or pts.shape[1] != self.dim:
             raise ValueError(f"points must have shape (N, {self.dim})")
+
         out = np.empty((pts.shape[0],), dtype=np.int64)
+
         for i in range(pts.shape[0]):
-            out[i] = self.insert(pts[i])
+            x = pts[i]
+            # 1) Route once to the current leaf
+            leaf = self.root.route(x)
+            # 2) Add the point and split if necessary
+            leaf.add_point(x)
+            if leaf.count >= self.capacity and leaf.depth < self.depth_max:
+                # Cache split after mutation: _split_leaf turns `leaf` into an internal node
+                self._split_leaf(leaf)
+                # 3) Decide which child owns the newly added point using the split criterion
+                assert leaf.split_dim is not None and leaf.split_val is not None
+                assert leaf.left is not None and leaf.right is not None
+                if float(x[leaf.split_dim]) <= float(leaf.split_val):
+                    final_leaf = leaf.left
+                else:
+                    final_leaf = leaf.right
+            else:
+                final_leaf = leaf
+
+            rid = final_leaf.region_id
+            assert rid is not None
+            out[i] = int(rid)
+
         return out
 
     def locate(self, p: Array) -> int:
@@ -228,7 +258,7 @@ class KDTreeRegionStore:
     # ------------------- debug/diagnostics -------------------
 
     def as_dict(self) -> dict:
-        """Return a JSON‑serializable snapshot of the tree (structure only)."""
+        """Return a JSON-serializable snapshot of the tree (structure only)."""
 
         def _node(n: RegionNode) -> dict:
             d = {
