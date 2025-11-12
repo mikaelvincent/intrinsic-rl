@@ -48,6 +48,9 @@ class ICMConfig:
     beta_forward: float = 1.0  # weight for forward MSE in total loss
     beta_inverse: float = 1.0  # weight for inverse loss in total loss
     grad_clip: float = 5.0
+    # Bounds for continuous-inverse head predicted log_std (clamped in forward)
+    inv_log_std_min: float = -5.0
+    inv_log_std_max: float = 2.0
 
 
 # ---------------------------------- ICM ------------------------------------
@@ -124,7 +127,13 @@ class ICM(BaseIntrinsicModule, nn.Module):
         if self.is_discrete:
             self.inverse = mlp(inv_in, self.cfg.hidden, out_dim=self.n_actions)
         else:
-            self.inverse = ContinuousInverseHead(inv_in, self.act_dim, hidden=self.cfg.hidden)
+            self.inverse = ContinuousInverseHead(
+                inv_in,
+                self.act_dim,
+                hidden=self.cfg.hidden,
+                log_std_min=self.cfg.inv_log_std_min,
+                log_std_max=self.cfg.inv_log_std_max,
+            )
 
         # ----- Forward dynamics head: input = concat[φ(s), a_embed] -> φ̂(s') -----
         fwd_in = self.cfg.phi_dim + self._forward_act_in_dim
