@@ -7,8 +7,9 @@ New (backward-compatible):
 - Optional `optimizers=(pol_opt, val_opt)` parameter allows callers (the
   trainer) to pass persistent Adam optimizers so momentum/state is reused
   across updates and can be checkpointed/resumed.
-- Optional `return_stats=True` returns a small dict with `approx_kl`,
-  `clip_frac`, `entropy`, `policy_loss`, `value_loss` for logging.
+- Optional `return_stats=True` returns a small dict with **means over the
+  whole update**: `approx_kl`, `clip_frac`, `entropy`, `policy_loss`,
+  `value_loss`, plus `early_stop` and `epochs_ran` for monitoring.
 
 Enhancements:
 - Optional **value function clipping** controlled by `cfg.value_clip_range`
@@ -78,6 +79,12 @@ def ppo_update(
         are created for this call (keeps unit tests/backward compatibility working).
     return_stats
         If True, returns a dict of logging stats; otherwise returns None.
+
+    Returns (when return_stats=True)
+    --------------------------------
+    Dict with *means across the entire update*:
+      - approx_kl, clip_frac, entropy, policy_loss, value_loss,
+        plus early_stop (0/1) and epochs_ran.
     """
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
@@ -131,11 +138,13 @@ def ppo_update(
     kl_penalty_coef = float(getattr(cfg, "kl_penalty_coef", 0.0))
     kl_stop = float(getattr(cfg, "kl_stop", 0.0))
 
-    # Accumulators for logging
+    # Accumulators for logging (weighted by batch size)
     tot_samples = 0
     sum_entropy = 0.0
     sum_kl = 0.0
     sum_clip_frac = 0.0
+    sum_pol_loss = 0.0
+    sum_val_loss = 0.0
     last_pol_loss = 0.0
     last_val_loss = 0.0
     early_stop_triggered = False
@@ -195,15 +204,17 @@ def ppo_update(
             # Logging accumulators
             bsz = int(o.shape[0])
             tot_samples += bsz
+            # Weighted means
             sum_entropy += float(entropy.detach().item()) * bsz
-            sum_kl += (
-                float((logp_old - logp).mean().detach().item()) * bsz
-            )  # keep sign for continuity with older logs
-            # Fraction of samples where ratio got clipped
+            sum_kl += float((logp_old - logp).mean().detach().item()) * bsz  # keep sign
             clip_mask = (ratio > (1.0 + clip_eps)) | (ratio < (1.0 - clip_eps))
             sum_clip_frac += float(clip_mask.float().mean().detach().item()) * bsz
+
+            # Loss accumulators (weighted)
             last_pol_loss = float(policy_loss.detach().item())
             last_val_loss = float(v_loss.detach().item())
+            sum_pol_loss += last_pol_loss * bsz
+            sum_val_loss += last_val_loss * bsz
 
             # Early stop if KL too large (absolute)
             if kl_stop > 0.0 and float(approx_kl_abs.item()) > kl_stop:
@@ -219,8 +230,9 @@ def ppo_update(
             "approx_kl": sum_kl / denom,
             "clip_frac": sum_clip_frac / denom,
             "entropy": sum_entropy / denom,
-            "policy_loss": last_pol_loss,
-            "value_loss": last_val_loss,
+            # Return update-wide means for losses (not just the last minibatch)
+            "policy_loss": sum_pol_loss / denom,
+            "value_loss": sum_val_loss / denom,
             "early_stop": 1.0 if early_stop_triggered else 0.0,
             "epochs_ran": float(epochs_ran),
         }
