@@ -1,7 +1,4 @@
-"""PPO backbone models (MLP policy/value).
-
-See devspec §5.1.
-"""
+"""PPO backbone models (MLP policy/value) and convenience exports."""
 
 from __future__ import annotations
 

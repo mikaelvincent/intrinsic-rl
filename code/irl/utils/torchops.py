@@ -1,7 +1,4 @@
-"""Small torch helpers shared across modules.
-
-See devspec §5 for usage. Exposes `as_tensor`, `ensure_2d`, and `one_hot`.
-"""
+"""Small torch helpers shared across modules (tensor conversion, flattening, one-hot)."""
 
 from __future__ import annotations
 

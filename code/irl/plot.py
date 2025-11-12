@@ -1,36 +1,7 @@
 """Plotting utilities and CLI for learning curves and summaries.
 
-This module implements the plotting scripts described in Sprint 8 (Step 3):
-- Learning curves with optional smoothing and shaded standard deviation across seeds.
-- Overlays of multiple method groups (each group may include many runs).
-- Bar charts from aggregated sweep results (results/summary.csv).
-
-Typical usage
--------------
-# 1) Aggregate learning curve for one method (multiple run dirs via globs)
-python -m irl.plot curves \
-  --runs "runs/proposed__BipedalWalker*" \
-  --metric reward_total_mean \
-  --smooth 5 \
-  --shade \
-  --out results/walker_proposed_curve.png
-
-# 2) Overlay multiple methods (each --group is a comma-separated list of globs)
-python -m irl.plot overlay \
-  --group "runs/proposed__BipedalWalker*" \
-  --group "runs/ride__BipedalWalker*,runs/rnd__BipedalWalker*" \
-  --labels "Proposed" \
-  --labels "RIDE+RND (combined)" \
-  --metric reward_total_mean \
-  --smooth 5 \
-  --shade \
-  --out results/walker_overlay.png
-
-# 3) Bar chart from sweep aggregation
-python -m irl.plot bars \
-  --summary results/summary.csv \
-  --env BipedalWalker-v3 \
-  --out results/bars_walker.png
+Provides commands to aggregate runs, overlay method groups, and render bar charts
+from sweep summaries.
 """
 
 from __future__ import annotations

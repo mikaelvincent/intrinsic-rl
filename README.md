@@ -2,8 +2,6 @@
 
 Research codebase for intrinsic-motivation RL that combines **RIDE** (impact) and **R-IAC** (region learning progress) with a **randomness-aware gate**. It includes a PPO backbone, pluggable intrinsic modules (vanilla, ICM, RND, RIDE, RIAC, proposed), multi-seed evaluation, and plotting tools.
 
-> If you’re new here, start with **Quickstart** and the **Configs guide**: [`docs/CONFIGS.md`](docs/CONFIGS.md)
-
 ---
 
 ## Quickstart
@@ -148,17 +146,32 @@ irl-sweep stats \
 
 ---
 
-## Configuration guide
+## Configuration
 
-All configs are plain YAML and validated strictly. See the full explanation and examples in
-👉 **[`docs/CONFIGS.md`](docs/CONFIGS.md)**
+Configs live in `code/configs/` and are standard YAML. The loader validates types and invariants before training starts.
 
-* Minimal vanilla example: `code/configs/mountaincar_vanilla.yaml`
-* Baselines: `code/configs/*` and `code/configs/mujoco/*`
-* Methods: `vanilla | icm | rnd | ride | riac | proposed`
-* Intrinsic knobs are surfaced in `intrinsic: { … }` with gating under `intrinsic.gate: { … }`.
+**Top-level keys**
 
-You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--device`).
+* `seed`, `device`, `method`: run reproducibility and which intrinsic module to use (`vanilla`, `icm`, `rnd`, `ride`, `riac`, `proposed`).
+* `env`: Gymnasium environment settings (ID, vectorized env count, frame-skip, domain randomization, discrete CarRacing toggle).
+* `ppo`: PPO hyperparameters (steps per update, minibatches, epochs, learning rate, clip settings, KL knobs).
+* `intrinsic`: Intrinsic reward coefficients and region settings. Gating thresholds live under `intrinsic.gate`.
+* `logging`: CSV/TensorBoard cadence and checkpoint interval.
+* `evaluation`: Periodic evaluation episodes without intrinsic rewards.
+* `adaptation`: Optional scheduler that anneals intrinsic scaling based on policy entropy.
+
+**Minibatch divisibility rule**
+
+`ppo.minibatches` must evenly divide either `ppo.steps_per_update` or `ppo.steps_per_update * env.vec_envs`. The loader enforces this and explains how to adjust the values when it fails.
+
+**Intrinsic normalization contract**
+
+Each intrinsic module advertises whether it normalizes rewards internally via `outputs_normalized`.
+
+* When `outputs_normalized=False`, the trainer applies a global running RMS so different modules share a consistent reward scale.
+* When `outputs_normalized=True`, the module already returns normalized rewards (for example, the proposed method and RIAC use per-component RMS). In that case the trainer skips the global RMS and only applies clipping/scaling.
+
+You can override any field from the CLI, e.g. `irl-train --config ... --method ride --device cuda:0`.
 
 ---
 
@@ -168,7 +181,6 @@ You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--de
 code/irl/         # library (trainer, models, intrinsic modules, utils)
 code/configs/     # ready-to-run YAMLs (Box2D + MuJoCo)
 code/tests/       # unit & integration tests (pytest)
-devspec/          # design spec and sprint plan
 ```
 
 Artifacts per run:
@@ -202,4 +214,4 @@ pytest -q
 
 ## Citation / Use
 
-This is a research scaffold intended for experiments and comparisons across intrinsic-motivation methods. See the dev spec for design choices and sprint plan: `devspec/dev_spec_and_plan.md`.
+This project is a research playground for intrinsic-motivation RL. Feel free to adapt it for your experiments, cite the repository when publishing results, and share improvements via pull requests.

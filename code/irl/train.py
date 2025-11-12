@@ -1,7 +1,6 @@
 """PPO training CLI — thin wrapper around irl.trainer.train().
 
-This keeps the public CLI stable while moving the heavy training logic into the irl.trainer subpackage to meet Sprint 5
-refactor goals.
+Keeps the public CLI stable while delegating heavy lifting to `irl.trainer`.
 """
 from __future__ import annotations
 

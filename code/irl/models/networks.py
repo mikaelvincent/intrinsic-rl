@@ -5,8 +5,6 @@ Supports:
 - **Image Box** observations (rank >= 2): ConvEncoder backbone (NCHW/NHWC tolerant, auto 0..1 scaling).
 
 Discrete actions -> categorical logits. Continuous actions -> diagonal Gaussian with state-independent log_std.
-
-See dev spec §5.1 and Sprint 6 notes for the image pathway.
 """
 
 from __future__ import annotations
