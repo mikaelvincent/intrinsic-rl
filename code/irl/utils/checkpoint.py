@@ -1,6 +1,7 @@
 """Checkpoint manager with atomic writes & bounded retention.
 
-See devspec/dev_spec_and_plan.md §6.1 (artifacts) and §9 (reliability).
+Handles safe serialization, rolling retention, and config hashing for resume
+guardrails.
 """
 
 from __future__ import annotations

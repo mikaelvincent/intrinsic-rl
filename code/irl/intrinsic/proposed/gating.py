@@ -32,9 +32,9 @@ def update_region_gate(
 ) -> int:
     """Update and return the region gate (1 on, 0 off).
 
-    Implements the hysteretic rule from the dev spec (§5.4.1): gate off when
-    LP is below a threshold and stochasticity is high for K consecutive
-    refreshes; re‑enable after meeting the stronger hysteresis criterion.
+    Implements a hysteretic rule: gate off when LP is below a threshold and
+    stochasticity is high for K consecutive refreshes; re-enable after meeting
+    the stronger hysteresis criterion.
     Mutates ``st`` in place and returns the current gate value.
     """
     if not sufficient_regions:

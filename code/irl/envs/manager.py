@@ -1,8 +1,8 @@
 """Build single or vectorized Gymnasium envs with consistent settings.
 
-Includes seeding, optional frame‑skip, CarRacing discrete control, and
-best‑effort domain randomization. Returns a `gym.Env` or a `VectorEnv`.
-See devspec/dev_spec_and_plan.md §4.2/§5.2.
+Includes seeding, optional frame-skip, CarRacing discrete control, and
+best-effort domain randomization. Returns a :class:`gym.Env` or a
+:class:`gym.vector.VectorEnv`.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ def _is_car_racing(env_id: str) -> bool:
 class EnvManager:
     """Factory for (vectorized) Gymnasium envs with stable seeding & wrappers.
 
-    Builds a single `gym.Env` or a vectorized env, wiring frame‑skip,
-    optional CarRacing discrete controls, and best‑effort domain randomization.
-    See devspec/dev_spec_and_plan.md §4.2/§5.2. Field types document usage.
+    Builds a single :class:`gym.Env` or a vectorized env, wiring frame-skip,
+    optional CarRacing discrete controls, and best-effort domain randomization.
+    Field types document usage.
     """
 
     env_id: str

@@ -6,8 +6,8 @@ This module adds a configurable convolutional encoder that maps images
 (NCHW/NHWC; grayscale or RGB) to a fixed-size feature vector, intended for
 use by image-based agents (e.g., CarRacing) in later integration steps.
 
-Default architecture follows the spec (Sprint 6 §6): three conv blocks
-with strides (4, 2, 1) and a linear projection to 256 features.
+Default architecture uses three conv blocks with strides (4, 2, 1) and a
+linear projection to 256 features.
 
 Usage
 -----

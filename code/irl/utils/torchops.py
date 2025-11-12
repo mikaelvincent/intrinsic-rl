@@ -1,6 +1,7 @@
 """Small torch helpers shared across modules.
 
-See devspec §5 for usage. Exposes `as_tensor`, `ensure_2d`, and `one_hot`.
+Exposes :func:`as_tensor`, :func:`ensure_2d`, and :func:`one_hot` used by
+models, intrinsic modules, and utilities.
 """
 
 from __future__ import annotations

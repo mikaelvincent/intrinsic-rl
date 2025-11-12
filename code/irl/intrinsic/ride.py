@@ -12,8 +12,6 @@ representation is trained here.
 
 Supports both vector and **image** observations: image inputs are routed
 through the ICM's ConvEncoder path (auto HWC/CHW and auto-scaling).
-See: devspec/dev_spec_and_plan.md §5.3.4 (RIDE) and §5.5 (binning).
-
 Note
 ----
 Previously, this module exposed an `obs_dim` attribute that was computed as

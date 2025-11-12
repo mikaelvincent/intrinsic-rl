@@ -3,10 +3,10 @@
 
 def main() -> None:
     msg = (
-        "intrinsic-rl (skeleton)\n"
-        "This is a Sprint 0 package scaffold. CLI commands will land in later steps.\n"
-        "Modules present: cfg, envs, models, intrinsic, algo, data.\n"
-        "Try importing `irl` in Python to verify installation."
+        "intrinsic-rl utilities\n"
+        "This package bundles PPO training with intrinsic modules (ICM, RND, RIDE, RIAC, proposed).\n"
+        "Available CLIs: irl-train, irl-eval, irl-plot, irl-sweep. See the README for usage examples.\n"
+        "Import `irl` or run `irl-train --help` to get started."
     )
     print(msg)
 

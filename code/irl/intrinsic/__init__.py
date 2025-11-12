@@ -1,7 +1,7 @@
 """Intrinsic modules and base protocol.
 
-Provides base interfaces and concrete modules (ICM, RND, RIDE, RIAC, Proposed) plus factory helpers and a running RMS
-normalizer. See devspec §5.
+Provides shared interfaces, concrete modules (ICM, RND, RIDE, RIAC, Proposed),
+factory helpers, and a running RMS normalizer used by the trainer.
 """
 
 from __future__ import annotations

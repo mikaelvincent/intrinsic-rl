@@ -1,9 +1,9 @@
 """ICM intrinsic module: encoder, inverse, and forward heads.
 
-Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and update
-routines for both discrete and continuous actions. Now supports **image**
-observations by routing through a ConvEncoder when the observation space has
-rank ≥ 2 (HWC or CHW). See devspec §5.3.2 and §6 (Sprint 6).
+Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and
+update routines for both discrete and continuous actions. Image observations
+are routed through a ConvEncoder when the observation space has rank ≥ 2 (HWC
+or CHW).
 
 Image dtype contract
 --------------------

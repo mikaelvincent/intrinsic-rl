@@ -1,6 +1,7 @@
 """CSV/TensorBoard scalar logging with simple cadence.
 
-CSV writes on a configured interval; TB (if available) logs each call. See devspec/dev_spec_and_plan.md §6.
+CSV writes on a configured interval; TensorBoard (if available) logs every
+call. Designed to mirror the logging defaults in the provided configs.
 """
 
 from __future__ import annotations

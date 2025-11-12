@@ -1,7 +1,7 @@
-"""PPO training CLI — thin wrapper around irl.trainer.train().
+"""PPO training CLI — thin wrapper around :func:`irl.trainer.train`.
 
-This keeps the public CLI stable while moving the heavy training logic into the irl.trainer subpackage to meet Sprint 5
-refactor goals.
+The heavy training logic lives in :mod:`irl.trainer`; this entrypoint keeps the
+public command stable while that module evolves internally.
 """
 from __future__ import annotations
 

@@ -2,8 +2,6 @@
 
 Research codebase for intrinsic-motivation RL that combines **RIDE** (impact) and **R-IAC** (region learning progress) with a **randomness-aware gate**. It includes a PPO backbone, pluggable intrinsic modules (vanilla, ICM, RND, RIDE, RIAC, proposed), multi-seed evaluation, and plotting tools.
 
-> If you’re new here, start with **Quickstart** and the **Configs guide**: [`docs/CONFIGS.md`](docs/CONFIGS.md)
-
 ---
 
 ## Quickstart
@@ -148,17 +146,27 @@ irl-sweep stats \
 
 ---
 
-## Configuration guide
+## Configuration
 
-All configs are plain YAML and validated strictly. See the full explanation and examples in
-👉 **[`docs/CONFIGS.md`](docs/CONFIGS.md)**
+Configurations are strict YAML files mapped onto dataclasses. Examples live in `code/configs/` (including MuJoCo variants under `code/configs/mujoco/`). Use them as starting points or override individual keys via CLI options such as `--method`, `--env`, or `--device`.
 
-* Minimal vanilla example: `code/configs/mountaincar_vanilla.yaml`
-* Baselines: `code/configs/*` and `code/configs/mujoco/*`
-* Methods: `vanilla | icm | rnd | ride | riac | proposed`
-* Intrinsic knobs are surfaced in `intrinsic: { … }` with gating under `intrinsic.gate: { … }`.
+**Top-level keys**
 
-You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--device`).
+* `seed`, `device`, `method` – run-level defaults for determinism, hardware selection, and intrinsic method.
+* `env` – Gymnasium environment settings (`id`, `vec_envs`, `frame_skip`, `domain_randomization`, `discrete_actions`).
+* `ppo` – PPO optimizer loop (`steps_per_update`, `minibatches`, `epochs`, learning rates, KL/clip controls).
+* `intrinsic` – knobs for intrinsic modules (impact weights, learning-progress EMAs, binning/gating thresholds). Nested `gate` controls the competence-progress gate used by the proposed method.
+* `adaptation` – optional entropy-aware scaling of intrinsic weights during long runs.
+* `evaluation` – cadence and episode count for periodic evaluation rollouts without intrinsic rewards.
+* `logging` – CSV/TensorBoard cadence and checkpoint interval.
+
+**Minibatch divisibility rule**
+
+Ensure either `ppo.steps_per_update` **or** `ppo.steps_per_update * env.vec_envs` is divisible by `ppo.minibatches`. The validator enforces this so that each minibatch is balanced.
+
+**Intrinsic normalization contract**
+
+Intrinsic modules indicate whether they already normalize rewards via `module.outputs_normalized`. Modules such as `Proposed` and `RIAC` emit normalized values internally; the trainer then skips global RMS scaling. Modules that leave `outputs_normalized=False` (e.g., `RIDE`) rely on the trainer’s global running RMS. When writing new modules, follow the same contract to avoid double-normalizing rewards.
 
 ---
 
@@ -168,7 +176,6 @@ You can override top-level fields from the CLI (e.g., `--method`, `--env`, `--de
 code/irl/         # library (trainer, models, intrinsic modules, utils)
 code/configs/     # ready-to-run YAMLs (Box2D + MuJoCo)
 code/tests/       # unit & integration tests (pytest)
-devspec/          # design spec and sprint plan
 ```
 
 Artifacts per run:
@@ -202,4 +209,4 @@ pytest -q
 
 ## Citation / Use
 
-This is a research scaffold intended for experiments and comparisons across intrinsic-motivation methods. See the dev spec for design choices and sprint plan: `devspec/dev_spec_and_plan.md`.
+This is a research scaffold intended for experiments and comparisons across intrinsic-motivation methods. Contributions and new environments are welcome; open an issue or pull request to discuss improvements.

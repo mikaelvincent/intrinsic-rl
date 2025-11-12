@@ -1,6 +1,7 @@
-"""Typed config schemas, YAML loader, and validators.
+"""Typed configuration dataclasses plus YAML helpers.
 
-See devspec/dev_spec_and_plan.md §6 for the full schema.
+Provides strongly-typed schemas for training, environments, intrinsic modules,
+and logging, along with loader/validator utilities.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """PPO backbone models (MLP policy/value).
 
-See devspec §5.1.
+Exports policy/value networks plus shared layers and the CNN encoder.
 """
 
 from __future__ import annotations

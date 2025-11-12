@@ -5,8 +5,6 @@ Balanced-ish binary KD-tree over φ∈R^D with capacity-based splits:
   split on the max-variance dimension at the median value.
 - Region IDs are assigned to leaves; on split, left child inherits the parent's ID
   and right child gets a new ID for early ID stability.
-
-See: devspec/dev_spec_and_plan.md §5.6.
 """
 
 from __future__ import annotations

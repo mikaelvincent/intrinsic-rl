@@ -1,6 +1,7 @@
 """Configuration dataclasses.
 
-Defines the project's config surface; defaults mirror devspec §6.2.
+Defines the project's configuration surface; defaults mirror the provided
+example YAML files.
 """
 
 from __future__ import annotations
@@ -111,7 +112,7 @@ MethodLiteral = Literal["vanilla", "icm", "rnd", "ride", "riac", "proposed"]
 
 @dataclass(frozen=True)
 class Config:
-    """Top-level configuration (see devspec §6)."""
+    """Top-level configuration spanning trainer, env, intrinsic, and logging."""
 
     seed: int = 1
     device: str = "cpu"  # or "cuda:0"
