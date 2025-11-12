@@ -75,9 +75,7 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
         try:
             idx = int(act)
         except Exception as exc:
-            raise ValueError(
-                f"Discrete action must be an integer index (got {act!r})."
-            ) from exc
+            raise ValueError(f"Discrete action must be an integer index (got {act!r}).") from exc
 
         n = int(self._action_set.shape[0])
         if idx < 0 or idx >= n:
@@ -99,6 +97,11 @@ class DomainRandomizationWrapper(gym.Wrapper):
       - Adds an entry to the `reset()` info dict:
           info["dr_applied"] = {"mujoco": <int>, "box2d": <int>}
         indicating how many sub-perturbations were applied per backend.
+
+    Robustness:
+      - Safely **detects** supported backends once and avoids mutating when
+        the expected structures are not present.
+      - Extra shape/type checks prevent accidental writes to unexpected fields.
     """
 
     def __init__(self, env: gym.Env, seed: Optional[int] = None) -> None:
@@ -108,35 +111,91 @@ class DomainRandomizationWrapper(gym.Wrapper):
         self._last_applied = 0  # total diagnostics only (sum)
         self._last_diag: dict[str, int] = {"mujoco": 0, "box2d": 0}  # detailed diagnostics
 
+        # Backend detection flags (evaluated lazily on first reset)
+        self._backend_checked: bool = False
+        self._has_mujoco: bool = False
+        self._has_box2d: bool = False
+
     # ------------------ helpers ------------------
 
     def _u(self, low: float, high: float, size=None):
         return self._rng.uniform(low, high, size=size)
 
+    def _detect_backends(self) -> None:
+        """Detect whether the wrapped env exposes MuJoCo or Box2D structures.
+
+        This is a no-op after the first successful detection attempt.
+        """
+        if self._backend_checked:
+            return
+        try:
+            uw = self.env.unwrapped
+        except Exception:
+            # Cannot introspect; mark checked to avoid repeated attempts.
+            self._backend_checked = True
+            return
+
+        # MuJoCo: look for .model or .mujoco_model with .opt.gravity at least
+        try:
+            mj_model = getattr(uw, "model", None) or getattr(uw, "mujoco_model", None)
+            if (
+                mj_model is not None
+                and hasattr(mj_model, "opt")
+                and hasattr(mj_model.opt, "gravity")
+            ):
+                g = getattr(mj_model.opt, "gravity", None)
+                # Expect 3-vector gravity; tolerate array-likes
+                if g is not None:
+                    arr = np.array(g, dtype=np.float64).reshape(-1)
+                    if arr.size == 3 and np.isfinite(arr).all():
+                        self._has_mujoco = True
+        except Exception:
+            self._has_mujoco = False  # remain conservative
+
+        # Box2D: look for .world with .gravity attribute
+        try:
+            world = getattr(uw, "world", None)
+            if world is not None and hasattr(world, "gravity"):
+                self._has_box2d = True
+        except Exception:
+            self._has_box2d = False
+
+        self._backend_checked = True
+
     def _maybe_randomize_mujoco(self) -> int:
+        """Best-effort MuJoCo perturbations; returns count of applied changes."""
+        if not self._has_mujoco:
+            return 0
         applied = 0
         try:
             uw = self.env.unwrapped
             mj_model = getattr(uw, "model", None) or getattr(uw, "mujoco_model", None)
-            if mj_model is None:
+            if mj_model is None or not hasattr(mj_model, "opt"):
                 return 0
 
             # Gravity (vector of length 3)
             try:
-                scale = self._u(0.95, 1.05)
-                g = np.array(mj_model.opt.gravity, dtype=np.float64)
-                g *= scale
-                mj_model.opt.gravity[:] = g
-                applied += 1
+                g = getattr(mj_model.opt, "gravity", None)
+                if g is not None:
+                    g_arr = np.array(g, dtype=np.float64).reshape(-1)
+                    if g_arr.size == 3 and np.isfinite(g_arr).all():
+                        scale = self._u(0.95, 1.05)
+                        g_arr *= scale
+                        # Assign back via slice to avoid replacing the object
+                        mj_model.opt.gravity[:] = g_arr
+                        applied += 1
             except Exception:
                 pass
 
             # Geom friction (N geoms x 3) if present
             try:
-                fr = np.array(mj_model.geom_friction, dtype=np.float64, copy=True)
-                noise = self._u(0.9, 1.1, size=fr.shape)
-                mj_model.geom_friction[:] = fr * noise
-                applied += 1
+                fr = getattr(mj_model, "geom_friction", None)
+                if fr is not None:
+                    fr_arr = np.array(fr, dtype=np.float64, copy=True)
+                    if fr_arr.ndim == 2 and fr_arr.shape[1] == 3 and fr_arr.size > 0:
+                        noise = self._u(0.9, 1.1, size=fr_arr.shape)
+                        mj_model.geom_friction[:] = fr_arr * noise
+                        applied += 1
             except Exception:
                 pass
         except Exception:
@@ -145,34 +204,54 @@ class DomainRandomizationWrapper(gym.Wrapper):
         return applied
 
     def _maybe_randomize_box2d(self) -> int:
+        """Best-effort Box2D perturbations; returns count of applied changes."""
+        if not self._has_box2d:
+            return 0
         applied = 0
         try:
             uw = self.env.unwrapped
             world = getattr(uw, "world", None)
-            if world is None:
+            if world is None or not hasattr(world, "gravity"):
                 return 0
+
             g = getattr(world, "gravity", None)
-            # Box2D gravity may be tuple-like (x, y) or object with x/y
-            if g is not None:
-                scale = self._u(0.95, 1.05)
+            if g is None:
+                return 0
+
+            scale = self._u(0.95, 1.05)
+
+            # world.gravity can be tuple-like or a vector type. Handle both.
+            try:
+                gx, gy = g  # tuple-like
+                new_g = (gx, float(gy) * scale)
+                world.gravity = new_g
+                applied += 1
+            except Exception:
+                # Attribute-like (e.g., b2Vec2 with .x/.y)
                 try:
-                    # tuple-like
-                    gx, gy = g
-                    world.gravity = (gx, gy * scale)
-                    applied += 1
-                except Exception:
+                    gx = float(getattr(world.gravity, "x"))
+                    gy = float(getattr(world.gravity, "y"))
+                    # Many Box2D bindings accept tuple assignment to .gravity too
                     try:
-                        # attribute-like
-                        world.gravity = (world.gravity[0], world.gravity[1] * scale)
+                        world.gravity = (gx, gy * scale)
                         applied += 1
                     except Exception:
-                        pass
+                        # Fall back to in-place attribute update if exposed
+                        if hasattr(world.gravity, "x") and hasattr(world.gravity, "y"):
+                            world.gravity.x = gx
+                            world.gravity.y = gy * scale
+                            applied += 1
+                except Exception:
+                    pass
         except Exception:
             return applied
         return applied
 
     def _apply_randomization(self) -> None:
         """Apply DR and update diagnostics (per-backend + total)."""
+        # Detect available backends once to avoid poking unknown internals repeatedly
+        self._detect_backends()
+
         applied_mj = self._maybe_randomize_mujoco()
         applied_b2d = self._maybe_randomize_box2d()
         self._last_diag = {"mujoco": int(applied_mj), "box2d": int(applied_b2d)}
