@@ -179,10 +179,12 @@ def train(
                 depth_max=int(cfg.intrinsic.depth_max),
                 ema_beta_long=float(cfg.intrinsic.ema_beta_long),
                 ema_beta_short=float(cfg.intrinsic.ema_beta_short),
+                # NEW gating knobs:
                 gate_tau_lp_mult=float(cfg.intrinsic.gate.tau_lp_mult),
                 gate_tau_s=float(cfg.intrinsic.gate.tau_s),
                 gate_hysteresis_up_mult=float(cfg.intrinsic.gate.hysteresis_up_mult),
                 gate_min_consec_to_gate=int(cfg.intrinsic.gate.min_consec_to_gate),
+                gate_min_regions_for_gating=int(cfg.intrinsic.gate.min_regions_for_gating),  # NEW
             )
             if not use_intrinsic:
                 print(
