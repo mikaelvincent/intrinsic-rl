@@ -6,6 +6,15 @@ Returns LP normalized via a running RMS and scaled by α_LP.
 Now supports **image** observations by delegating φ(s) to ICM, which routes
 vectors via MLP and images via ConvEncoder.
 
+Image dtype contract
+--------------------
+This module accepts **raw uint8 images** (HWC/NHWC/CHW/NCHW) or **float images already
+in [0, 1]**. If floats appear to be in [0, 255], the shared preprocessing pipeline
+(`utils.image.preprocess_image`) will defensively scale them to [0, 1]. To avoid
+accidentally bypassing scaling, do **not** pre-cast images to float32 unless you also
+scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
+layout and normalization.
+
 See: devspec/dev_spec_and_plan.md §5.3.5 (R-IAC) and §5.7 (nets/losses).
 """
 
@@ -126,9 +135,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def compute(self, tr: Transition) -> IntrinsicOutput:
         """Single-sample LP (normalized) for region of φ(s)."""
         with torch.no_grad():
-            err, phi_t = self._forward_error_per_sample(
-                tr.s, tr.s_next, tr.a
-            )
+            err, phi_t = self._forward_error_per_sample(tr.s, tr.s_next, tr.a)
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
             lp = self._update_region(rid=int(rid), error=float(err.view(-1)[0].item()))
 
@@ -175,7 +182,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
             st = self._stats.get(rid_i)
             if st is None or st.count == 0:
                 # First observation(s) in this region: initialize EMAs to the mean error.
-                self._stats[rid_i] = _RegionStats(ema_long=e_mean, ema_short=e_mean, count=int(cnts[i]))
+                self._stats[rid_i] = _RegionStats(
+                    ema_long=e_mean, ema_short=e_mean, count=int(cnts[i])
+                )
                 lp = 0.0
             else:
                 st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * e_mean
@@ -218,7 +227,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train encoder/heads via ICM; report losses + normalized LP mean."""
+        """Train ICM and report losses + current normalized intrinsic mean."""
         with torch.no_grad():
             err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
