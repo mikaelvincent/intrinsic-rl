@@ -28,9 +28,16 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
+    """Convert to a tensor on `device`, preserving dtype unless explicitly requested.
+
+    Note: We *do not* force float32 by default to avoid breaking image pipelines
+    that rely on integer inputs (uint8) to trigger scaling in preprocessors.
+    """
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
-    return torch.as_tensor(x, device=device, dtype=dtype or torch.float32)
+    if dtype is None:
+        return torch.as_tensor(x, device=device)
+    return torch.as_tensor(x, device=device, dtype=dtype)
 
 
 def _ensure_time_batch_layout(
@@ -152,7 +159,9 @@ def compute_gae(batch: Any, value_fn: Any, gamma: float, lam: float) -> Tuple[Te
     done_t = _to_tensor(dones, device, dtype=torch.float32)
 
     # Canonicalize shapes/layout to time-major (T,B,...) and (T,B)
-    obs_t, next_obs_t, rew_t, done_t, T, B = _ensure_time_batch_layout(obs_t, next_obs_t, rew_t, done_t)
+    obs_t, next_obs_t, rew_t, done_t, T, B = _ensure_time_batch_layout(
+        obs_t, next_obs_t, rew_t, done_t
+    )
 
     # Values for s_t and s_{t+1}
     with torch.no_grad():
