@@ -91,7 +91,15 @@ def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
 
 
 def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
-    """Expand globs and return latest checkpoints from each matching run dir."""
+    """Expand globs and return latest checkpoints from each matching run dir.
+
+    Each entry in `run_globs` may be:
+      * A glob pattern pointing at run directories, or
+      * A concrete run directory, or
+      * A direct checkpoint path (ckpt_step_*.pt).
+
+    All are normalized into checkpoint paths, with duplicates removed.
+    """
     out: list[Path] = []
     for pattern in run_globs:
         for p in glob.glob(pattern):
@@ -115,7 +123,13 @@ def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
 
 
 def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) -> List[Path]:
-    """Union of checkpoints gathered from run globs and explicit --ckpt paths."""
+    """Union of checkpoints gathered from run globs and explicit --ckpt paths.
+
+    `runs` is a list of patterns and/or concrete run directories. On shells that
+    expand wildcards eagerly (notably Windows cmd.exe in some configurations),
+    a single pattern argument may arrive as multiple concrete directories; this
+    helper treats both cases uniformly.
+    """
     paths: list[Path] = []
     if runs:
         paths.extend(_collect_ckpts_from_runs(runs))
@@ -203,6 +217,7 @@ def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
         f.flush()
         try:
             import os
+
             os.fsync(f.fileno())
         except Exception:
             pass
@@ -270,6 +285,7 @@ def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
         f.flush()
         try:
             import os
+
             os.fsync(f.fileno())
         except Exception:
             pass
@@ -282,7 +298,10 @@ def cli_eval_many(
         None,
         "--runs",
         "-r",
-        help='Glob(s) to run directories (e.g., "runs/proposed__BipedalWalker*").',
+        help=(
+            "Glob(s) to run directories (e.g., 'runs/proposed__BipedalWalker*'). "
+            "May be passed multiple times."
+        ),
     ),
     ckpt: Optional[List[Path]] = typer.Option(
         None,
@@ -302,12 +321,31 @@ def cli_eval_many(
         Path("results/summary.csv"),
         "--out",
         "-o",
-        help="Path to aggregated CSV (summary.csv). A sibling summary_raw.csv is also written.",
+        help=(
+            "Path to aggregated CSV (summary.csv). " "A sibling summary_raw.csv is also written."
+        ),
         dir_okay=False,
+    ),
+    run_patterns: List[str] = typer.Argument(
+        [],
+        help=(
+            "Additional run directory globs or paths.\n\n"
+            "On some shells (notably Windows cmd.exe), a single pattern like "
+            "runs\\*__Env__seed* may be expanded into multiple arguments before "
+            "Typer sees them. Any extra arguments after the options are collected "
+            "here and treated as additional --runs patterns."
+        ),
     ),
 ) -> None:
     """Evaluate multiple checkpoints (multi-seed) and export CSV summaries."""
-    ckpts = _normalize_inputs(runs, ckpt)
+    # Merge explicit --runs and any trailing positional patterns (for Windows globbing).
+    all_run_patterns: List[str] = []
+    if runs:
+        all_run_patterns.extend(runs)
+    if run_patterns:
+        all_run_patterns.extend(run_patterns)
+
+    ckpts = _normalize_inputs(all_run_patterns or None, ckpt)
     if not ckpts:
         raise typer.BadParameter("No checkpoints found. Provide --runs and/or --ckpt.")
 
@@ -476,6 +514,7 @@ def cli_stats(
 
     def diff_median(a, b):  # noqa: ANN001
         import numpy as _np
+
         return float(_np.median(a) - _np.median(b))
 
     mean_pt, mean_lo, mean_hi = (
@@ -502,7 +541,7 @@ def cli_stats(
         f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  (Δ={res.median_x - res.median_y:+.3f})"
     )
     typer.echo(
-        f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*CLES-1)"
+        f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)"
     )
 
     if boot > 0:

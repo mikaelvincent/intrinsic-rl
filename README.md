@@ -123,8 +123,8 @@ irl-plot curves --runs "runs/proposed__MountainCar-v0__seed*" \
 
 # Overlay groups
 irl-plot overlay \
-  --group "runs/proposed__BipedalWalker*" \
-  --group "runs/ride__BipedalWalker*,runs/rnd__BipedalWalker*" \
+  --group "runs/proposed__BipedalWalker-v3__seed*" \
+  --group "runs/ride__BipedalWalker-v3__seed*,runs/rnd__BipedalWalker-v3__seed*" \
   --labels "Proposed" --labels "RIDE+RND" \
   --metric reward_total_mean --smooth 5 \
   --out results/walker_overlay.png
@@ -133,8 +133,15 @@ irl-plot overlay \
 ### 7) Multi-seed sweep & stats
 
 ```bash
-# Evaluate latest checkpoints, aggregate CSVs
-irl-sweep eval-many --runs "runs/proposed__BipedalWalker*" --out results/summary.csv
+# Evaluate latest checkpoints across multiple methods for one env and aggregate CSVs
+irl-sweep eval-many \
+  --runs "runs/vanilla__BipedalWalker-v3__seed*" \
+  --runs "runs/icm__BipedalWalker-v3__seed*" \
+  --runs "runs/rnd__BipedalWalker-v3__seed*" \
+  --runs "runs/ride__BipedalWalker-v3__seed*" \
+  --runs "runs/riac__BipedalWalker-v3__seed*" \
+  --runs "runs/proposed__BipedalWalker-v3__seed*" \
+  --out results/summary.csv
 
 # Non-parametric comparison (Mann–Whitney U, bootstrap CIs)
 irl-sweep stats \
@@ -143,6 +150,10 @@ irl-sweep stats \
   --method-a proposed --method-b ride \
   --metric mean_return --boot 5000
 ```
+
+On Windows `cmd.exe`, wildcards like `runs\*__BipedalWalker-v3__seed*` may sometimes expand into multiple arguments even when quoted.
+The `eval-many` command is tolerant of this: any extra trailing arguments after the options are treated as additional run patterns.
+For maximum clarity, prefer the “one `--runs` per method” style shown above.
 
 ---
 
@@ -153,23 +164,23 @@ All configs are plain YAML files validated on load. Ready-to-run examples live u
 
 **Top-level keys**
 
-- `seed`, `device`, `method`: global reproducibility knobs and which intrinsic module to use (`vanilla`, `icm`, `rnd`, `ride`, `riac`, `proposed`).
-- `env`: Gymnasium environment id, vectorized env count, frame skip, optional domain randomization, and the CarRacing discrete-action toggle.
-- `ppo`: rollout length, minibatch count, update epochs, optimizer settings, and optional KL guards.
-- `intrinsic`: shared hyperparameters for intrinsic modules. The gate thresholds (`intrinsic.gate.*`) only affect the proposed method.
-- `adaptation`: entropy-aware scaling schedule for intrinsic weight `eta`.
-- `evaluation`: cadence and episode count for periodic deterministic evaluation.
-- `logging`: CSV/TensorBoard cadence plus checkpoint interval.
+* `seed`, `device`, `method`: global reproducibility knobs and which intrinsic module to use (`vanilla`, `icm`, `rnd`, `ride`, `riac`, `proposed`).
+* `env`: Gymnasium environment id, vectorized env count, frame skip, optional domain randomization, and the CarRacing discrete-action toggle.
+* `ppo`: rollout length, minibatch count, update epochs, optimizer settings, and optional KL guards.
+* `intrinsic`: shared hyperparameters for intrinsic modules. The gate thresholds (`intrinsic.gate.*`) only affect the proposed method.
+* `adaptation`: entropy-aware scaling schedule for intrinsic weight `eta`.
+* `evaluation`: cadence and episode count for periodic deterministic evaluation.
+* `logging`: CSV/TensorBoard cadence plus checkpoint interval.
 
 **Validation hints**
 
-- `ppo.steps_per_update` must be divisible by `ppo.minibatches`. When training with vector envs, the product `ppo.steps_per_update * env.vec_envs` must also divide evenly by the minibatch count.
-- Intrinsic clip (`intrinsic.r_clip`) and method-specific coefficients must stay positive; the loader raises clear errors when a setting would violate training assumptions.
+* `ppo.steps_per_update` must be divisible by `ppo.minibatches`. When training with vector envs, the product `ppo.steps_per_update * env.vec_envs` must also divide evenly by the minibatch count.
+* Intrinsic clip (`intrinsic.r_clip`) and method-specific coefficients must stay positive; the loader raises clear errors when a setting would violate training assumptions.
 
 **Intrinsic normalization contract**
 
-- Modules that normalize internally (RIAC, proposed, and any module setting `outputs_normalized=True`) expose already-scaled rewards. The trainer trusts this flag and only applies clipping and the global `intrinsic.eta` multiplier.
-- Modules that emit raw magnitudes (e.g., vanilla intrinsic off, RIDE without gating) rely on the trainer’s global `RunningRMS` scaler. The state is checkpointed alongside the policy so resumed runs pick up identical intrinsic scales.
+* Modules that normalize internally (RIAC, proposed, and any module setting `outputs_normalized=True`) expose already-scaled rewards. The trainer trusts this flag and only applies clipping and the global `intrinsic.eta` multiplier.
+* Modules that emit raw magnitudes (e.g., vanilla intrinsic off, RIDE without gating) rely on the trainer’s global `RunningRMS` scaler. The state is checkpointed alongside the policy so resumed runs pick up identical intrinsic scales.
 
 Override any top-level field from the CLI, for example `--method proposed`, `--env BipedalWalker-v3`, or `--device cuda:0`.
 
@@ -177,7 +188,7 @@ Override any top-level field from the CLI, for example `--method proposed`, `--e
 
 ## Project layout
 
-```
+```text
 code/irl/         # library (trainer, models, intrinsic modules, utils)
 code/configs/     # ready-to-run YAMLs (Box2D + MuJoCo)
 code/tests/       # unit & integration tests (pytest)
@@ -185,7 +196,7 @@ code/tests/       # unit & integration tests (pytest)
 
 Artifacts per run:
 
-```
+```text
 runs/<method>__<env>__seed<k>__<timestamp>/
   checkpoints/ckpt_step_*.pt
   logs/scalars.csv
@@ -201,6 +212,10 @@ runs/<method>__<env>__seed<k>__<timestamp>/
 * **Box2D install:** On Windows, the `Box2D` wheel is included in `.[box2d]`. On Linux/macOS, `gymnasium[box2d]` is used.
 * **CUDA not detected:** The trainer auto-falls back to CPU and prints a notice.
 * **Minibatch divisibility:** Either `ppo.steps_per_update` or `ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches` (strictly validated).
+* **Windows wildcards with `irl-sweep eval-many`:**
+
+  * If `runs\*__Env__seed*` expands into multiple arguments, they are all accepted and interpreted as run patterns.
+  * For maximum control, pass one glob per method via repeated `--runs` flags as in the examples above.
 
 ---
 
