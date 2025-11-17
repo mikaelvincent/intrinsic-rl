@@ -4,7 +4,7 @@ device: "cuda:0"
 method: "proposed"
 
 env:
-  id: "Humanoid-v4"
+  id: "Humanoid-v5"
   vec_envs: 16
   frame_skip: 1
   domain_randomization: false

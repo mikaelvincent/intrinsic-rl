@@ -48,7 +48,7 @@ def cli_train(
         None,
         "--env",
         "-e",
-        help="Override Gymnasium environment id (e.g., Ant-v4, HalfCheetah-v4, Humanoid-v4).",
+        help="Override Gymnasium environment id (e.g., Ant-v5, HalfCheetah-v5, Humanoid-v5).",
     ),
     device: Optional[str] = typer.Option(
         None,
