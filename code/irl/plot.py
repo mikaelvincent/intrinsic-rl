@@ -293,7 +293,8 @@ def cli_curves(
 
     _ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
-    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    fmt = out.suffix.lstrip(".").lower() or "png"
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out)
     plt.close(fig)
     typer.echo(f"[green]Saved[/green] {out}")
@@ -372,7 +373,8 @@ def cli_overlay(
 
     _ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
-    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    fmt = out.suffix.lstrip(".").lower() or "png"
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out)
     plt.close(fig)
     typer.echo(f"[green]Saved[/green] {out}")
@@ -469,7 +471,8 @@ def cli_bars(
 
     _ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
-    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    fmt = out.suffix.lstrip(".").lower() or "png"
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out)
     plt.close("all")
     typer.echo(f"[green]Saved[/green] {out}")
