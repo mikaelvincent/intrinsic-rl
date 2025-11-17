@@ -75,9 +75,9 @@ irl-train --config code/configs/bipedal_ride.yaml --total-steps 10000
 # Ensure MUJOCO_GL and that you've installed the extras:
 # pip install -e ".[mujoco]"
 export MUJOCO_GL=egl   # Linux headless
-irl-train --config code/configs/mujoco/ant_proposed.yaml        --total-steps 100000
+irl-train --config code/configs/mujoco/ant_proposed.yaml         --total-steps 100000
 irl-train --config code/configs/mujoco/halfcheetah_proposed.yaml --total-steps 100000
-irl-train --config code/configs/mujoco/humanoid_proposed.yaml   --total-steps 100000
+irl-train --config code/configs/mujoco/humanoid_proposed.yaml    --total-steps 100000
 ```
 
 ### 4) Resume training safely
@@ -132,8 +132,22 @@ irl-plot overlay \
 
 ### 7) Multi-seed sweep & stats
 
+This section has two pieces:
+
+1. **`eval-many`** — runs evaluation for many checkpoints and writes two CSVs:
+
+   * `results/summary_raw.csv` — one row *per checkpoint / per seed*.
+   * `results/summary.csv` — aggregated statistics per `(env, method)`.
+
+2. **`stats`** — reads `summary_raw.csv` and runs non-parametric statistics between two methods on a given env.
+
+> If `results/summary_raw.csv` does **not** exist, `irl-sweep stats` will fail with a
+> “File does not exist” error. Always run `eval-many` first.
+
+#### 7.1. Linux/macOS-style examples
+
 ```bash
-# Evaluate latest checkpoints across multiple methods for one env and aggregate CSVs
+# Evaluate latest checkpoints and write summary CSVs
 irl-sweep eval-many \
   --runs "runs/vanilla__BipedalWalker-v3__seed*" \
   --runs "runs/icm__BipedalWalker-v3__seed*" \
@@ -144,6 +158,8 @@ irl-sweep eval-many \
   --out results/summary.csv
 
 # Non-parametric comparison (Mann–Whitney U, bootstrap CIs)
+# Here we compare Proposed vs RIDE on BipedalWalker-v3,
+# using `mean_return` from summary_raw.csv and 5000 bootstrap samples.
 irl-sweep stats \
   --summary-raw results/summary_raw.csv \
   --env BipedalWalker-v3 \
@@ -151,9 +167,42 @@ irl-sweep stats \
   --metric mean_return --boot 5000
 ```
 
-On Windows `cmd.exe`, wildcards like `runs\*__BipedalWalker-v3__seed*` may sometimes expand into multiple arguments even when quoted.
-The `eval-many` command is tolerant of this: any extra trailing arguments after the options are treated as additional run patterns.
-For maximum clarity, prefer the “one `--runs` per method” style shown above.
+#### 7.2. Windows `cmd.exe` example (MountainCar-v0)
+
+On Windows 10 `cmd.exe`, the same workflow looks like this:
+
+1. First aggregate results into `results\summary_raw.csv` and `results\summary.csv`:
+
+   ```bat
+   irl-sweep eval-many ^
+     --runs "runs\vanilla__MountainCar-v0__seed*" ^
+     --runs "runs\icm__MountainCar-v0__seed*" ^
+     --runs "runs\rnd__MountainCar-v0__seed*" ^
+     --runs "runs\ride__MountainCar-v0__seed*" ^
+     --runs "runs\riac__MountainCar-v0__seed*" ^
+     --runs "runs\proposed__MountainCar-v0__seed*" ^
+     --episodes 5 ^
+     --device cpu ^
+     --out results\mc_summary.csv
+   ```
+
+2. Then run `stats` against that same `summary_raw.csv`:
+
+   ```bat
+   irl-sweep stats ^
+     --summary-raw results\summary_raw.csv ^
+     --env MountainCar-v0 ^
+     --method-a proposed ^
+     --method-b ride ^
+     --metric mean_return ^
+     --boot 2000
+   ```
+
+This matches the MountainCar command you attempted: it compares **Proposed** vs **RIDE** on `MountainCar-v0` using the `mean_return` column and `2000` bootstrap draws.
+
+On Windows `cmd.exe`, wildcards like `runs\*__BipedalWalker-v3__seed*` or `runs\*__MountainCar-v0__seed*` may sometimes expand into multiple arguments even when quoted.
+The `eval-many` command is tolerant of this when you pass one pattern per `--runs`; any extra patterns can be added via additional `--runs` flags as shown above.
+For maximum clarity, prefer the “one `--runs` per method” style.
 
 ---
 
@@ -214,7 +263,7 @@ runs/<method>__<env>__seed<k>__<timestamp>/
 * **Minibatch divisibility:** Either `ppo.steps_per_update` or `ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches` (strictly validated).
 * **Windows wildcards with `irl-sweep eval-many`:**
 
-  * If `runs\*__Env__seed*` expands into multiple arguments, they are all accepted and interpreted as run patterns.
+  * If `runs\*__Env__seed*` expands into multiple arguments, they are all accepted and interpreted as run patterns as long as you pass them via repeated `--runs`.
   * For maximum control, pass one glob per method via repeated `--runs` flags as in the examples above.
 
 ---
