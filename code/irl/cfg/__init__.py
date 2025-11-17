@@ -1,4 +1,4 @@
-"""Typed configuration dataclasses, YAML loader, and validators."""
+"""Typed configuration dataclasses, loader, and validators."""
 
 from __future__ import annotations
 

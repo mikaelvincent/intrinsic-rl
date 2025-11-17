@@ -59,7 +59,7 @@ sb3 = [
 ]
 
 [project.scripts]
-# Stub CLIs (lightweight entry points; see README for details)
+# Stub CLIs (lightweight entry points; see irl.__main__.py for routing)
 intrinsic-rl = "irl.__main__:main"
 irl-train     = "irl.train:main"
 irl-eval      = "irl.eval:main"

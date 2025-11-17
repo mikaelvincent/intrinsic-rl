@@ -1,10 +1,4 @@
-"""Command-line utility for combining multiple Markdown files from a folder into a single output file.
-
-This script scans a folder for Markdown (.md) files, parses a leading numeric prefix in their filenames (e.g., "1.2", "1.2.1", "2.1" etc.), sorts them by these numeric tokens in ascending order, and writes the concatenated contents to the file specified by --output.
-
-Usage:
-    md_combiner.py --input /path/to/md_folder --output /path/to/output.md
-"""
+"""Command-line utility that concatenates text files in a folder using numeric filename prefixes for ordering."""
 
 import argparse
 import os
@@ -14,10 +8,7 @@ from typing import List, Tuple
 
 
 def parse_section_prefix(filename: str) -> Tuple[List[int], str]:
-    """Extract an initial numeric pattern (like '1.2' or '1.2.1') from the filename, converting each dot-separated segment into an integer list for sorting.
-
-    Returns (list_of_ints, leftover_string). If no numeric prefix is found, returns ([], <basename>).
-    """
+    """Extract leading numeric tokens (e.g., '1.2' or '1.2.1') for sorting."""
     base, _ = os.path.splitext(filename)
     match = re.match(r"^([0-9]+(?:\.[0-9]+)*)(?:_|$)(.*)", base)
     if not match:
@@ -30,20 +21,14 @@ def parse_section_prefix(filename: str) -> Tuple[List[int], str]:
 
 
 def combine_markdown_files(input_dir: str, output_path: str) -> None:
-    """Reads .md files in 'input_dir', sorts them by their numeric prefix, and writes concatenated contents to 'output_path'.
-
-    Each file's content is separated by a blank line.
-    """
+    """Combine compatible files from ``input_dir`` into ``output_path``, ordered by numeric prefixes and separated by blank lines."""
     if not os.path.isdir(input_dir):
         print(f"Error: The directory '{input_dir}' does not exist.", file=sys.stderr)
         sys.exit(1)
 
     files = [f for f in os.listdir(input_dir) if f.lower().endswith(".md")]
     if not files:
-        print(
-            f"Warning: No .md files found in '{input_dir}'. Output will be empty.",
-            file=sys.stderr,
-        )
+        print(f"Warning: No compatible files found in '{input_dir}'. Output will be empty.", file=sys.stderr)
 
     parsed_files = []
     for f in files:
@@ -73,16 +58,12 @@ def combine_markdown_files(input_dir: str, output_path: str) -> None:
 
 
 def main() -> None:
-    """Parse command-line arguments and combine .md files, respecting numeric prefix ordering."""
+    """Parse arguments and combine files according to numeric prefix ordering."""
     parser = argparse.ArgumentParser(
-        description="Combine multiple Markdown files into one, ordering by numeric prefixes in filenames."
+        description="Combine multiple files into one, ordering by numeric prefixes in filenames."
     )
-    parser.add_argument(
-        "--input", required=True, help="Path to the folder containing .md files."
-    )
-    parser.add_argument(
-        "--output", required=True, help="Path to the output Markdown file."
-    )
+    parser.add_argument("--input", required=True, help="Path to the folder containing the source files.")
+    parser.add_argument("--output", required=True, help="Path to the combined output file.")
     args = parser.parse_args()
 
     combine_markdown_files(args.input, args.output)
