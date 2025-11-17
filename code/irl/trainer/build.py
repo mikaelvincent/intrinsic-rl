@@ -59,8 +59,10 @@ def ensure_mujoco_gl(env_id: str) -> str:
     Behavior:
     * If `env_id` looks like a MuJoCo task and MUJOCO_GL is *unset*:
         - On Linux: set MUJOCO_GL='egl' (common headless default) and print a notice.
-        - On Windows/macOS: do not set; print a hint instead.
-    * If MUJOCO_GL is already set: print the current value (once per process invocation).
+        - On Windows/macOS: leave MUJOCO_GL unset and stay quiet (hint is Linux-only).
+    * If MUJOCO_GL is already set:
+        - On Linux: print the current value once per process.
+        - On Windows/macOS: return the value without printing (avoid noise).
 
     Returns
     -------
@@ -73,14 +75,17 @@ def ensure_mujoco_gl(env_id: str) -> str:
 
     current = os.environ.get("MUJOCO_GL")
     if current:
-        print(f"[info] MUJOCO_GL={current} (pre-set).")
+        # Only log on Linux to avoid noisy hints on Windows/macOS.
+        if sys.platform.startswith("linux"):
+            print(f"[info] MUJOCO_GL={current} (pre-set).")
         return current
 
-    # If unset, choose a safe default on Linux; otherwise just hint.
-    if sys.platform.startswith("linux"):
-        os.environ["MUJOCO_GL"] = "egl"
-        print("[info] MUJOCO_GL not set; defaulting to 'egl' for headless MuJoCo rendering.")
-        return "egl"
+    # If unset, choose a safe default on Linux; stay silent elsewhere.
+    if not sys.platform.startswith("linux"):
+        # MUJOCO_GL is primarily relevant for headless Linux; on other platforms
+        # a missing variable is usually fine and we avoid emitting extra logs.
+        return ""
 
-    print("[info] MuJoCo env detected. Consider setting MUJOCO_GL=egl for headless runs.")
-    return ""
+    os.environ["MUJOCO_GL"] = "egl"
+    print("[info] MUJOCO_GL not set; defaulting to 'egl' for headless MuJoCo rendering.")
+    return "egl"
