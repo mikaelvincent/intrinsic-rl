@@ -1,4 +1,4 @@
-"""Command-line utility that concatenates .md files in a folder using numeric filename prefixes for ordering."""
+"""Command-line utility that concatenates text files in a folder using numeric filename prefixes for ordering."""
 
 import argparse
 import os
@@ -21,17 +21,14 @@ def parse_section_prefix(filename: str) -> Tuple[List[int], str]:
 
 
 def combine_markdown_files(input_dir: str, output_path: str) -> None:
-    """Combine .md files from ``input_dir`` into ``output_path``, ordered by numeric prefixes and separated by blank lines."""
+    """Combine compatible files from ``input_dir`` into ``output_path``, ordered by numeric prefixes and separated by blank lines."""
     if not os.path.isdir(input_dir):
         print(f"Error: The directory '{input_dir}' does not exist.", file=sys.stderr)
         sys.exit(1)
 
     files = [f for f in os.listdir(input_dir) if f.lower().endswith(".md")]
     if not files:
-        print(
-            f"Warning: No .md files found in '{input_dir}'. Output will be empty.",
-            file=sys.stderr,
-        )
+        print(f"Warning: No compatible files found in '{input_dir}'. Output will be empty.", file=sys.stderr)
 
     parsed_files = []
     for f in files:
@@ -61,14 +58,12 @@ def combine_markdown_files(input_dir: str, output_path: str) -> None:
 
 
 def main() -> None:
-    """Parse arguments and combine .md files according to numeric prefix ordering."""
+    """Parse arguments and combine files according to numeric prefix ordering."""
     parser = argparse.ArgumentParser(
-        description="Combine multiple .md files into one, ordering by numeric prefixes in filenames."
+        description="Combine multiple files into one, ordering by numeric prefixes in filenames."
     )
-    parser.add_argument(
-        "--input", required=True, help="Path to the folder containing .md files."
-    )
-    parser.add_argument("--output", required=True, help="Path to the output .md file.")
+    parser.add_argument("--input", required=True, help="Path to the folder containing the source files.")
+    parser.add_argument("--output", required=True, help="Path to the combined output file.")
     args = parser.parse_args()
 
     combine_markdown_files(args.input, args.output)
