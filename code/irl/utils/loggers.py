@@ -140,14 +140,12 @@ class MetricLogger:
             self.csv.log_row(step, metrics)
             self._last_csv_write_step = int(step)
 
-        def log_hparams(self, params: Mapping[str, object]) -> None:
-            """Optional: snapshot hparams as text (TB only)."""
-            if self.tb is not None:
-                # Render as a compact block for readability
-                text_lines = []
-                for k, v in params.items():
-                    text_lines.append(f"{k}: {v}")
-            self.tb.add_text("hparams", "\n".join(text_lines), step=0)
+    def log_hparams(self, params: Mapping[str, object]) -> None:
+        """Optional: snapshot hparams as text (TB only)."""
+        if self.tb is None:
+            return
+        text_lines = [f"{k}: {v}" for k, v in params.items()]
+        self.tb.add_text("hparams", "\n".join(text_lines), step=0)
 
     def close(self) -> None:
         try:
