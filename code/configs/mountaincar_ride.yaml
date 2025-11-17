@@ -1,0 +1,55 @@
+seed: 1
+device: "cuda:0"
+method: "ride"
+
+env:
+  id: "MountainCar-v0"
+  vec_envs: 16
+  frame_skip: 1
+  domain_randomization: false
+  discrete_actions: true
+
+ppo:
+  steps_per_update: 2048
+  minibatches: 32
+  epochs: 10
+  learning_rate: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  value_clip_range: 0.0
+  kl_penalty_coef: 0.0
+  kl_stop: 0.0
+
+intrinsic:
+  eta: 0.1
+  alpha_impact: 1.0
+  alpha_lp: 0.5
+  r_clip: 5.0
+  bin_size: 0.25
+  region_capacity: 200
+  depth_max: 12
+  ema_beta_long: 0.995
+  ema_beta_short: 0.9
+  gate:
+    tau_lp_mult: 0.01
+    tau_s: 2.0
+    hysteresis_up_mult: 2.0
+    min_consec_to_gate: 5
+    min_regions_for_gating: 3
+
+adaptation:
+  enabled: false
+  interval_steps: 50000
+  entropy_low_frac: 0.3
+
+evaluation:
+  interval_steps: 50000
+  episodes: 10
+
+logging:
+  tb: true
+  csv_interval: 10000
+  checkpoint_interval: 100000
