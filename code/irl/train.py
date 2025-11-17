@@ -23,7 +23,7 @@ def cli_train(
         None,
         "--config",
         "-c",
-        help="Path to YAML configuration (see configs/*.yaml).",
+        help="Path to the training configuration file.",
         exists=True,
         dir_okay=False,
         readable=True,

@@ -1,20 +1,8 @@
-"""Generalized Advantage Estimation (GAE).
+"""Generalized Advantage Estimation with shape normalization and timeout-aware masking.
 
-Tolerates common batch key aliases to decouple PPO from data collection.
-If `next_observations` are absent, v_{t+1} is taken as a shift of v_t with a
-zero bootstrap on the last step; terminals nullify bootstraps via (1 - done).
-
-New:
-- Shape guards and canonicalization for time/batch:
-  * Observations may be (T,B,...) or (B,T,...) — the latter is auto-swapped.
-  * rewards/dones may be 1-D (N=T*B) or 2-D (T,B); we reshape to (T,B).
-  * Helpful errors are raised on inconsistent shapes.
-- Optional *timeout-aware* handling:
-  * You may pass separate masks for **terminals** and **truncations/timeouts**.
-  * `bootstrap_on_timeouts=False` (default) preserves the current behavior
-    where *both* terminals and truncations break bootstrapping.
-  * Set `bootstrap_on_timeouts=True` to treat *truncations/timeouts* as
-    **non-terminal** for GAE bootstrapping (common for time-limit cutoffs).
+Common batch aliases are accepted, observations are reshaped to time-major
+layouts, and rewards/dones are normalized to (T, B). Optional masks separate
+true terminals from truncations, with configurable bootstrapping behavior.
 """
 
 from __future__ import annotations

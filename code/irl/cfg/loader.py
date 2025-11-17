@@ -1,4 +1,4 @@
-"""YAML → dataclass loader and validators for IRL configs.
+"""Dataclass-based configuration loader and validators for IRL configs.
 
 Provides concise helpers for reading, parsing, and validating configs.
 """
@@ -58,7 +58,7 @@ _UNION_TYPES = (Union,) + ((_UnionType,) if _UnionType is not None else ())
 
 
 def load_config(path: Union[str, "Path"]) -> Config:
-    """Load and validate a `Config` from a YAML file.
+    """Load and validate a ``Config`` from a configuration file.
 
     Raises ``ConfigError`` with a descriptive message on read/parse/validation issues.
     """
@@ -76,14 +76,16 @@ def load_config(path: Union[str, "Path"]) -> Config:
 
 
 def loads_config(yaml_text: str) -> Config:
-    """Load and validate a `Config` from YAML text."""
+    """Load and validate a ``Config`` from configuration text."""
     try:
         data = yaml.safe_load(yaml_text) or {}
     except Exception as exc:
-        raise ConfigError(f"Invalid YAML: {exc}") from exc
+        raise ConfigError(f"Invalid configuration data: {exc}") from exc
 
     if not isinstance(data, Mapping):
-        raise ConfigError(f"Top-level YAML must be a mapping, got {type(data).__name__}")
+        raise ConfigError(
+            f"Top-level configuration must be a mapping, got {type(data).__name__}"
+        )
 
     cfg = _from_mapping(Config, data, path="config")
     validate_config(cfg)
@@ -292,7 +294,7 @@ def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
 
 
 def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
-    """Best-effort coercion of YAML values into annotated types (strict where practical)."""
+    """Best-effort coercion of configuration values into annotated types."""
     origin = get_origin(typ)
     args = get_args(typ)
 
