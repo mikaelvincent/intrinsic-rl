@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Proposed unified intrinsic: α_impact·impact + α_LP·LP with region gating.
 
 - Impact: ||φ(s') − φ(s)||₂ (RIDE-like)
@@ -18,8 +20,6 @@ scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing
 layout and normalization.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Tuple, Union, List
 
@@ -38,7 +38,28 @@ from .normalize import ComponentRMS
 
 
 class Proposed(nn.Module):
-    """Unified intrinsic with gating; outputs are already normalized."""
+    """Unified intrinsic with gating; outputs can be normalized internally or left raw.
+
+    Parameters
+    ----------
+    obs_space, act_space, device, icm, icm_cfg
+        Standard constructor arguments mirroring ICM-backed modules.
+    alpha_impact, alpha_lp
+        Coefficients for combining components.
+    region_capacity, depth_max, ema_beta_long, ema_beta_short
+        Region partitioning and EMA settings.
+    gate_tau_lp_mult, gate_tau_s, gate_hysteresis_up_mult, gate_min_consec_to_gate
+        Gating thresholds/behavior.
+    gate_min_regions_for_gating
+        Minimum populated regions before global medians are trusted.
+    normalize_inside
+        When True (default), impact and LP are normalized internally via per-component
+        RunningRMS and `outputs_normalized=True` is set so the trainer skips its global RMS.
+        When False, the module emits raw combined signals (still gated) and sets
+        `outputs_normalized=False` so the trainer applies its global normalization.
+    gating_enabled
+        Master on/off for region gating (True by default).
+    """
 
     def __init__(
         self,
@@ -59,7 +80,10 @@ class Proposed(nn.Module):
         gate_tau_s: float = 2.0,
         gate_hysteresis_up_mult: float = 2.0,
         gate_min_consec_to_gate: int = 5,
-        gate_min_regions_for_gating: int = 3,  # NEW: regions required before medians/gating engage
+        gate_min_regions_for_gating: int = 3,  # regions required before medians/gating engage
+        # NEW toggles
+        normalize_inside: bool = True,
+        gating_enabled: bool = True,
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
@@ -91,16 +115,19 @@ class Proposed(nn.Module):
         self.tau_s = float(gate_tau_s)
         self.hysteresis_up_mult = float(gate_hysteresis_up_mult)
         self.min_consec_to_gate = int(gate_min_consec_to_gate)
-        # NEW: minimum number of *populated* regions before medians are considered stable.
         self.min_regions_for_gating = int(gate_min_regions_for_gating)
         self._eps = 1e-8
-        self.gating_enabled: bool = True
 
-        # Per-component RMS (impact & LP)
+        # NEW: master toggles
+        self.gating_enabled: bool = bool(gating_enabled)
+        self._normalize_inside: bool = bool(normalize_inside)
+
+        # Per-component RMS (impact & LP); used only when normalize_inside=True
         self._rms = ComponentRMS(
             impact=RunningRMS(beta=0.99, eps=1e-8), lp=RunningRMS(beta=0.99, eps=1e-8)
         )
-        self.outputs_normalized: bool = True  # trainer should skip global RMS
+        # Trainer integration contract
+        self.outputs_normalized: bool = bool(self._normalize_inside)
 
         self.to(self.device)
 
@@ -188,7 +215,7 @@ class Proposed(nn.Module):
     # ------------------------- public API: compute -------------------------
 
     def compute(self, tr) -> "IntrinsicOutput":
-        """Single-transition intrinsic with gating and per-component RMS."""
+        """Single-transition intrinsic with optional normalization and gating."""
         from irl.intrinsic import IntrinsicOutput  # local import to avoid cycle
 
         with torch.no_grad():
@@ -196,21 +223,28 @@ class Proposed(nn.Module):
             sp = tr.s_next
             a = tr.a
 
-            impact_raw = self._impact_per_sample(s, sp).view(-1)[0]
+            impact_raw_t = self._impact_per_sample(s, sp).view(-1)[0]
+            impact_raw = float(impact_raw_t.item())
+
             err, phi_t = self._forward_error_and_phi(s, sp, a)
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
-            lp_raw = self._update_region(rid, float(err.view(-1)[0].item()))
+            lp_raw = float(self._update_region(rid, float(err.view(-1)[0].item())))
             gate = self._maybe_update_gate(rid, float(lp_raw)) if self.gating_enabled else 1
 
-            # Normalize components and combine
-            self._rms.update([float(impact_raw.item())], [float(lp_raw)])
-            impact_n, lp_n = self._rms.normalize(
-                np.asarray([float(impact_raw.item())], dtype=np.float32),
-                np.asarray([float(lp_raw)], dtype=np.float32),
-            )
-            r = float(gate) * (
-                self.alpha_impact * float(impact_n[0]) + self.alpha_lp * float(lp_n[0])
-            )
+            if self._normalize_inside:
+                # Normalize components and combine
+                self._rms.update([impact_raw], [lp_raw])
+                impact_n, lp_n = self._rms.normalize(
+                    np.asarray([impact_raw], dtype=np.float32),
+                    np.asarray([lp_raw], dtype=np.float32),
+                )
+                r = float(gate) * (
+                    self.alpha_impact * float(impact_n[0]) + self.alpha_lp * float(lp_n[0])
+                )
+            else:
+                # Global-RMS path: emit raw combined signal (trainer will normalize)
+                r = float(gate) * (self.alpha_impact * impact_raw + self.alpha_lp * lp_raw)
+
             return IntrinsicOutput(r_int=float(r))
 
     @torch.no_grad()
@@ -221,7 +255,7 @@ class Proposed(nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized intrinsic with gating and per-component RMS.
+        """Vectorized intrinsic with gating and optional internal normalization.
 
         Optimization: group samples by region id and update region EMAs once per
         region using that region's mean error. Gates are then refreshed per region.
@@ -275,16 +309,25 @@ class Proposed(nn.Module):
         lp_arr = lp_per_region[inv].astype(np.float32)  # (B,)
         gates = gate_per_region[inv].astype(np.float32)  # (B,)
 
-        # Update RMS/normalize per component on a per-sample basis
-        imp_np = impact_raw.detach().cpu().numpy().astype(np.float32)
-        self._rms.update(imp_np, lp_arr)
-        imp_norm, lp_norm = self._rms.normalize(imp_np, lp_arr)
+        if self._normalize_inside:
+            # Update RMS/normalize per component on a per-sample basis
+            imp_np = impact_raw.detach().cpu().numpy().astype(np.float32)
+            self._rms.update(imp_np, lp_arr)
+            imp_norm, lp_norm = self._rms.normalize(imp_np, lp_arr)
 
-        imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
-        lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
-        gate_t = torch.as_tensor(gates, dtype=torch.float32, device=self.device)
+            imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
+            lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
+            gate_t = torch.as_tensor(gates, dtype=torch.float32, device=self.device)
 
-        out = gate_t * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)
+            out = gate_t * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)
+        else:
+            # Raw path: combine components without internal normalization
+            imp_t = impact_raw.to(dtype=torch.float32, device=self.device)
+            lp_t = torch.as_tensor(lp_arr, dtype=torch.float32, device=self.device)
+            gate_t = torch.as_tensor(gates, dtype=torch.float32, device=self.device)
+
+            out = gate_t * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)
+
         return out.mean() if reduction == "mean" else out
 
     # ----------------------------- losses & update -----------------------------
@@ -322,11 +365,15 @@ class Proposed(nn.Module):
                 self._current_gate_for_rids(rids), dtype=torch.float32, device=self.device
             )
 
-            imp_norm, lp_norm = self._rms.normalize(
-                impact_raw.detach().cpu().numpy().astype(np.float32), lp_now
-            )
-            imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
-            lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
+            if self._normalize_inside:
+                imp_norm, lp_norm = self._rms.normalize(
+                    impact_raw.detach().cpu().numpy().astype(np.float32), lp_now
+                )
+                imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
+                lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
+            else:
+                imp_t = impact_raw.to(dtype=torch.float32, device=self.device)
+                lp_t = torch.as_tensor(lp_now, dtype=torch.float32, device=self.device)
 
             r_mean = (gates_now * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)).mean()
 
@@ -338,7 +385,7 @@ class Proposed(nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train ICM and report losses + current normalized intrinsic mean."""
+        """Train ICM and report losses + current intrinsic mean (raw or normalized)."""
         with torch.no_grad():
             o = obs
             op = next_obs
@@ -348,15 +395,20 @@ class Proposed(nn.Module):
             err, phi_t = self._forward_error_and_phi(o, op, a)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
             lp_now = np.asarray(self._current_lp_for_rids(rids), dtype=np.float32)
-
-            imp_norm, lp_norm = self._rms.normalize(
-                impact_raw.detach().cpu().numpy().astype(np.float32), lp_now
-            )
-            imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
-            lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
             gates_now = torch.as_tensor(
                 self._current_gate_for_rids(rids), dtype=torch.float32, device=self.device
             )
+
+            if self._normalize_inside:
+                imp_norm, lp_norm = self._rms.normalize(
+                    impact_raw.detach().cpu().numpy().astype(np.float32), lp_now
+                )
+                imp_t = torch.as_tensor(imp_norm, dtype=torch.float32, device=self.device)
+                lp_t = torch.as_tensor(lp_norm, dtype=torch.float32, device=self.device)
+            else:
+                imp_t = impact_raw.to(dtype=torch.float32, device=self.device)
+                lp_t = torch.as_tensor(lp_now, dtype=torch.float32, device=self.device)
+
             r_mean = float(
                 (gates_now * (self.alpha_impact * imp_t + self.alpha_lp * lp_t)).mean().item()
             )
