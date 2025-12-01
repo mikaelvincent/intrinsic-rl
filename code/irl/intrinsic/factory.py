@@ -60,6 +60,7 @@ def create_intrinsic_module(
         if act_space is None:
             raise ValueError("Proposed requires an action space (via ICM).")
         prop_kwargs: dict[str, Any] = {}
+        # Existing passthroughs
         for k in (
             "alpha_impact",
             "alpha_lp",
@@ -67,7 +68,7 @@ def create_intrinsic_module(
             "depth_max",
             "ema_beta_long",
             "ema_beta_short",
-            # NEW gating knobs:
+            # gating thresholds
             "gate_tau_lp_mult",
             "gate_tau_s",
             "gate_hysteresis_up_mult",
@@ -75,8 +76,53 @@ def create_intrinsic_module(
             "gate_min_regions_for_gating",  # NEW
         ):
             if k in kwargs and kwargs[k] is not None:
-                prop_kwargs[k] = float(kwargs[k]) if ("alpha" in k or "beta" in k or "tau" in k) else int(kwargs[k])  # type: ignore[assignment]
-        return Proposed(obs_space, act_space, device=device, **prop_kwargs)
+                prop_kwargs[k] = (
+                    float(kwargs[k]) if ("alpha" in k or "beta" in k or "tau" in k) else int(kwargs[k])  # type: ignore[assignment]
+                )
+
+        # NEW (step 3): pass through normalization and gating-enable knobs when available.
+        # We probe Proposed.__init__ to avoid passing unknown kwargs until the module supports them.
+        normalize_inside_val = None
+        if "normalize_inside" in kwargs:
+            normalize_inside_val = bool(kwargs["normalize_inside"])
+
+        gating_enabled_val = None
+        if "gating_enabled" in kwargs:
+            gating_enabled_val = bool(kwargs["gating_enabled"])
+        elif "gate_enabled" in kwargs:
+            # allow alternate naming from upstream config plumbing
+            gating_enabled_val = bool(kwargs["gate_enabled"])
+        elif "gate" in kwargs and isinstance(kwargs["gate"], dict):
+            try:
+                gating_enabled_val = bool(kwargs["gate"].get("enabled"))
+            except Exception:
+                pass
+
+        # Introspect Proposed signature to conditionally include constructor kwargs
+        try:
+            import inspect
+
+            accepted = set(inspect.signature(Proposed.__init__).parameters.keys())
+        except Exception:
+            accepted = set()
+
+        if normalize_inside_val is not None and "normalize_inside" in accepted:
+            prop_kwargs["normalize_inside"] = normalize_inside_val
+        if gating_enabled_val is not None and "gating_enabled" in accepted:
+            prop_kwargs["gating_enabled"] = gating_enabled_val
+
+        mod = Proposed(obs_space, act_space, device=device, **prop_kwargs)
+
+        # Fallback: if constructor doesn't accept gating_enabled yet, set attribute when present.
+        if gating_enabled_val is not None and "gating_enabled" not in accepted:
+            try:
+                setattr(mod, "gating_enabled", gating_enabled_val)
+            except Exception:
+                pass
+        # Note: we intentionally do NOT mutate outputs_normalized or apply normalize_inside here
+        # when the constructor doesn't expose it yet to avoid unintended double-normalization.
+
+        return mod
     raise ValueError(f"Unsupported intrinsic method: {method!r}")
 
 
