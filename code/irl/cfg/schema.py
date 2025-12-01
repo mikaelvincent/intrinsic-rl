@@ -18,8 +18,15 @@ class GateConfig:
     The global medians used by the gating rule (LP and error) only become
     active once *enough* regions have seen samples. This threshold is
     controlled by `min_regions_for_gating` (default: 3).
+
+    New
+    ---
+    enabled : bool
+        Master switch for gating. When False, gating is disabled (equivalent to
+        a "nogate" ablation) regardless of thresholds.
     """
 
+    enabled: bool = True  # NEW: master on/off for gating
     tau_lp_mult: float = 0.01  # multiply median LP
     tau_s: float = 2.0
     hysteresis_up_mult: float = 2.0
@@ -29,7 +36,16 @@ class GateConfig:
 
 @dataclass(frozen=True)
 class IntrinsicConfig:
-    """Intrinsic reward knobs (RIDE/R-IAC/Proposed, etc.)."""
+    """Intrinsic reward knobs (RIDE/R-IAC/Proposed, etc.).
+
+    New (Proposed-only)
+    -------------------
+    normalize_inside : bool
+        When False, Proposed will emit raw (unnormalized) component signals and
+        rely on the trainer's global RunningRMS for scaling. When True (default),
+        Proposed performs its internal per-component normalization and sets
+        outputs_normalized=True so the trainer skips global normalization.
+    """
 
     eta: float = 0.1
     alpha_impact: float = 1.0
@@ -40,6 +56,7 @@ class IntrinsicConfig:
     depth_max: int = 12
     ema_beta_long: float = 0.995
     ema_beta_short: float = 0.90
+    normalize_inside: bool = True  # NEW: Proposed-only normalization toggle
     gate: GateConfig = field(default_factory=GateConfig)
 
 
