@@ -33,7 +33,9 @@ intrinsic:
   depth_max: 12
   ema_beta_long: 0.995
   ema_beta_short: 0.9
+  normalize_inside: true
   gate:
+    enabled: true
     tau_lp_mult: 0.01
     tau_s: 2.0
     hysteresis_up_mult: 2.0
@@ -51,5 +53,4 @@ evaluation:
 
 logging:
   tb: true
-  csv_interval: 10000
-  checkpoint_interval: 100000
+  c
