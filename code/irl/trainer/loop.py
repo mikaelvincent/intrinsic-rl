@@ -207,6 +207,9 @@ def train(
 
     # --- Reset env(s) & init norm ---
     printed_dr_hint = False  # one-time DR diagnostics notice (if provided by wrapper)
+    # NEW: one-time hint when module reports raw outputs (global RMS path)
+    printed_intr_norm_hint = False
+
     obs, info = env.reset()
     try:
         if isinstance(info, dict) and ("dr_applied" in info) and not printed_dr_hint:
@@ -234,6 +237,19 @@ def train(
     except Exception:
         # Diagnostics are best-effort; ignore unexpected info formats
         pass
+
+    # NEW: print once if intrinsic module emits raw outputs (trainer will normalize)
+    if intrinsic_module is not None and not printed_intr_norm_hint:
+        try:
+            outputs_norm_flag = bool(getattr(intrinsic_module, "outputs_normalized", False))
+            if not outputs_norm_flag:
+                print(
+                    f"[info] Intrinsic normalization: method='{method_l}' outputs are raw;"
+                    " applying trainer's global RunningRMS."
+                )
+                printed_intr_norm_hint = True
+        except Exception:
+            pass
 
     B = int(getattr(env, "num_envs", 1))
 
