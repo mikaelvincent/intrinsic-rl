@@ -83,9 +83,7 @@ def loads_config(yaml_text: str) -> Config:
         raise ConfigError(f"Invalid configuration data: {exc}") from exc
 
     if not isinstance(data, Mapping):
-        raise ConfigError(
-            f"Top-level configuration must be a mapping, got {type(data).__name__}"
-        )
+        raise ConfigError(f"Top-level configuration must be a mapping, got {type(data).__name__}")
 
     cfg = _from_mapping(Config, data, path="config")
     validate_config(cfg)
@@ -170,16 +168,43 @@ def validate_config(cfg: Config) -> None:
     # Method-specific knobs: enforce only when the selected method uses them.
     method = str(cfg.method).lower()
 
-    # alpha_impact is meaningful for RIDE and Proposed (impact component weight)
-    if method in {"ride", "proposed"}:
+    # alpha_impact rules:
+    # - 'ride' requires a strictly positive impact weight
+    # - 'proposed' allows a true LP-only ablation (alpha_impact >= 0)
+    if method == "ride":
         if cfg.intrinsic.alpha_impact <= 0.0:
-            raise ConfigError("intrinsic.alpha_impact must be > 0 for methods 'ride' or 'proposed'")
+            raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'ride'")
+    elif method == "proposed":
+        if cfg.intrinsic.alpha_impact < 0.0:
+            raise ConfigError("intrinsic.alpha_impact must be >= 0 for method 'proposed'")
     else:
         if cfg.intrinsic.alpha_impact <= 0.0:
             warnings.warn(
                 f"intrinsic.alpha_impact<=0 has no effect for method '{method}'; ignoring.",
                 UserWarning,
             )
+
+    # Proposed-only flags: normalize_inside and gate.enabled
+    if method != "proposed":
+        try:
+            if hasattr(cfg.intrinsic, "normalize_inside") and not cfg.intrinsic.normalize_inside:
+                warnings.warn(
+                    f"intrinsic.normalize_inside is only used for method 'proposed'; "
+                    f"ignoring for method '{method}'.",
+                    UserWarning,
+                )
+        except Exception:
+            pass
+        try:
+            if hasattr(cfg.intrinsic, "gate") and hasattr(cfg.intrinsic.gate, "enabled"):
+                if not bool(cfg.intrinsic.gate.enabled):
+                    warnings.warn(
+                        f"intrinsic.gate.enabled is only used for method 'proposed'; "
+                        f"ignoring for method '{method}'.",
+                        UserWarning,
+                    )
+        except Exception:
+            pass
 
     # bin_size controls episodic binning used only by RIDE
     if method == "ride":
@@ -194,11 +219,26 @@ def validate_config(cfg: Config) -> None:
 
     # Gating sanity checks only when Proposed is selected
     if method == "proposed":
-        if cfg.intrinsic.gate.min_consec_to_gate <= 0:
-            raise ConfigError("intrinsic.gate.min_consec_to_gate must be > 0 for method 'proposed'")
-        if cfg.intrinsic.gate.min_regions_for_gating <= 0:
-            raise ConfigError(
-                "intrinsic.gate.min_regions_for_gating must be > 0 for method 'proposed'"
+        # If gating is explicitly disabled, accept thresholds as provided but do not enforce them.
+        gate_enabled = True
+        try:
+            gate_enabled = bool(cfg.intrinsic.gate.enabled)
+        except Exception:
+            gate_enabled = True
+        if gate_enabled:
+            if cfg.intrinsic.gate.min_consec_to_gate <= 0:
+                raise ConfigError(
+                    "intrinsic.gate.min_consec_to_gate must be > 0 for method 'proposed'"
+                )
+            if cfg.intrinsic.gate.min_regions_for_gating <= 0:
+                raise ConfigError(
+                    "intrinsic.gate.min_regions_for_gating must be > 0 for method 'proposed'"
+                )
+        else:
+            # Optional hint to users that gating is off for this run
+            warnings.warn(
+                "Proposed gating disabled via intrinsic.gate.enabled=False; gating thresholds will be ignored.",
+                UserWarning,
             )
 
     # Minibatch divisibility: accept either interpretation of steps_per_update
