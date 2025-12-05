@@ -24,7 +24,7 @@ ppo:
   kl_stop: 0.0
 
 intrinsic:
-  eta: 0.1
+  eta: 0.2
   alpha_impact: 1.0
   alpha_lp: 0.5
   r_clip: 5.0
