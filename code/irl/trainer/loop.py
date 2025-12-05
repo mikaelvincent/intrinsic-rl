@@ -185,6 +185,9 @@ def train(
                 gate_hysteresis_up_mult=float(cfg.intrinsic.gate.hysteresis_up_mult),
                 gate_min_consec_to_gate=int(cfg.intrinsic.gate.min_consec_to_gate),
                 gate_min_regions_for_gating=int(cfg.intrinsic.gate.min_regions_for_gating),  # NEW
+                # NEW: pass normalization and gating master switch for Proposed
+                normalize_inside=bool(cfg.intrinsic.normalize_inside),
+                gating_enabled=bool(cfg.intrinsic.gate.enabled),
             )
             if not use_intrinsic:
                 print(
