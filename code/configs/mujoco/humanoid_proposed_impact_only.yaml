@@ -19,7 +19,7 @@ ppo:
   clip_range: 0.2
   entropy_coef: 0.01
   value_coef: 0.5
-  value_clip_range: 0.0
+  value_clip_range: 0.2
   kl_penalty_coef: 0.0
   kl_stop: 0.0
 
