@@ -11,40 +11,37 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Region gating thresholds (Proposed).
+    """Region gating thresholds for the Proposed intrinsic.
 
-    Note
-    ----
-    The global medians used by the gating rule (LP and error) only become
-    active once *enough* regions have seen samples. This threshold is
-    controlled by `min_regions_for_gating` (default: 3).
+    The global medians used by the gating rule (learning progress and error)
+    only become active once enough regions have seen samples. This threshold is
+    controlled by ``min_regions_for_gating`` (default: 3).
 
-    New
-    ---
-    enabled : bool
-        Master switch for gating. When False, gating is disabled (equivalent to
-        a "nogate" ablation) regardless of thresholds.
+    Attributes
+    ----------
+    enabled:
+        Master switch for gating. When ``False``, gating is disabled regardless
+        of thresholds (equivalent to a "nogate" ablation).
     """
 
-    enabled: bool = True  # NEW: master on/off for gating
+    enabled: bool = True  # Master on/off switch for gating
     tau_lp_mult: float = 0.01  # multiply median LP
     tau_s: float = 2.0
     hysteresis_up_mult: float = 2.0
     min_consec_to_gate: int = 5
-    min_regions_for_gating: int = 3  # NEW: regions needed before using medians
+    min_regions_for_gating: int = 3  # regions needed before using medians
 
 
 @dataclass(frozen=True)
 class IntrinsicConfig:
-    """Intrinsic reward knobs (RIDE/R-IAC/Proposed, etc.).
+    """Intrinsic reward configuration shared by intrinsic methods.
 
-    New (Proposed-only)
-    -------------------
-    normalize_inside : bool
-        When False, Proposed will emit raw (unnormalized) component signals and
-        rely on the trainer's global RunningRMS for scaling. When True (default),
-        Proposed performs its internal per-component normalization and sets
-        outputs_normalized=True so the trainer skips global normalization.
+    For the Proposed method, ``normalize_inside`` controls where intrinsic
+    normalization happens. When ``False``, Proposed emits raw (unnormalized)
+    component signals and relies on the trainer's global ``RunningRMS`` for
+    scaling. When ``True`` (the default), Proposed performs per-component
+    normalization internally and sets ``outputs_normalized=True`` so the
+    trainer skips its own intrinsic normalization.
     """
 
     eta: float = 0.1
@@ -56,7 +53,7 @@ class IntrinsicConfig:
     depth_max: int = 12
     ema_beta_long: float = 0.995
     ema_beta_short: float = 0.90
-    normalize_inside: bool = True  # NEW: Proposed-only normalization toggle
+    normalize_inside: bool = True  # Proposed-only internal normalization toggle
     gate: GateConfig = field(default_factory=GateConfig)
 
 
@@ -84,10 +81,10 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.2
     entropy_coef: float = 0.0
-    # NEW: value loss weighting and optional value function clipping
+    # Value loss weighting and optional value-function clipping
     value_coef: float = 0.5
     value_clip_range: float = 0.0  # <= 0 disables value clipping
-    # NEW: KL control (penalty and/or early stop); both disabled by default
+    # KL control (penalty and/or early stop); both disabled by default
     kl_penalty_coef: float = 0.0  # add kl_penalty_coef * |approx_kl| to policy loss
     kl_stop: float = 0.0  # if |approx_kl| > kl_stop: early stop PPO epochs
 
@@ -122,9 +119,10 @@ class LoggingConfig:
 class ExperimentConfig:
     """Experiment-wide toggles.
 
-    This section is for global behaviors that are not tied to a specific
-    environment or PPO setting. For example, deterministic controls whether
-    training should request deterministic PyTorch behavior where supported.
+    This section is for global behaviours that are not tied to a specific
+    environment or PPO setting. For example, ``deterministic`` controls
+    whether training should request deterministic PyTorch behaviour where
+    supported.
     """
 
     deterministic: bool = False
