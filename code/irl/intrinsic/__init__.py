@@ -11,7 +11,21 @@ from typing import Any, Protocol
 
 
 # Public base API
-class Transition(Protocol):  # minimal protocol for type hints
+class Transition(Protocol):
+    """Minimal transition protocol shared by intrinsic modules.
+
+    Attributes
+    ----------
+    s : Any
+        Observation at time :math:`t`.
+    a : Any
+        Action taken at time :math:`t`.
+    r_ext : float
+        Extrinsic reward observed after taking the action.
+    s_next : Any
+        Observation at time :math:`t + 1`.
+    """
+
     s: Any
     a: Any
     r_ext: float
@@ -20,13 +34,24 @@ class Transition(Protocol):  # minimal protocol for type hints
 
 @dataclass
 class IntrinsicOutput:
-    """Represents intrinsic reward computation result for one transition."""
+    """Result of computing intrinsic reward for one transition.
+
+    Attributes
+    ----------
+    r_int : float
+        Intrinsic reward contribution for the transition.
+    """
 
     r_int: float
 
 
 class BaseIntrinsicModule:
-    """Base class for all intrinsic modules."""
+    """Abstract base class for intrinsic reward modules.
+
+    Subclasses implement :meth:`compute`, which maps a single transition
+    to an :class:`IntrinsicOutput`. Batch-oriented variants are provided
+    by helpers in :mod:`irl.intrinsic.factory`.
+    """
 
     def compute(
         self, tr: Transition
