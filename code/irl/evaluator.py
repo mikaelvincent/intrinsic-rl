@@ -2,17 +2,21 @@ from __future__ import annotations
 
 """Programmatic policy evaluator (no intrinsic).
 
-Runs deterministic evaluation episodes using the policy's *mode* action,
-returns aggregated statistics as a plain dict that is easy to serialize.
+Runs deterministic evaluation episodes using the policy's mode action and
+returns aggregated statistics as a plain dictionary that is easy to
+serialise.
 
-Typical usage (from Python):
-    from pathlib import Path
-    from irl.evaluator import evaluate
-    summary = evaluate(env="MountainCar-v0",
-                       ckpt=Path("runs/.../checkpoints/ckpt_step_100000.pt"),
-                       episodes=10,
-                       device="cpu")
-    print(summary["mean_return"], summary["std_return"])
+Typical usage (from Python)
+---------------------------
+>>> from pathlib import Path
+>>> from irl.evaluator import evaluate
+>>> summary = evaluate(
+...     env="MountainCar-v0",
+...     ckpt=Path("runs/.../checkpoints/ckpt_step_100000.pt"),
+...     episodes=10,
+...     device="cpu",
+... )
+>>> print(summary["mean_return"], summary["std_return"])
 """
 
 from pathlib import Path
@@ -25,18 +29,18 @@ import torch
 from irl.envs import EnvManager
 from irl.models import PolicyNetwork
 from irl.utils.checkpoint import load_checkpoint
-from irl.utils.determinism import seed_everything  # NEW
+from irl.utils.determinism import seed_everything  # unified seeding helper
 
 
 def _single_spaces(env) -> Tuple:
-    """Return (obs_space, action_space) for both single and vector envs."""
+    """Return ``(obs_space, action_space)`` for both single and vector envs."""
     obs_space = getattr(env, "single_observation_space", None) or env.observation_space
     act_space = getattr(env, "single_action_space", None) or env.action_space
     return obs_space, act_space
 
 
 def _is_image_space(space) -> bool:
-    """Heuristic: Box with rank >= 2 is treated as image."""
+    """Heuristic: Box with rank >= 2 is treated as image-like."""
     return hasattr(space, "shape") and len(space.shape) >= 2
 
 
@@ -63,41 +67,35 @@ def evaluate(
     Parameters
     ----------
     env:
-        Gymnasium environment id (e.g., "MountainCar-v0").
+        Gymnasium environment id (for example ``"MountainCar-v0"``).
     ckpt:
-        Path to a training checkpoint (produced by the trainer).
+        Path to a training checkpoint produced by the trainer.
     episodes:
         Number of episodes to run.
     device:
-        Torch device string, e.g. "cpu" or "cuda:0".
+        Torch device string, such as ``"cpu"`` or ``"cuda:0"``.
 
     Returns
     -------
     dict
-        {
-          "env_id": str,
-          "episodes": int,
-          "seed": int,
-          "checkpoint_step": int,
-          "mean_return": float,
-          "std_return": float,
-          "min_return": float,
-          "max_return": float,
-          "mean_length": float,
-          "std_length": float,
-          "returns": [floats],
-          "lengths": [ints],
-        }
+        Dictionary with keys:
+
+        * ``env_id``
+        * ``episodes``
+        * ``seed``
+        * ``checkpoint_step``
+        * aggregate statistics for returns and episode lengths
+        * per-episode ``returns`` and ``lengths`` lists
     """
     payload = load_checkpoint(ckpt, map_location=device)
     cfg = payload.get("cfg", {}) or {}
     seed = int(cfg.get("seed", 1))
     step = int(payload.get("step", -1))
 
-    # NEW: apply uniform seeding to maximize repeatability in tests/CI
+    # Apply consistent seeding so evaluation matches training determinism.
     seed_everything(seed, deterministic=True)
 
-    # Build a single environment (no vectorization) for evaluation
+    # Build a single environment (no vectorisation) for evaluation
     manager = EnvManager(env_id=env, num_envs=1, seed=seed)
     e = manager.make()
     obs_space, act_space = _single_spaces(e)
