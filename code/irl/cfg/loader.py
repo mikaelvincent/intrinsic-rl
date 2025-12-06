@@ -301,6 +301,14 @@ def validate_config(cfg: Config) -> None:
         # Soft guidance; real policy head checks happen at runtime.
         pass
 
+    # Optional per-config total step budget
+    try:
+        ts = getattr(cfg.exp, "total_steps", None)
+        if ts is not None and int(ts) <= 0:
+            raise ConfigError("exp.total_steps must be > 0 when provided")
+    except Exception as exc:
+        raise ConfigError(f"Invalid exp.total_steps: {exc}")
+
 
 def to_dict(cfg: Config) -> dict:
     """Convert Config dataclass recursively to a plain dict."""
@@ -308,7 +316,6 @@ def to_dict(cfg: Config) -> dict:
 
 
 # ----- Internal: recursive mapping → dataclass conversion --------------------
-
 
 def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
     """Recursively coerce a Mapping into the dataclass `cls` (strict)."""
