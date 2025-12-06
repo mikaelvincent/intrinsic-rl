@@ -15,6 +15,9 @@ from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gymnasium.wrappers import RecordEpisodeStatistics
 
 from .wrappers import FrameSkip, CarRacingDiscreteActionWrapper, DomainRandomizationWrapper
+from irl.utils.loggers import get_logger
+
+_LOG = get_logger(__name__)
 
 
 def _is_car_racing(env_id: str) -> bool:
@@ -58,7 +61,9 @@ class EnvManager:
         Optional render mode forwarded to :func:`gymnasium.make`.
     async_vector :
         If ``True`` and ``num_envs > 1``, use :class:`AsyncVectorEnv`;
-        otherwise use :class:`SyncVectorEnv`.
+        otherwise use :class:`SyncVectorEnv`. If async creation fails
+        (e.g., non-picklable envs), the manager falls back to a sync
+        vector env and logs a one-line warning.
     make_kwargs :
         Additional keyword arguments forwarded to
         :func:`gymnasium.make` when constructing the base environment.
@@ -93,8 +98,25 @@ class EnvManager:
             return thunks[0]()  # type: ignore[misc]
 
         # Vectorized path
-        Vec = AsyncVectorEnv if self.async_vector else SyncVectorEnv
-        return Vec(thunks, copy=False)
+        if self.async_vector:
+            # Try async first; fall back to sync if construction fails for any reason.
+            try:
+                try:
+                    return AsyncVectorEnv(thunks, copy=False)  # type: ignore[call-arg]
+                except TypeError:
+                    return AsyncVectorEnv(thunks)  # older gymnasium versions
+            except Exception as exc:
+                _LOG.info(
+                    "AsyncVectorEnv failed (%s); falling back to SyncVectorEnv for env_id=%s.",
+                    type(exc).__name__,
+                    self.env_id,
+                )
+
+        # Sync vector (default or fallback)
+        try:
+            return SyncVectorEnv(thunks, copy=False)  # type: ignore[call-arg]
+        except TypeError:
+            return SyncVectorEnv(thunks)
 
     # ------------------ internal helpers ------------------
 
