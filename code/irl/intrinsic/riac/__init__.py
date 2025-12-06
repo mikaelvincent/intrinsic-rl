@@ -1,6 +1,6 @@
-"""R-IAC subpackage (refactor).
+"""R-IAC intrinsic module subpackage.
 
-Public API: RIAC, simulate_lp_emas.
+Public API: :class:`RIAC` and :func:`simulate_lp_emas`.
 """
 
 from __future__ import annotations
