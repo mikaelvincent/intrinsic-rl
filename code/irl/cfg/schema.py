@@ -59,7 +59,15 @@ class IntrinsicConfig:
 
 @dataclass(frozen=True)
 class EnvConfig:
-    """Environment settings."""
+    """Environment settings.
+
+    Notes
+    -----
+    For CarRacing environments (``id`` starting with ``"CarRacing"``) the
+    ``discrete_actions`` flag enables the :class:`CarRacingDiscreteActionWrapper`.
+    When ``car_discrete_action_set`` is not ``None``, it overrides the wrapper's
+    default 5-action set with a custom list of ``[steer, gas, brake]`` triples.
+    """
 
     id: str = "MountainCar-v0"
     vec_envs: int = 16
@@ -67,6 +75,10 @@ class EnvConfig:
     domain_randomization: bool = False
     # For CarRacing, discrete by default; ignored for continuous-control envs.
     discrete_actions: bool = True
+    # Optional explicit discrete action set for CarRacing. When provided, it
+    # must be a sequence of [steer, gas, brake] triples and will be converted
+    # to a NumPy array of shape (N, 3) by the environment manager.
+    car_discrete_action_set: tuple[tuple[float, float, float], ...] | None = None
 
 
 @dataclass(frozen=True)
