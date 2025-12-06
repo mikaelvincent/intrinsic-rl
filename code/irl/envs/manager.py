@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 import gymnasium as gym
+import numpy as np
 from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gymnasium.wrappers import RecordEpisodeStatistics
 
@@ -47,6 +48,12 @@ class EnvManager:
         When ``True`` and ``env_id`` identifies a CarRacing task, wrap
         the env in :class:`CarRacingDiscreteActionWrapper` to expose a
         small discrete action space.
+    car_action_set :
+        Optional discrete action set specification for CarRacing
+        environments. When not ``None`` and ``discrete_actions`` is
+        ``True``, it must be array-like of shape ``(N, 3)`` containing
+        ``[steer, gas, brake]`` triples and overrides the wrapper's
+        default 5-action set.
     render_mode :
         Optional render mode forwarded to :func:`gymnasium.make`.
     async_vector :
@@ -63,6 +70,7 @@ class EnvManager:
     frame_skip: int = 1
     domain_randomization: bool = False
     discrete_actions: bool = True
+    car_action_set: Optional[object] = None
     render_mode: Optional[str] = None
     async_vector: bool = False
     make_kwargs: Optional[Dict[str, Any]] = None
@@ -89,6 +97,28 @@ class EnvManager:
         return Vec(thunks, copy=False)
 
     # ------------------ internal helpers ------------------
+
+    def _build_carracing_action_set(self) -> Optional[np.ndarray]:
+        """Resolve the configured CarRacing action set to an (N, 3) array.
+
+        When ``car_action_set`` is ``None``, returns ``None`` so that the
+        wrapper can use its built-in default. Otherwise, accepts any
+        nested sequence or NumPy array convertible to shape ``(N, 3)``.
+        """
+        spec = self.car_action_set
+        if spec is None:
+            return None
+        try:
+            arr = np.asarray(spec, dtype=np.float32)
+        except Exception as exc:  # pragma: no cover - defensive
+            raise ValueError(
+                f"car_action_set must be array-like with shape (N, 3); got {type(spec).__name__}."
+            ) from exc
+        if arr.ndim != 2 or arr.shape[1] != 3:
+            raise ValueError(
+                f"car_action_set must have shape (N, 3) for [steer, gas, brake]; got {arr.shape}."
+            )
+        return arr
 
     def _make_env_thunk(self, rank: int) -> Callable[[], gym.Env]:
         def thunk() -> gym.Env:
@@ -119,7 +149,8 @@ class EnvManager:
             # 1) CarRacing discrete controls (if requested).
             if _is_car_racing(self.env_id) and self.discrete_actions:
                 try:
-                    env = CarRacingDiscreteActionWrapper(env)
+                    action_set = self._build_carracing_action_set()
+                    env = CarRacingDiscreteActionWrapper(env, action_set=action_set)
                 except Exception:
                     # If wrapper is incompatible (unexpected action space), skip gracefully.
                     pass
