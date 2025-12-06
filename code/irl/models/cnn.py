@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 """Lightweight CNN encoder for image observations.
 
-This module adds a configurable convolutional encoder that maps images
+This module defines a configurable convolutional encoder that maps images
 (NCHW/NHWC; grayscale or RGB) to a fixed-size feature vector for
 image-based agents (e.g., CarRacing). The default architecture uses three
 convolutional blocks with strides (4, 2, 1) followed by a linear
@@ -18,6 +16,8 @@ The encoder is robust to NHWC inputs and will lazily create its final
 projection layer on the first forward pass if the input spatial size is
 not known at construction time.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple, Union
@@ -66,7 +66,12 @@ class ConvEncoder(nn.Module):
       Use `irl.utils.image.preprocess_image` for that.
     """
 
-    def __init__(self, cfg: Optional[ConvEncoderConfig] = None, *, in_hw: Optional[Tuple[int, int]] = None):
+    def __init__(
+        self,
+        cfg: Optional[ConvEncoderConfig] = None,
+        *,
+        in_hw: Optional[Tuple[int, int]] = None,
+    ):
         super().__init__()
         self.cfg = cfg or ConvEncoderConfig()
         self.in_channels = int(self.cfg.in_channels)
@@ -87,7 +92,7 @@ class ConvEncoder(nn.Module):
             cin = cout
         self.conv = nn.Sequential(*layers)
 
-        # Final projection is built lazily unless in_hw is known
+        # Final projection is built lazily unless in_hw is known.
         self._proj: Optional[nn.Linear] = None
         if in_hw is not None:
             self._initialize_projection(in_hw)
@@ -101,7 +106,7 @@ class ConvEncoder(nn.Module):
             dummy = torch.zeros(1, self.in_channels, int(in_hw[0]), int(in_hw[1]), device=device)
             h = self.conv(dummy)
             flat = int(h.numel())
-        # Create on the same device as the conv stack
+        # Create on the same device as the conv stack.
         self._proj = nn.Linear(flat, self.out_dim).to(device)
 
     @staticmethod
@@ -135,7 +140,7 @@ class ConvEncoder(nn.Module):
         h = h.reshape(h.size(0), -1)  # [N, F]
 
         if self._proj is None:
-            # Lazily create projection with correct input size, on the right device
+            # Lazily create projection with correct input size, on the right device.
             self._proj = nn.Linear(h.size(1), self.out_dim).to(h.device)
 
         z = self._proj(h)
