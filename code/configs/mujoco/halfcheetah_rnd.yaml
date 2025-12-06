@@ -8,6 +8,7 @@ env:
   frame_skip: 1
   domain_randomization: true
   discrete_actions: false
+  car_discrete_action_set: null
 
 ppo:
   steps_per_update: 2048
@@ -58,3 +59,4 @@ logging:
 
 exp:
   deterministic: true
+  total_steps: 7000000
