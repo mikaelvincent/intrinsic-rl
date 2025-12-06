@@ -3,8 +3,8 @@
 Maintains long/short EMAs of forward error per region; LP = max(0, EMA_long - EMA_short).
 Returns LP normalized via a running RMS and scaled by α_LP.
 
-Now supports **image** observations by delegating φ(s) to ICM, which routes
-vectors via MLP and images via ConvEncoder.
+Supports **image** observations by delegating φ(s) to ICM, which routes
+vectors via an MLP and images via a ConvEncoder.
 
 Image dtype contract
 --------------------
@@ -38,7 +38,7 @@ from . import diagnostics as _diag
 
 @dataclass
 class _RegionStats:
-    """Per-region EMAs (long/short) and count."""
+    """Per-region EMAs (long/short) and sample count."""
 
     ema_long: float = 0.0
     ema_short: float = 0.0
@@ -48,7 +48,7 @@ class _RegionStats:
 def simulate_lp_emas(
     errors: Iterable[float], beta_long: float = 0.995, beta_short: float = 0.90
 ) -> Tuple[list[float], list[float], list[float]]:
-    """Utility: trajectories of EMA_long, EMA_short, and LP for a stream of errors."""
+    """Return trajectories of EMA_long, EMA_short, and LP for a stream of errors."""
     el: list[float] = []
     es: list[float] = []
     lp: list[float] = []
@@ -119,7 +119,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     def _forward_error_per_sample(
         self, obs: Any, next_obs: Any, actions: Any
     ) -> Tuple[Tensor, Tensor]:
-        """Mean per-sample forward error in φ space, and φ(s_t)."""
+        """Return mean forward error per sample in φ-space and φ(s_t)."""
         o = obs
         op = next_obs
         a = as_tensor(actions, self.device)
@@ -131,7 +131,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         return per_dim.mean(dim=-1), phi_t  # [B], [B, D]
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        """Single-sample LP (normalized) for region of φ(s)."""
+        """Single-sample LP (normalized) for the region of φ(s)."""
         with torch.no_grad():
             err, phi_t = self._forward_error_per_sample(tr.s, tr.s_next, tr.a)
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
@@ -152,10 +152,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     ) -> Tensor:
         """Vectorized LP for a batch; updates per-region EMAs.
 
-        Optimization: group by region id and update EMAs once per region using the
-        mean forward error of samples that map to that region. This reduces Python-
-        level loops without changing interfaces. (Per-sample LPs within a region
-        share the same post-update LP.)
+        Samples are grouped by region id and EMAs are updated once per region
+        using the mean error of samples mapped to that region. Per-sample LP
+        within a region shares the same post-update value.
         """
         err_t, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [B], [B,D]
 
@@ -202,7 +201,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     # ----------------------------- losses & update ----------------------------
 
     def loss(self, obs: Any, next_obs: Any, actions: Any) -> dict[str, Tensor]:
-        """ICM losses + current normalized LP mean (diagnostic only)."""
+        """ICM losses plus current normalized LP mean (diagnostic only)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
         with torch.no_grad():
             err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
@@ -225,7 +224,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train ICM and report losses + current normalized intrinsic mean."""
+        """Train ICM and report losses plus current normalized intrinsic mean."""
         with torch.no_grad():
             err, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
             rids = [self.store.locate(p) for p in phi_t.detach().cpu().numpy()]
