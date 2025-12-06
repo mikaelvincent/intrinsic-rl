@@ -202,6 +202,9 @@ def train(
     eta = float(cfg.intrinsic.eta)
     use_intrinsic = is_intrinsic_method(method_l) and eta > 0.0
     intrinsic_module = None
+    intrinsic_norm_mode = "none"
+    intrinsic_outputs_normalized_flag: Optional[bool] = None  # module-owned vs trainer RMS
+
     if is_intrinsic_method(method_l):
         try:
             intrinsic_module = create_intrinsic_module(
@@ -242,6 +245,25 @@ def train(
             intrinsic_module = None
             use_intrinsic = False
 
+    # Work out which RMS path is active for intrinsic (if any).
+    if intrinsic_module is not None:
+        try:
+            intrinsic_outputs_normalized_flag = bool(
+                getattr(intrinsic_module, "outputs_normalized", False)
+            )
+        except Exception:
+            intrinsic_outputs_normalized_flag = None
+
+        if intrinsic_outputs_normalized_flag is True:
+            intrinsic_norm_mode = "module_rms"
+        elif intrinsic_outputs_normalized_flag is False:
+            intrinsic_norm_mode = "trainer_rms"
+        else:
+            intrinsic_norm_mode = "unknown"
+    else:
+        intrinsic_norm_mode = "none"
+        intrinsic_outputs_normalized_flag = None
+
     int_rms = RunningRMS(beta=0.99, eps=1e-8)
 
     # --- Run dir, logging, checkpoints ---
@@ -280,17 +302,21 @@ def train(
         # Diagnostics are best-effort; ignore unexpected info formats
         pass
 
-    # Print once if intrinsic module emits raw outputs (trainer will normalize)
+    # Print once a concise, method-aware hint about intrinsic normalization.
     if intrinsic_module is not None and not printed_intr_norm_hint:
         try:
-            outputs_norm_flag = bool(
-                getattr(intrinsic_module, "outputs_normalized", False)
+            outputs_norm_flag = (
+                intrinsic_outputs_normalized_flag
+                if intrinsic_outputs_normalized_flag is not None
+                else bool(getattr(intrinsic_module, "outputs_normalized", False))
             )
-            if not outputs_norm_flag:
-                log_intrinsic_norm_hint(method_l, outputs_norm_flag)
-                printed_intr_norm_hint = True
+            log_intrinsic_norm_hint(method_l, bool(outputs_norm_flag))
+            printed_intr_norm_hint = True
         except Exception:
             pass
+
+    # Print once if intrinsic module emits raw outputs (trainer will normalize)
+    # (kept comment for backwards readability; behavior is now symmetric for both paths.)
 
     B = int(getattr(env, "num_envs", 1))
 
@@ -696,6 +722,14 @@ def train(
                 "reward_mean": float(rew_ext_seq.mean()),
                 "reward_total_mean": float(rew_total_seq.mean()),
             }
+
+            # Record intrinsic normalization mode in scalars/TB for downstream analysis.
+            log_payload["intrinsic_norm_mode"] = intrinsic_norm_mode
+            if intrinsic_outputs_normalized_flag is not None:
+                log_payload["intrinsic_outputs_normalized"] = bool(
+                    intrinsic_outputs_normalized_flag
+                )
+
             # add PPO monitor stats when available (+ percentage for clip_frac)
             if isinstance(ppo_stats, dict):
                 try:
