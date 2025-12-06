@@ -118,6 +118,18 @@ class LoggingConfig:
     checkpoint_interval: int = 100_000
 
 
+@dataclass(frozen=True)
+class ExperimentConfig:
+    """Experiment-wide toggles.
+
+    This section is for global behaviors that are not tied to a specific
+    environment or PPO setting. For example, deterministic controls whether
+    training should request deterministic PyTorch behavior where supported.
+    """
+
+    deterministic: bool = False
+
+
 # ----- Root Schema -----------------------------------------------------------
 
 MethodLiteral = Literal["vanilla", "icm", "rnd", "ride", "riac", "proposed"]
@@ -137,3 +149,4 @@ class Config:
     adaptation: AdaptationConfig = field(default_factory=AdaptationConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    exp: ExperimentConfig = field(default_factory=ExperimentConfig)

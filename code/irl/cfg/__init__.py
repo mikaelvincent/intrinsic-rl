@@ -11,6 +11,7 @@ from .schema import (
     AdaptationConfig,
     EvaluationConfig,
     LoggingConfig,
+    ExperimentConfig,
 )
 from .loader import (
     ConfigError,
@@ -30,6 +31,7 @@ __all__ = [
     "AdaptationConfig",
     "EvaluationConfig",
     "LoggingConfig",
+    "ExperimentConfig",
     # API
     "ConfigError",
     "load_config",

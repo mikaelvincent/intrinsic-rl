@@ -94,8 +94,17 @@ def train(
     validate_config(cfg)
     device = ensure_device(cfg.device)
 
-    # Unified seeding: Python, NumPy, and PyTorch. Keep deterministic=False for training speed.
-    seed_everything(int(cfg.seed), deterministic=False)
+    # Unified seeding: Python, NumPy, and PyTorch.
+    # The deterministic flag allows reproducibility-focused runs to opt into
+    # stricter PyTorch determinism when desired.
+    deterministic = False
+    try:
+        exp_cfg = getattr(cfg, "exp", None)
+        if exp_cfg is not None:
+            deterministic = bool(getattr(exp_cfg, "deterministic", False))
+    except Exception:
+        deterministic = False
+    seed_everything(int(cfg.seed), deterministic=deterministic)
 
     # Ensure sensible MUJOCO_GL for MuJoCo tasks (no-op for others)
     try:
