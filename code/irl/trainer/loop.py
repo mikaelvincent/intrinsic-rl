@@ -1,3 +1,9 @@
+"""End-to-end PPO training loop with intrinsic rewards.
+
+This module wires together environments, PPO models, intrinsic reward
+modules, logging, and checkpointing into a single training entry point.
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -40,7 +46,7 @@ from .obs_norm import RunningObsNorm
 
 # config hash helper for resume verification
 from irl.utils.checkpoint import compute_cfg_hash
-# Unified seeding helper (Python, NumPy, PyTorch)
+# Unified seeding helper (Python, NumPy, and PyTorch)
 from irl.utils.determinism import seed_everything
 
 
@@ -52,15 +58,15 @@ def _is_image_space(space) -> bool:
 _LOG = get_logger(__name__)
 
 
-# ensure loaded optimizer state tensors are on the right device
 def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
+    """Move all optimizer state tensors in ``opt`` onto ``device``."""
     for state in opt.state.values():
         for k, v in list(state.items()):
             if torch.is_tensor(v):
                 state[k] = v.to(device)
 
 
-# ---------------- new helper: enforce time-major (T,B,...) ---------------- #
+# Helper: enforce (T, B, ...) time-major layout for NumPy arrays.
 
 
 def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarray:
@@ -616,7 +622,7 @@ def train(
 
             # --- Logging ---
             with torch.no_grad():
-                # Last-step entropy (cheap)
+                # Last-step entropy (fast to compute).
                 last_obs = obs_seq_final[-1]  # [B,...]
                 if is_image:
                     ent_last = float(policy.entropy(last_obs).mean().item())
