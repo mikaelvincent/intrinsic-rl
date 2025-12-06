@@ -136,9 +136,16 @@ class ExperimentConfig:
     whether training should request deterministic PyTorch behaviour where
     supported. By default this is set to ``True`` so that runs are
     reproducible given a fixed seed, unless a config explicitly opts out.
+
+    ``total_steps`` (optional) allows a configuration file to declare the
+    target number of environment steps for training runs. When provided,
+    higher-level orchestration (CLI/suite) should prefer this value over
+    a global default passed via CLI flags.
     """
 
     deterministic: bool = True
+    # Optional per-config target step budget (None => defer to CLI/defaults)
+    total_steps: int | None = None
 
 
 # ----- Root Schema -----------------------------------------------------------
