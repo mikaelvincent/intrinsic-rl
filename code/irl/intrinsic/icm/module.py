@@ -1,7 +1,7 @@
 """ICM intrinsic module: encoder, inverse, and forward heads.
 
 Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and update
-routines for both discrete and continuous actions. Now supports **image**
+routines for both discrete and continuous actions. Supports **image**
 observations by routing through a ConvEncoder when the observation space has
 rank ≥ 2 (HWC or CHW).
 
@@ -60,7 +60,8 @@ class ICM(BaseIntrinsicModule, nn.Module):
     """Intrinsic Curiosity Module with φ, inverse, and forward heads.
 
     * Vector observations → φ via an MLP.
-    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly) with centralized preprocessing.
+    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly)
+      with centralized preprocessing.
     """
 
     def __init__(
@@ -149,9 +150,10 @@ class ICM(BaseIntrinsicModule, nn.Module):
     def _phi(self, obs: Any) -> Tensor:
         """Return φ(s) for a batch or single observation.
 
-        * If image: centralized preprocessing to NCHW float32 in [0,1] via `utils.image.preprocess_image`,
-          tolerant to HWC/NHWC/CHW/NCHW and extra leading dims (e.g., (T,B,H,W,C)).
-        * If vector: flatten to [B, D] before passing to the MLP encoder.
+        * If the observation space is image-like, centralized preprocessing
+          produces NCHW float32 inputs in [0, 1] via ``preprocess_image``.
+        * For vector observations, inputs are flattened to [B, D] before
+          passing through the MLP encoder.
         """
         if self.is_image_obs:
             t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
@@ -233,7 +235,11 @@ class ICM(BaseIntrinsicModule, nn.Module):
         actions: Any,
         weights: Optional[Tuple[float, float]] = None,
     ) -> Mapping[str, Tensor]:
-        """Compute ICM losses without updating parameters."""
+        """Compute ICM losses without updating parameters.
+
+        Returns a mapping with ``total``, ``forward``, ``inverse``, and
+        ``intrinsic_mean`` entries.
+        """
         o = obs
         op = next_obs
         a = torch.as_tensor(actions, device=self.device)
@@ -278,7 +284,11 @@ class ICM(BaseIntrinsicModule, nn.Module):
         steps: int = 1,
         weights: Optional[Tuple[float, float]] = None,
     ) -> Mapping[str, float]:
-        """Optimize predictor/encoder for `steps` iterations on the same batch."""
+        """Optimize predictor/encoder for ``steps`` iterations on the same batch.
+
+        Returns a dictionary of scalar metrics containing a total loss,
+        forward loss, inverse loss, and the mean intrinsic reward estimate.
+        """
         metrics: Mapping[str, float] = {}
         for _ in range(int(steps)):
             out = self.loss(obs, next_obs, actions, weights=weights)
