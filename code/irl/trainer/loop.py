@@ -387,6 +387,9 @@ def train(
             )
             rew_ext_seq = np.zeros((T, B), dtype=np.float32)
             done_seq = np.zeros((T, B), dtype=np.float32)
+            # new: separate terminal and truncation masks for GAE
+            terms_seq = np.zeros((T, B), dtype=np.float32)
+            truncs_seq = np.zeros((T, B), dtype=np.float32)
             r_int_raw_seq = (
                 np.zeros((T, B), dtype=np.float32)
                 if (intrinsic_module is not None and method_l == "ride")
@@ -447,6 +450,9 @@ def train(
                 done_seq[t] = np.asarray(
                     done_flags, dtype=np.float32
                 ).reshape(B)
+                # store terminals and truncations separately for timeout-aware GAE
+                terms_seq[t] = np.asarray(terms, dtype=np.float32).reshape(B)
+                truncs_seq[t] = np.asarray(truncs, dtype=np.float32).reshape(B)
 
                 if not is_image:
                     next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
@@ -494,6 +500,8 @@ def train(
                 rew_ext_seq, T, B, "rewards"
             )
             done_seq = _ensure_time_major_np(done_seq, T, B, "dones")
+            terms_seq = _ensure_time_major_np(terms_seq, T, B, "terminals")
+            truncs_seq = _ensure_time_major_np(truncs_seq, T, B, "truncations")
             if r_int_raw_seq is not None:
                 r_int_raw_seq = _ensure_time_major_np(
                     r_int_raw_seq, T, B, "r_int_raw"
@@ -578,17 +586,20 @@ def train(
             else:
                 rew_total_seq = rew_ext_seq
 
+            # Time-limit-aware GAE: separate terminals vs truncations and bootstrap on timeouts.
             gae_batch = {
                 "obs": obs_seq_final,
                 "next_observations": next_obs_seq_final,
                 "rewards": rew_total_seq,
-                "dones": done_seq,
+                "terminals": terms_seq,
+                "truncations": truncs_seq,
             }
             adv, v_targets = compute_gae(
                 gae_batch,
                 value,
                 gamma=float(cfg.ppo.gamma),
                 lam=float(cfg.ppo.gae_lambda),
+                bootstrap_on_timeouts=True,
             )
 
             obs_flat_for_ppo = (
