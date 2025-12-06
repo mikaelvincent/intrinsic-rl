@@ -1,15 +1,21 @@
 """Random Network Distillation (RND).
 
-Intrinsic is the MSE between a trainable predictor and a fixed random target
-on observations (prefers next_obs if provided). Optional running RMS can
-normalize outputs locally; by default the trainer handles global scaling.
+Intrinsic reward is the mean-squared error between a trainable
+predictor network and a fixed, randomly initialised target network
+evaluated on observations (preferring ``next_obs`` when provided).
 
-This module participates in the unified normalization contract:
-- ``self.outputs_normalized`` reflects whether intrinsic values are already
-  normalized *inside* the module. When True, the trainer must not apply its
-  global normalization again (only clip + scale).
-- For diagnostics, ``.rms`` exposes the current RMS used when internal
-  normalization is enabled.
+A lightweight running RMS normaliser can be enabled inside this
+module; otherwise the trainer applies a global normalisation layer.
+
+Normalization contract
+----------------------
+This module participates in a unified normalisation contract:
+
+* ``self.outputs_normalized`` indicates whether intrinsic values are
+  already normalised inside the module. When ``True``, the trainer
+  must not normalise them again (only clip and scale).
+* For diagnostics, :attr:`RND.rms` exposes the current RMS used when
+  internal normalisation is enabled.
 """
 
 from __future__ import annotations
@@ -30,7 +36,29 @@ from irl.utils.torchops import as_tensor, ensure_2d
 
 @dataclass
 class RNDConfig:
-    """Lightweight configuration for RND."""
+    """Configuration for :class:`RND`.
+
+    Parameters
+    ----------
+    feature_dim :
+        Size of the latent feature vector produced by the target
+        and predictor networks.
+    hidden :
+        Hidden-layer sizes for the shared MLP backbone.
+    lr :
+        Learning rate for the Adam optimiser.
+    grad_clip :
+        Maximum gradient norm for predictor updates.
+    rms_beta :
+        Decay for the running RMS when internal normalisation is used.
+    rms_eps :
+        Small epsilon added under the square root for numerical
+        stability in the RMS.
+    normalize_intrinsic :
+        When ``True``, the module normalises intrinsic values
+        internally and exposes ``outputs_normalized=True`` so the
+        trainer can skip its global normaliser.
+    """
 
     feature_dim: int = 128
     hidden: Tuple[int, int] = (256, 256)
@@ -44,7 +72,25 @@ class RNDConfig:
 
 
 class RND(BaseIntrinsicModule, nn.Module):
-    """Random Network Distillation (target/predictor; intrinsic = MSE)."""
+    """Random Network Distillation intrinsic module.
+
+    Parameters
+    ----------
+    obs_space :
+        Vector observation space (``gym.spaces.Box``). Image inputs are
+        not handled by this implementation.
+    device :
+        Torch device on which parameters and buffers are stored.
+    cfg :
+        Optional :class:`RNDConfig` instance. If ``None``, a default
+        configuration is used.
+
+    Notes
+    -----
+    The target network is fixed after initialisation. Only the
+    predictor network is trained to minimise the prediction error,
+    which becomes the intrinsic reward signal.
+    """
 
     def __init__(
         self,
@@ -84,12 +130,13 @@ class RND(BaseIntrinsicModule, nn.Module):
 
     @property
     def rms(self) -> float:
-        """Current RMS used by the internal normalizer (if enabled)."""
+        """Current RMS used by the internal normaliser (if enabled)."""
         return float(torch.sqrt(self._r2_ema + self.cfg.rms_eps).detach().item())
 
     # -------------------------- Core compute ---------------------------
 
     def _pred_and_targ(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """Return predictor and target features for a batch of inputs."""
         x2 = ensure_2d(x)
         p = self.predictor(x2)
         with torch.no_grad():
@@ -97,12 +144,19 @@ class RND(BaseIntrinsicModule, nn.Module):
         return p, t
 
     def _intrinsic_raw_per_sample(self, x: Tensor) -> Tensor:
-        """Per-sample MSE, shape [B]."""
+        """Per-sample mean-squared error between predictor and target.
+
+        Returns a tensor of shape ``[B]``.
+        """
         p, t = self._pred_and_targ(x)
         return F.mse_loss(p, t, reduction="none").mean(dim=-1)
 
     def _normalize_intrinsic(self, r: Tensor) -> Tensor:
-        """Optionally normalize with the module's running RMS."""
+        """Optionally normalise intrinsic values with the module's RMS.
+
+        When ``cfg.normalize_intrinsic`` is ``False``, the input tensor
+        is returned unchanged.
+        """
         if not self.cfg.normalize_intrinsic:
             return r
         denom = torch.sqrt(self._r2_ema + self.cfg.rms_eps)
@@ -111,7 +165,10 @@ class RND(BaseIntrinsicModule, nn.Module):
     # Public API
 
     def compute(self, tr) -> IntrinsicOutput:
-        """Compute intrinsic for a single transition (prefers s')."""
+        """Compute intrinsic reward for a single transition.
+
+        Prefers ``tr.s_next`` when available, otherwise uses ``tr.s``.
+        """
         with torch.no_grad():
             x = tr.s_next if hasattr(tr, "s_next") and tr.s_next is not None else tr.s
             xt = as_tensor(x, self.device)
@@ -122,7 +179,24 @@ class RND(BaseIntrinsicModule, nn.Module):
     def compute_batch(
         self, obs: Any, next_obs: Any | None = None, reduction: str = "none"
     ) -> Tensor:
-        """Batch intrinsic; if next_obs is provided, it is preferred."""
+        """Batch intrinsic computation.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations used when ``next_obs`` is ``None``.
+        next_obs :
+            Batch of next observations, preferred when provided.
+        reduction :
+            Either ``"none"`` (default, returns shape ``[B]``) or ``"mean"``
+            (returns a scalar).
+
+        Returns
+        -------
+        torch.Tensor
+            Per-sample or mean intrinsic values after optional
+            internal normalisation.
+        """
         with torch.no_grad():
             x_src = next_obs if next_obs is not None else obs
             x = as_tensor(x_src, self.device)
@@ -133,7 +207,19 @@ class RND(BaseIntrinsicModule, nn.Module):
     # ----------------------------- Training ----------------------------
 
     def loss(self, obs: Any) -> Mapping[str, Tensor]:
-        """Predictor-vs-target MSE and running RMS diagnostic."""
+        """Predictor–target MSE and running RMS diagnostic.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations.
+
+        Returns
+        -------
+        Mapping[str, torch.Tensor]
+            Mapping with keys ``"total"`` (scalar loss) and
+            ``"intrinsic_mean"`` (mean unnormalised intrinsic).
+        """
         o = as_tensor(obs, self.device)
         p, t = self._pred_and_targ(o)
         per = F.mse_loss(p, t, reduction="none").mean(dim=-1)  # [B]
@@ -146,7 +232,21 @@ class RND(BaseIntrinsicModule, nn.Module):
         return {"total": total, "intrinsic_mean": per.mean()}
 
     def update(self, obs: Any, steps: int = 1) -> Mapping[str, float]:
-        """Optimize predictor for `steps` iterations on the same batch."""
+        """Optimise the predictor network on a fixed batch.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations.
+        steps :
+            Number of optimisation passes over the same batch.
+
+        Returns
+        -------
+        Mapping[str, float]
+            Dictionary containing the final loss, mean intrinsic, and
+            current RMS estimate.
+        """
         metrics: Mapping[str, float] = {}
         for _ in range(int(steps)):
             out = self.loss(obs)
