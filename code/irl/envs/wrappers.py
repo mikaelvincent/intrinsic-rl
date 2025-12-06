@@ -47,6 +47,10 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
     """Convert CarRacing's Box(3,) actions into a small Discrete set.
 
     Default actions: no-op, left, right, gas, brake (5).
+
+    The optional ``action_set`` argument allows supplying a custom
+    array-like of shape ``(N, 3)`` where each row is ``[steer, gas, brake]``.
+    When omitted, a 5-action set compatible with common baselines is used.
     """
 
     def __init__(
@@ -71,8 +75,11 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
                 ],
                 dtype=np.float32,
             )
-        if not isinstance(action_set, np.ndarray) or action_set.shape[1:] != (3,):
-            raise ValueError("action_set must be a NumPy array of shape (N, 3).")
+        else:
+            action_set = np.asarray(action_set, dtype=np.float32)
+
+        if action_set.ndim != 2 or action_set.shape[1:] != (3,):
+            raise ValueError("action_set must be an array-like of shape (N, 3).")
         self._action_set = action_set.astype(np.float32)
         self.action_space = spaces.Discrete(self._action_set.shape[0])
 
@@ -204,6 +211,20 @@ class DomainRandomizationWrapper(gym.Wrapper):
             mj_model = getattr(uw, "model", None) or getattr(uw, "mujoco_model", None)
             if mj_model is None or not hasattr(mj_model, "opt"):
                 return 0
+
+            # Restore baseline physics first so noise stays i.i.d. around a fixed model.
+            try:
+                if self._mj_baseline_gravity is not None and hasattr(mj_model.opt, "gravity"):
+                    base_g = np.asarray(self._mj_baseline_gravity, dtype=np.float64).reshape(-1)
+                    if base_g.size == 3:
+                        mj_model.opt.gravity[:] = base_g
+                if self._mj_baseline_geom_friction is not None:
+                    base_fr = np.asarray(self._mj_baseline_geom_friction, dtype=np.float64).copy()
+                    if base_fr.ndim == 2 and base_fr.shape[1] == 3 and base_fr.size > 0:
+                        mj_model.geom_friction[:] = base_fr
+            except Exception:
+                # Baseline restoration is best-effort; continue with whatever state we have.
+                pass
 
             # Gravity (vector of length 3)
             try:
