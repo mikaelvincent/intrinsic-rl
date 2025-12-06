@@ -101,15 +101,57 @@ def log_mujoco_gl_default(value: str) -> None:
 
 
 def log_intrinsic_norm_hint(method: str, outputs_normalized: bool) -> None:
-    """One-time hint about how intrinsic rewards are being normalized."""
+    """One-time hint about how intrinsic rewards are being normalized.
+
+    Parameters
+    ----------
+    method:
+        Name of the intrinsic method (e.g. "proposed", "riac", "rnd", "ride").
+    outputs_normalized:
+        ``True`` if the intrinsic module normalises its outputs internally
+        (module-owned RMS), ``False`` if the trainer applies the global
+        :class:`RunningRMS` instead.
+    """
+    log = get_logger("intrinsic")
+    m = str(method).lower()
+
     if outputs_normalized:
-        # When a module owns its own normalization we stay quiet by default;
-        # callers may still choose to surface this at a higher level.
-        return
-    get_logger("intrinsic").info(
-        "Intrinsic normalization: method=%r outputs are raw; applying trainer's global RunningRMS.",
-        method,
-    )
+        # Module-owned RMS path: values are already scaled when they reach the trainer.
+        if m == "proposed":
+            log.info(
+                "Intrinsic normalization: method=%r normalizes impact+LP inside the module "
+                "(normalize_inside=True, outputs_normalized=True); trainer's global "
+                "RunningRMS for intrinsic is disabled.",
+                method,
+            )
+        elif m == "riac":
+            log.info(
+                "Intrinsic normalization: method=%r normalizes learning-progress inside "
+                "the module (internal RunningRMS over LP); trainer's global RunningRMS "
+                "for intrinsic is disabled.",
+                method,
+            )
+        elif m == "rnd":
+            log.info(
+                "Intrinsic normalization: method=%r uses RNDConfig.normalize_intrinsic=True "
+                "(module-owned RMS over prediction error); trainer's global RunningRMS "
+                "for intrinsic is disabled.",
+                method,
+            )
+        else:
+            log.info(
+                "Intrinsic normalization: method=%r outputs are normalized inside the "
+                "module (module-owned RMS, outputs_normalized=True); trainer will NOT "
+                "apply its global RunningRMS to intrinsic rewards.",
+                method,
+            )
+    else:
+        # Trainer-owned RMS path: module emits raw intrinsic, trainer normalises.
+        log.info(
+            "Intrinsic normalization: method=%r outputs are raw; trainer applies a global "
+            "RunningRMS over intrinsic rewards before clipping and scaling.",
+            method,
+        )
 
 
 def log_domain_randomization(summary: str) -> None:
