@@ -3,15 +3,13 @@ from __future__ import annotations
 """Image preprocessing utilities for RL pipelines.
 
 Provides a small, dependency-free set of helpers to:
-* Convert NHWC/NCHW to a canonical layout,
-* Optionally convert RGB/RGBA → grayscale,
-* Scale integer images from [0, 255] → [0, 1],
-* **NEW:** If floats appear to be in [0, 255], scale to [0, 1] defensively,
-* Apply simple mean/std normalization,
-* Return a torch.Tensor suitable for CNNs ([N, C, H, W], float32).
 
-These functions are used by image-based agents (e.g., CarRacing) and are
-kept separate from encoders to make preprocessing explicit and testable.
+* Convert NHWC/NCHW to a canonical layout.
+* Optionally convert RGB/RGBA → grayscale.
+* Scale integer images from [0, 255] → [0, 1].
+* If floats appear to be in [0, 255], scale to [0, 1] defensively.
+* Apply simple mean/std normalization.
+* Return a ``torch.Tensor`` suitable for CNNs ([N, C, H, W], float32).
 """
 
 from dataclasses import dataclass
@@ -45,7 +43,7 @@ class ImagePreprocessConfig:
 
 
 def to_channels_first(x: Union[np.ndarray, Tensor]) -> Tensor:
-    """Return tensor in CHW (or NCHW) order from HWC/NHWC/CHW/NCHW inputs."""
+    """Return a tensor in CHW (or NCHW) order from HWC/NHWC/CHW/NCHW inputs."""
     t = torch.as_tensor(x)
     if t.dim() == 2:
         # H, W -> 1, H, W
@@ -66,7 +64,8 @@ def to_channels_first(x: Union[np.ndarray, Tensor]) -> Tensor:
 def rgb_to_grayscale(x: Tensor) -> Tensor:
     """Convert RGB(A) to grayscale using ITU-R BT.601 luma weights.
 
-    Accepts CHW or NCHW. If 4 channels are present, the alpha is ignored. Returns tensor with a single channel (C=1).
+    Accepts CHW or NCHW. If 4 channels are present, the alpha channel is
+    ignored. Returns a tensor with a single channel (C=1).
     """
     t = x
     was_batched = t.dim() == 4
@@ -86,15 +85,16 @@ def rgb_to_grayscale(x: Tensor) -> Tensor:
 
 
 def _maybe_scale_uint8_or_float255(t: Tensor, enable: bool) -> Tensor:
-    """Return float32 image tensor; optionally normalize to [0,1].
+    """Return a float32 image tensor and optionally normalise to [0, 1].
 
-    Behavior when `enable` is True:
-      • Integer types: scale by 1/255.
-      • Float types: if data *appears* to be in 0..255 (max > ~1.5), scale by 1/255.
-        This is a defensive path to handle callers who already cast to float32 but didn't
-        scale yet. After optional scaling, values are clamped to [0,1].
+    When ``enable`` is True:
 
-    When `enable` is False: just cast to float32 (no scaling or clamping).
+    * Integer types are scaled by 1/255.
+    * Float types that appear to be in the 0..255 range (max > ~1.5) are
+      scaled by 1/255 as a defensive normalisation step.
+
+    After optional scaling, values are clamped to [0, 1] for numeric safety.
+    When ``enable`` is False the input is cast to float32 without scaling.
     """
     if not enable:
         return t.to(dtype=torch.float32)
@@ -102,18 +102,17 @@ def _maybe_scale_uint8_or_float255(t: Tensor, enable: bool) -> Tensor:
     # Integer → [0,1]
     if t.dtype in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
         out = t.to(dtype=torch.float32) / 255.0
-        # Clamp for numeric safety (just in case)
+        # Clamp for numeric safety.
         return out.clamp_(0.0, 1.0)
 
     # Float path
     out = t.to(dtype=torch.float32)
     try:
-        # Use amax/amin; safe on any shape. No-grad to avoid graph clutter.
+        # Use amax/amin; safe on any shape.
         with torch.no_grad():
             max_val = torch.amax(out)
             min_val = torch.amin(out)
         # Heuristic: if clearly not already in [0,1], assume 0..255 and scale.
-        # We deliberately avoid overfitting the check; max>1.5 is a robust threshold.
         if torch.isfinite(max_val) and float(max_val.item()) > 1.5:
             out = out / 255.0
         # Clamp to [0,1] either way to keep downstream stable.
@@ -124,13 +123,18 @@ def _maybe_scale_uint8_or_float255(t: Tensor, enable: bool) -> Tensor:
     return out
 
 
-def _apply_normalization(t: Tensor, mean: Optional[Union[float, Sequence[float]]], std: Optional[Union[float, Sequence[float]]]) -> Tensor:
+def _apply_normalization(
+    t: Tensor,
+    mean: Optional[Union[float, Sequence[float]]],
+    std: Optional[Union[float, Sequence[float]]],
+) -> Tensor:
+    """Apply per-channel mean/std normalisation if requested."""
     if mean is None and std is None:
         return t
-    # Broadcast-friendly: accept scalars or sequences
+    # Broadcast-friendly: accept scalars or sequences.
     m = torch.as_tensor(mean if mean is not None else 0.0, dtype=t.dtype, device=t.device)
     s = torch.as_tensor(std if std is not None else 1.0, dtype=t.dtype, device=t.device)
-    # Shape to [C, 1, 1] or [1, C, 1, 1] depending on rank
+    # Shape to [C, 1, 1] or [1, C, 1, 1] depending on rank.
     if t.dim() == 3:
         # CHW
         if m.dim() == 0:
@@ -156,26 +160,30 @@ def preprocess_image(
     *,
     device: Union[str, torch.device] = "cpu",
 ) -> Tensor:
-    """Preprocess an image/mini-batch into a float32 tensor ready for CNNs.
+    """Preprocess an image batch into a float32 tensor ready for CNNs.
 
-    Steps:
-      1) Convert to torch.Tensor on `device`.
-      2) Reorder layout to channels-first (CHW/NCHW).
-      3) If `grayscale`, convert RGB(A) → 1-channel grayscale.
-      4) Scaling:
-           - If `scale_uint8=True` and dtype is **integer**, scale to [0,1].
-           - **NEW:** If dtype is **float** and values *appear* to be in 0..255 (max>~1.5),
-             scale by 1/255 as a defensive normalization.
-           - After optional scaling, clamp to [0,1] for numeric safety.
-      5) Apply optional mean/std normalization.
-      6) Return tensor in CHW or NCHW (depending on input rank), float32.
+    Steps
+    -----
+    1. Convert to ``torch.Tensor`` on ``device``.
+    2. Reorder layout to channels-first (CHW/NCHW).
+    3. Optionally convert RGB(A) → grayscale.
+    4. Scaling:
+
+       * If ``scale_uint8=True`` and dtype is integer, scale to [0, 1].
+       * If dtype is float and values *appear* to be in 0..255 (max > ~1.5),
+         scale by 1/255 as a defensive normalisation.
+
+       After scaling, values are clamped to [0, 1] for stability.
+
+    5. Apply optional mean/std normalisation.
+    6. Return a tensor in CHW or NCHW (depending on input rank), float32.
 
     Parameters
     ----------
     x:
         Image or batch of images in HWC/NHWC/CHW/NCHW layouts; dtype uint8 or float.
     cfg:
-        ImagePreprocessConfig; defaults are conservative (no mean/std shift).
+        Preprocessing configuration; defaults are conservative (no mean/std shift).
     device:
         Target device for the output tensor.
     """
@@ -185,12 +193,12 @@ def preprocess_image(
     t = to_channels_first(t)  # -> CHW/NCHW
 
     if cfg.grayscale:
-        # Only convert when we actually have RGB(A)
+        # Only convert when we actually have RGB(A).
         ch_idx = 1 if t.dim() == 4 else 0
         if t.shape[ch_idx] in (3, 4):
             t = rgb_to_grayscale(t)
 
-    # Scale integers to [0,1]; and defensively scale float 0..255 inputs as well.
+    # Scale integers to [0, 1]; and defensively scale float 0..255 inputs as well.
     t = _maybe_scale_uint8_or_float255(t, enable=cfg.scale_uint8)
 
     t = _apply_normalization(t, cfg.normalize_mean, cfg.normalize_std)
