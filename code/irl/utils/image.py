@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Image preprocessing utilities for RL pipelines.
 
 Provides a small, dependency-free set of helpers to:
@@ -11,6 +9,8 @@ Provides a small, dependency-free set of helpers to:
 * Apply simple mean/std normalization.
 * Return a ``torch.Tensor`` suitable for CNNs ([N, C, H, W], float32).
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple, Union
@@ -90,7 +90,7 @@ def _maybe_scale_uint8_or_float255(t: Tensor, enable: bool) -> Tensor:
     When ``enable`` is True:
 
     * Integer types are scaled by 1/255.
-    * Float types that appear to be in the 0..255 range (max > ~1.5) are
+    * Float types that appear to be in 0..255 range (max > ~1.5) are
       scaled by 1/255 as a defensive normalisation step.
 
     After optional scaling, values are clamped to [0, 1] for numeric safety.
@@ -205,7 +205,7 @@ def preprocess_image(
 
     if cfg.channels_first:
         return t  # already CHW/NCHW
-    # Convert back to channels-last if requested
+    # Convert back to channels-last if requested.
     if t.dim() == 3:
         return t.permute(1, 2, 0)  # CHW -> HWC
     return t.permute(0, 2, 3, 1)  # NCHW -> NHWC
