@@ -67,6 +67,13 @@ class EnvConfig:
     ``discrete_actions`` flag enables the :class:`CarRacingDiscreteActionWrapper`.
     When ``car_discrete_action_set`` is not ``None``, it overrides the wrapper's
     default 5-action set with a custom list of ``[steer, gas, brake]`` triples.
+
+    ``async_vector`` enables process-based vectorization via
+    :class:`gymnasium.vector.AsyncVectorEnv` when ``vec_envs > 1``. This
+    spreads environment stepping across multiple OS processes and can
+    significantly improve CPU utilization for simulation-heavy tasks.
+    If an async vector env cannot be created (e.g., non-picklable env),
+    the manager falls back to a synchronous vector env automatically.
     """
 
     id: str = "MountainCar-v0"
@@ -79,6 +86,8 @@ class EnvConfig:
     # must be a sequence of [steer, gas, brake] triples and will be converted
     # to a NumPy array of shape (N, 3) by the environment manager.
     car_discrete_action_set: tuple[tuple[float, float, float], ...] | None = None
+    # Use process-based vector envs when >1 env is requested.
+    async_vector: bool = False
 
 
 @dataclass(frozen=True)
