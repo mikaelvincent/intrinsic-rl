@@ -134,10 +134,11 @@ class ExperimentConfig:
     This section is for global behaviours that are not tied to a specific
     environment or PPO setting. For example, ``deterministic`` controls
     whether training should request deterministic PyTorch behaviour where
-    supported.
+    supported. By default this is set to ``True`` so that runs are
+    reproducible given a fixed seed, unless a config explicitly opts out.
     """
 
-    deterministic: bool = False
+    deterministic: bool = True
 
 
 # ----- Root Schema -----------------------------------------------------------
