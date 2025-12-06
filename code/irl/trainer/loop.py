@@ -231,8 +231,9 @@ def train(
             )
             if not use_intrinsic:
                 _LOG.warning(
-                    "Method %r selected but intrinsic.eta=%.3g; intrinsic will be computed "
-                    "but ignored in the total reward.",
+                    "Method %r selected but intrinsic.eta=%.3g; intrinsic module will be "
+                    "initialized but intrinsic rewards are disabled (eta=0). Training will "
+                    "use extrinsic rewards only.",
                     method_l,
                     eta,
                 )
@@ -427,7 +428,7 @@ def train(
             truncs_seq = np.zeros((T, B), dtype=np.float32)
             r_int_raw_seq = (
                 np.zeros((T, B), dtype=np.float32)
-                if (intrinsic_module is not None and method_l == "ride")
+                if (intrinsic_module is not None and method_l == "ride" and use_intrinsic)
                 else None
             )
 
@@ -546,7 +547,7 @@ def train(
             r_int_raw_flat = None
             r_int_scaled_flat = None
             mod_metrics = {}
-            if intrinsic_module is not None:
+            if intrinsic_module is not None and use_intrinsic:
                 if method_l == "ride":
                     r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(  # type: ignore[union-attr]
                         np.float32
@@ -832,6 +833,7 @@ def train(
 
             if (
                 intrinsic_module is not None
+                and use_intrinsic
                 and method_l == "proposed"
                 and hasattr(intrinsic_module, "gate_rate")
             ):
@@ -848,6 +850,7 @@ def train(
             try:
                 if (
                     intrinsic_module is not None
+                    and use_intrinsic
                     and method_l == "riac"
                     and int(global_step) % int(cfg.logging.csv_interval)
                     == 0
