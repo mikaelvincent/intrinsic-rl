@@ -150,53 +150,35 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         actions: Any,
         reduction: str = "none",
     ) -> Tensor:
-        """Vectorized LP for a batch; updates per-region EMAs.
+        """Vectorized LP for a batch with causal per-sample EMA updates.
 
-        Samples are grouped by region id and EMAs are updated once per region
-        using the mean error of samples mapped to that region. Per-sample LP
-        within a region shares the same post-update value.
+        The batch is processed in input order. For each sample we:
+
+        1. insert φ(s) into the KD-tree,
+        2. update that region's EMAs with its forward error, and
+        3. update the running RMS and normalise that sample's LP.
+
+        This mirrors repeated calls to :meth:`compute` while sharing encoder
+        work across the batch.
         """
-        err_t, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [B], [B,D]
+        err_t, phi_t = self._forward_error_per_sample(obs, next_obs, actions)  # [N], [N, D]
 
-        # Insert all points; get region ids
         phi_np = phi_t.detach().cpu().numpy()
-        rids = self.store.bulk_insert(phi_np)  # (B,)
         err_np = err_t.detach().cpu().numpy().astype(np.float64)
 
-        # Group errors by region id and compute per-region mean error
-        uniq, inv = np.unique(rids, return_inverse=True)  # uniq[K], inv[B] in [0..K-1]
-        sums = np.zeros(len(uniq), dtype=np.float64)
-        cnts = np.zeros(len(uniq), dtype=np.int64)
-        np.add.at(sums, inv, err_np)
-        np.add.at(cnts, inv, 1)
-        means = sums / np.maximum(1, cnts)
+        N = int(err_np.shape[0])
+        out = np.empty(N, dtype=np.float32)
 
-        # Update region stats once per region (EMA on the mean)
-        lp_per_region = np.zeros(len(uniq), dtype=np.float32)
-        for i, rid in enumerate(uniq):
-            rid_i = int(rid)
-            e_mean = float(means[i])
-            st = self._stats.get(rid_i)
-            if st is None or st.count == 0:
-                # First observation(s) in this region: initialize EMAs to the mean error.
-                self._stats[rid_i] = _RegionStats(
-                    ema_long=e_mean, ema_short=e_mean, count=int(cnts[i])
-                )
-                lp = 0.0
-            else:
-                st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * e_mean
-                st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * e_mean
-                st.count += int(cnts[i])
-                lp = max(0.0, float(st.ema_long - st.ema_short))
-            lp_per_region[i] = float(lp)
+        for i in range(N):
+            rid = int(self.store.insert(phi_np[i]))
+            lp_val = float(self._update_region(rid, float(err_np[i])))
 
-        # Broadcast per-region LP back to samples, normalize, and scale
-        lp_arr = lp_per_region[inv].astype(np.float32)  # (B,)
-        self._lp_rms.update(lp_arr)
-        lp_norm = self._lp_rms.normalize(lp_arr)
+            self._lp_rms.update([lp_val])
+            lp_norm = self._lp_rms.normalize(np.asarray([lp_val], dtype=np.float32))
+            out[i] = self.alpha_lp * float(lp_norm[0])
 
-        out = torch.as_tensor(self.alpha_lp * lp_norm, dtype=torch.float32, device=self.device)
-        return out.mean() if reduction == "mean" else out
+        out_t = torch.as_tensor(out, dtype=torch.float32, device=self.device)
+        return out_t.mean() if reduction == "mean" else out_t
 
     # ----------------------------- losses & update ----------------------------
 
