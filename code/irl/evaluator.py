@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Programmatic policy evaluator (no intrinsic).
 
 Runs deterministic evaluation episodes using the policy's mode action and
@@ -18,6 +16,8 @@ Typical usage (from Python)
 ... )
 >>> print(summary["mean_return"], summary["std_return"])
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 from statistics import mean, pstdev
