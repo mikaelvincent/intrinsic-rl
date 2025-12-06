@@ -122,6 +122,12 @@ class DomainRandomizationWrapper(gym.Wrapper):
         self._has_mujoco: bool = False
         self._has_box2d: bool = False
 
+        # Baseline physics snapshots so noise is i.i.d. around a fixed point
+        # rather than drifting multiplicatively across resets.
+        self._mj_baseline_gravity: np.ndarray | None = None
+        self._mj_baseline_geom_friction: np.ndarray | None = None
+        self._b2d_baseline_gravity: tuple[float, float] | None = None
+
     # ------------------ helpers ------------------
 
     def _u(self, low: float, high: float, size=None):
@@ -155,6 +161,16 @@ class DomainRandomizationWrapper(gym.Wrapper):
                     arr = np.array(g, dtype=np.float64).reshape(-1)
                     if arr.size == 3 and np.isfinite(arr).all():
                         self._has_mujoco = True
+                        # Cache baseline gravity and geom friction once so that
+                        # subsequent resets draw noise around a fixed nominal model.
+                        if self._mj_baseline_gravity is None:
+                            self._mj_baseline_gravity = arr.copy()
+                        if self._mj_baseline_geom_friction is None:
+                            fr = getattr(mj_model, "geom_friction", None)
+                            if fr is not None:
+                                fr_arr = np.array(fr, dtype=np.float64, copy=True)
+                                if fr_arr.ndim == 2 and fr_arr.shape[1] == 3 and fr_arr.size > 0:
+                                    self._mj_baseline_geom_friction = fr_arr.copy()
         except Exception:
             self._has_mujoco = False  # remain conservative
 
@@ -163,6 +179,16 @@ class DomainRandomizationWrapper(gym.Wrapper):
             world = getattr(uw, "world", None)
             if world is not None and hasattr(world, "gravity"):
                 self._has_box2d = True
+                # Cache baseline gravity once (supports tuple-like and vector types).
+                if self._b2d_baseline_gravity is None:
+                    g = getattr(world, "gravity", None)
+                    if g is not None:
+                        try:
+                            gx, gy = g  # tuple-like
+                            self._b2d_baseline_gravity = (float(gx), float(gy))
+                        except Exception:
+                            if hasattr(g, "x") and hasattr(g, "y"):
+                                self._b2d_baseline_gravity = (float(g.x), float(g.y))
         except Exception:
             self._has_box2d = False
 
@@ -181,15 +207,23 @@ class DomainRandomizationWrapper(gym.Wrapper):
 
             # Gravity (vector of length 3)
             try:
-                g = getattr(mj_model.opt, "gravity", None)
-                if g is not None:
-                    g_arr = np.array(g, dtype=np.float64).reshape(-1)
-                    if g_arr.size == 3 and np.isfinite(g_arr).all():
+                if self._mj_baseline_gravity is not None:
+                    base_g = np.asarray(self._mj_baseline_gravity, dtype=np.float64).reshape(-1)
+                    if base_g.size == 3 and hasattr(mj_model.opt, "gravity"):
                         scale = self._u(0.95, 1.05)
-                        g_arr *= scale
-                        # Assign back via slice to avoid replacing the object
+                        g_arr = base_g * scale
                         mj_model.opt.gravity[:] = g_arr
                         applied += 1
+                else:
+                    g = getattr(mj_model.opt, "gravity", None)
+                    if g is not None:
+                        g_arr = np.array(g, dtype=np.float64).reshape(-1)
+                        if g_arr.size == 3 and np.isfinite(g_arr).all():
+                            scale = self._u(0.95, 1.05)
+                            g_arr *= scale
+                            # Assign back via slice to avoid replacing the object
+                            mj_model.opt.gravity[:] = g_arr
+                            applied += 1
             except Exception:
                 pass
 
@@ -197,11 +231,20 @@ class DomainRandomizationWrapper(gym.Wrapper):
             try:
                 fr = getattr(mj_model, "geom_friction", None)
                 if fr is not None:
-                    fr_arr = np.array(fr, dtype=np.float64, copy=True)
-                    if fr_arr.ndim == 2 and fr_arr.shape[1] == 3 and fr_arr.size > 0:
-                        noise = self._u(0.9, 1.1, size=fr_arr.shape)
-                        mj_model.geom_friction[:] = fr_arr * noise
-                        applied += 1
+                    if self._mj_baseline_geom_friction is not None:
+                        base_fr = np.asarray(
+                            self._mj_baseline_geom_friction, dtype=np.float64, copy=True
+                        )
+                        if base_fr.ndim == 2 and base_fr.shape[1] == 3 and base_fr.size > 0:
+                            noise = self._u(0.9, 1.1, size=base_fr.shape)
+                            mj_model.geom_friction[:] = base_fr * noise
+                            applied += 1
+                    else:
+                        fr_arr = np.array(fr, dtype=np.float64, copy=True)
+                        if fr_arr.ndim == 2 and fr_arr.shape[1] == 3 and fr_arr.size > 0:
+                            noise = self._u(0.9, 1.1, size=fr_arr.shape)
+                            mj_model.geom_friction[:] = fr_arr * noise
+                            applied += 1
             except Exception:
                 pass
         except Exception:
@@ -220,32 +263,45 @@ class DomainRandomizationWrapper(gym.Wrapper):
             if world is None or not hasattr(world, "gravity"):
                 return 0
 
-            g = getattr(world, "gravity", None)
-            if g is None:
-                return 0
-
             scale = self._u(0.95, 1.05)
 
             # world.gravity can be tuple-like or a vector type. Handle both.
             try:
-                gx, gy = g  # tuple-like
-                new_g = (gx, float(gy) * scale)
+                if self._b2d_baseline_gravity is not None:
+                    gx, gy = self._b2d_baseline_gravity
+                else:
+                    g = getattr(world, "gravity", None)
+                    if g is None:
+                        return 0
+                    try:
+                        gx, gy = g  # tuple-like
+                    except Exception:
+                        gx = float(getattr(g, "x"))
+                        gy = float(getattr(g, "y"))
+                new_g = (float(gx), float(gy) * scale)
                 world.gravity = new_g
                 applied += 1
             except Exception:
                 # Attribute-like (e.g., b2Vec2 with .x/.y)
                 try:
-                    gx = float(getattr(world.gravity, "x"))
-                    gy = float(getattr(world.gravity, "y"))
+                    if self._b2d_baseline_gravity is not None:
+                        gx, gy = self._b2d_baseline_gravity
+                    else:
+                        g = getattr(world, "gravity", None)
+                        if g is None:
+                            return applied
+                        gx = float(getattr(g, "x"))
+                        gy = float(getattr(g, "y"))
+                    new_gy = gy * scale
                     # Many Box2D bindings accept tuple assignment to .gravity too
                     try:
-                        world.gravity = (gx, gy * scale)
+                        world.gravity = (gx, new_gy)
                         applied += 1
                     except Exception:
                         # Fall back to in-place attribute update if exposed
                         if hasattr(world.gravity, "x") and hasattr(world.gravity, "y"):
                             world.gravity.x = gx
-                            world.gravity.y = gy * scale
+                            world.gravity.y = new_gy
                             applied += 1
                 except Exception:
                     pass
