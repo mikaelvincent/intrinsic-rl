@@ -1,7 +1,7 @@
 """PPO training CLI — thin wrapper around ``irl.trainer.train``.
 
-Keeps the public CLI stable while delegating heavy training logic to the ``irl.trainer``
-subpackage.
+Keeps the public CLI stable while delegating heavy training logic to the
+``irl.trainer`` subpackage.
 """
 from __future__ import annotations
 
@@ -42,7 +42,10 @@ def cli_train(
     method: Optional[str] = typer.Option(
         None,
         "--method",
-        help="Override method in config (vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config.",
+        help=(
+            "Override method in config "
+            "(vanilla|icm|rnd|ride|riac|proposed). Defaults to 'vanilla' if no config."
+        ),
     ),
     env: Optional[str] = typer.Option(
         None,
@@ -62,7 +65,30 @@ def cli_train(
         help="Resume from the latest checkpoint in --run-dir if available (verifies config hash).",
     ),
 ) -> None:
-    """Launch PPO training with optional intrinsic rewards."""
+    """Launch PPO training.
+
+    Parameters
+    ----------
+    config :
+        Optional path to a YAML configuration file. When omitted, a
+        default :class:`irl.cfg.Config` instance is constructed.
+    total_steps :
+        Total environment steps to run across all vector environments.
+    run_dir :
+        Directory for logs and checkpoints. If omitted, a timestamped
+        directory is created based on the configuration.
+    method :
+        Optional override for the configured learning method
+        (for example, ``\"vanilla\"``, ``\"icm\"``, or ``\"proposed\"``).
+    env :
+        Optional override for the Gymnasium environment id.
+    device :
+        Optional override for the torch device string, such as
+        ``\"cpu\"`` or ``\"cuda:0\"``.
+    resume :
+        When ``True``, resume from the latest checkpoint in ``run_dir``
+        if available and the configuration hash matches.
+    """
     if config is not None:
         cfg = load_config(str(config))
     else:
@@ -85,6 +111,7 @@ def cli_train(
 
 
 def main() -> None:
+    """Entry point for the ``irl-train`` console script."""
     app()
 
 
