@@ -1,4 +1,13 @@
-"""Checkpoint manager with atomic writes & bounded retention."""
+"""Checkpoint manager with atomic writes and bounded retention.
+
+This module provides:
+
+* Small helpers for atomic text/bytes writes.
+* A deterministic configuration-hash utility for resume safety.
+* A :class:`CheckpointManager` that periodically writes torch
+  checkpoints, maintains a ``ckpt_latest.pt`` alias, and prunes older
+  step-numbered checkpoints.
+"""
 
 from __future__ import annotations
 
@@ -17,12 +26,16 @@ _CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
 
 
 def _atomic_replace(src: Path, dst: Path) -> None:
-    """Atomic move where supported; falls back to replace."""
+    """Atomically replace ``dst`` by ``src`` where supported."""
     os.replace(src, dst)
 
 
 def _safe_torch_save(obj: Any, path: Path) -> None:
-    """Write via tmp file then replace to reduce corruption risk."""
+    """Write a torch payload via a temporary file, then replace.
+
+    This reduces the risk of visible partial files if the process is
+    interrupted mid-write.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(obj, tmp)
@@ -30,7 +43,26 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
 
 
 def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Load payload across torch versions (opt out of weights_only)."""
+    """Load a checkpoint in a way that is compatible across torch versions.
+
+    Parameters
+    ----------
+    path :
+        Path to the checkpoint file.
+    map_location :
+        Argument forwarded to :func:`torch.load`.
+
+    Returns
+    -------
+    dict
+        Deserialised checkpoint payload.
+
+    Notes
+    -----
+    Torch 2.6 adds a ``weights_only`` argument to :func:`torch.load`.
+    This helper always opts out of that flag so a single call site
+    works for both older and newer versions.
+    """
     try:
         # torch >= 2.6
         return torch.load(path, map_location=map_location, weights_only=False)
@@ -43,12 +75,22 @@ def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> 
 
 
 def atomic_replace(src: Path, dst: Path) -> None:
-    """Public wrapper for atomic replace."""
+    """Atomically replace ``dst`` with ``src`` on the local filesystem."""
     _atomic_replace(Path(src), Path(dst))
 
 
 def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
-    """Atomically write text to `path` using tmp + replace + fsync."""
+    """Atomically write a text file using a temporary file and fsync.
+
+    Parameters
+    ----------
+    path :
+        Destination file path.
+    text :
+        Text content to write.
+    encoding :
+        Text encoding, default is UTF-8.
+    """
     path = Path(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +103,7 @@ def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Atomically write bytes to `path` using tmp + replace + fsync."""
+    """Atomically write a binary file using a temporary file and fsync."""
     path = Path(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +118,13 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 
 def _json_stable(obj: Any) -> str:
-    """Return a stable JSON string for hashing (sorted keys, simple separators)."""
+    """Return a stable JSON string suitable for hashing.
+
+    The representation uses sorted keys at all nested levels and compact
+    separators so that the resulting string is deterministic for a given
+    logical mapping.
+    """
+
     # Recursively sort dict keys and convert non-JSON types where practical.
     def _normalize(x: Any) -> Any:
         if isinstance(x, Mapping):
@@ -98,13 +146,14 @@ def compute_cfg_hash(cfg_like: Any) -> str:
 
     Parameters
     ----------
-    cfg_like : Any
-        A mapping (e.g., dict from `irl.cfg.to_dict(cfg)`) or JSON-serializable object.
+    cfg_like :
+        A mapping (for example, the dict produced by ``irl.cfg.to_dict``)
+        or any JSON-serialisable object.
 
     Returns
     -------
     str
-        Lowercase hex digest prefix (16 chars) of the SHA-256 hash.
+        Lowercase hex digest prefix (16 characters) of the SHA-256 hash.
     """
     data = _json_stable(cfg_like)
     return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
@@ -112,7 +161,20 @@ def compute_cfg_hash(cfg_like: Any) -> str:
 
 @dataclass
 class CheckpointManager:
-    """Manage periodic saves, pruning, and 'latest' symlink-equivalent."""
+    """Manage periodic saves, pruning, and a ``ckpt_latest.pt`` alias.
+
+    Parameters
+    ----------
+    run_dir :
+        Root directory for a single training or evaluation run.
+    interval_steps :
+        Save cadence expressed in environment steps.
+    max_to_keep :
+        Maximum number of step-numbered checkpoints to retain. The
+        ``ckpt_latest.pt`` alias is always preserved.
+    subdir :
+        Subdirectory under ``run_dir`` where checkpoints are stored.
+    """
 
     run_dir: Path
     interval_steps: int
@@ -128,15 +190,31 @@ class CheckpointManager:
 
     @property
     def latest_path(self) -> Path:
+        """Return the path to the ``ckpt_latest.pt`` alias."""
         return self.ckpt_dir / "ckpt_latest.pt"
 
     def path_for_step(self, step: int) -> Path:
+        """Return the canonical checkpoint path for a given step."""
         return self.ckpt_dir / f"ckpt_step_{int(step)}.pt"
 
     # ------------- Save/Load -------------
 
     def save(self, step: int, payload: Dict[str, Any]) -> Path:
-        """Save payload at a specific step and update 'latest'."""
+        """Save a checkpoint payload and update the ``latest`` alias.
+
+        Parameters
+        ----------
+        step :
+            Global step associated with the checkpoint.
+        payload :
+            Mapping to serialise with :func:`torch.save`. A ``"step"``
+            key is added or overwritten to match ``step``.
+
+        Returns
+        -------
+        pathlib.Path
+            The path of the step-numbered checkpoint.
+        """
         if "step" not in payload:
             payload = dict(payload)
             payload["step"] = int(step)
@@ -152,10 +230,29 @@ class CheckpointManager:
         return path
 
     def should_save(self, step: int) -> bool:
+        """Return ``True`` if a checkpoint should be saved at ``step``."""
         return int(step) % int(self.interval_steps) == 0
 
     def load_latest(self, map_location: str | torch.device = "cpu") -> Tuple[Dict[str, Any], int]:
-        """Load latest checkpoint (returns payload, step)."""
+        """Load the latest checkpoint payload and its associated step.
+
+        Parameters
+        ----------
+        map_location :
+            Argument forwarded to :func:`torch.load`.
+
+        Returns
+        -------
+        tuple
+            ``(payload, step)`` where ``payload`` is the deserialised
+            dict and ``step`` is the integer training step inferred from
+            the payload or filename.
+
+        Raises
+        ------
+        FileNotFoundError
+            If no ``ckpt_latest.pt`` file is present.
+        """
         if not self.latest_path.exists():
             raise FileNotFoundError(f"No latest checkpoint at {self.latest_path}")
         payload = _torch_load_compat(self.latest_path, map_location=map_location)
@@ -165,6 +262,7 @@ class CheckpointManager:
     # ------------- Helpers -------------
 
     def _prune_old(self) -> None:
+        """Remove older step-numbered checkpoints beyond ``max_to_keep``."""
         if self.max_to_keep is None or self.max_to_keep <= 0:
             return
 
@@ -180,10 +278,12 @@ class CheckpointManager:
             try:
                 path.unlink()
             except Exception:
-                pass  # ignore removal failures
+                # Best-effort pruning: ignore deletion failures.
+                pass
 
     @staticmethod
     def _infer_step_from_name(name: str) -> Optional[int]:
+        """Extract the integer step from a ``ckpt_step_*.pt`` filename."""
         m = _CKPT_RE.match(name)
         if not m:
             return None
@@ -194,5 +294,5 @@ class CheckpointManager:
 
 
 def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Convenience free function for direct loads."""
+    """Convenience wrapper for loading a single checkpoint file."""
     return _torch_load_compat(path, map_location=map_location)
