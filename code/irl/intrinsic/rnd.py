@@ -1,4 +1,5 @@
-"""Random Network Distillation (RND).
+"""
+Random Network Distillation (RND).
 
 Intrinsic reward is the mean-squared error between a trainable
 predictor network and a fixed, randomly initialised target network
@@ -31,7 +32,9 @@ from torch.nn import functional as F
 
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput
 from irl.models.networks import mlp  # lightweight MLP builder (+FlattenObs)
+from irl.models.cnn import ConvEncoder, ConvEncoderConfig
 from irl.utils.torchops import as_tensor, ensure_2d
+from irl.utils.image import preprocess_image, ImagePreprocessConfig
 
 
 @dataclass
@@ -44,7 +47,7 @@ class RNDConfig:
         Size of the latent feature vector produced by the target
         and predictor networks.
     hidden :
-        Hidden-layer sizes for the shared MLP backbone.
+        Hidden-layer sizes for the shared MLP backbone (vector obs only).
     lr :
         Learning rate for the Adam optimiser.
     grad_clip :
@@ -61,7 +64,7 @@ class RNDConfig:
     """
 
     feature_dim: int = 128
-    hidden: Tuple[int, int] = (256, 256)
+    hidden: Tuple[int, int] = (256, 256)  # vector path only
     lr: float = 3e-4
     grad_clip: float = 5.0
     rms_beta: float = 0.99
@@ -77,8 +80,9 @@ class RND(BaseIntrinsicModule, nn.Module):
     Parameters
     ----------
     obs_space :
-        Vector observation space (``gym.spaces.Box``). Image inputs are
-        not handled by this implementation.
+        Observation space (``gym.spaces.Box``). Supports both vector and image
+        observations. Image inputs are routed through a :class:`ConvEncoder`
+        with centralised preprocessing; vector inputs use an MLP backbone.
     device :
         Torch device on which parameters and buffers are stored.
     cfg :
@@ -100,19 +104,47 @@ class RND(BaseIntrinsicModule, nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("RND supports Box observation spaces (vector states).")
+            raise TypeError("RND supports Box observation spaces (vector or images).")
 
         self.device = torch.device(device)
         self.cfg = cfg or RNDConfig()
-        self.obs_dim = int(obs_space.shape[0])
 
-        # Target: fixed, randomly initialized; Predictor: trainable
-        self.target = mlp(self.obs_dim, self.cfg.hidden, out_dim=self.cfg.feature_dim)
-        self.predictor = mlp(self.obs_dim, self.cfg.hidden, out_dim=self.cfg.feature_dim)
+        # Determine observation type
+        self.is_image = len(obs_space.shape) >= 2
 
-        for p in self.target.parameters():
-            p.requires_grad = False
-        self.target.eval()
+        if self.is_image:
+            # Infer channel count from either leading or trailing axis (CHW vs HWC)
+            shape = tuple(int(s) for s in obs_space.shape)
+            cand = [shape[0], shape[-1]]
+            in_channels = cand[0] if cand[0] in (1, 3, 4) else cand[1]
+            if in_channels not in (1, 3, 4):
+                in_channels = shape[-1]
+
+            # CNN target/predictor (same architecture; target frozen)
+            cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.feature_dim))
+            self.target = ConvEncoder(cnn_cfg)
+            self.predictor = ConvEncoder(cnn_cfg)
+
+            for p in self.target.parameters():
+                p.requires_grad = False
+            self.target.eval()
+
+            # Centralized preprocessing for images -> NCHW float32 in [0, 1]
+            self._img_pre_cfg = ImagePreprocessConfig(
+                grayscale=False,
+                scale_uint8=True,
+                normalize_mean=None,
+                normalize_std=None,
+                channels_first=True,
+            )
+        else:
+            # Vector path: simple MLPs to feature_dim
+            self.obs_dim = int(obs_space.shape[0])
+            self.target = mlp(self.obs_dim, self.cfg.hidden, out_dim=self.cfg.feature_dim)
+            self.predictor = mlp(self.obs_dim, self.cfg.hidden, out_dim=self.cfg.feature_dim)
+            for p in self.target.parameters():
+                p.requires_grad = False
+            self.target.eval()
 
         self._opt = torch.optim.Adam(self.predictor.parameters(), lr=float(self.cfg.lr))
 
@@ -135,15 +167,28 @@ class RND(BaseIntrinsicModule, nn.Module):
 
     # -------------------------- Core compute ---------------------------
 
-    def _pred_and_targ(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def _pred_and_targ(self, x: Tensor | object) -> Tuple[Tensor, Tensor]:
         """Return predictor and target features for a batch of inputs."""
-        x2 = ensure_2d(x)
-        p = self.predictor(x2)
-        with torch.no_grad():
-            t = self.target(x2)
-        return p, t
+        if self.is_image:
+            # Accept HWC/NHWC/CHW/NCHW with optional leading dims; collapse to NCHW
+            t = x if torch.is_tensor(x) else torch.as_tensor(x)
+            if t.dim() >= 5:
+                t = t.reshape(-1, *t.shape[-3:])
+            img = preprocess_image(
+                t, cfg=self._img_pre_cfg, device=self.device
+            )  # -> NCHW float32 [0,1]
+            p = self.predictor(img)
+            with torch.no_grad():
+                t = self.target(img)
+            return p, t
+        else:
+            x2 = ensure_2d(as_tensor(x, self.device))
+            p = self.predictor(x2)
+            with torch.no_grad():
+                t = self.target(x2)
+            return p, t
 
-    def _intrinsic_raw_per_sample(self, x: Tensor) -> Tensor:
+    def _intrinsic_raw_per_sample(self, x: Tensor | object) -> Tensor:
         """Per-sample mean-squared error between predictor and target.
 
         Returns a tensor of shape ``[B]``.
@@ -187,8 +232,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         """
         with torch.no_grad():
             x = tr.s_next if hasattr(tr, "s_next") and tr.s_next is not None else tr.s
-            xt = as_tensor(x, self.device)
-            r_raw = self._intrinsic_raw_per_sample(xt)
+            r_raw = self._intrinsic_raw_per_sample(x)
             if self.cfg.normalize_intrinsic:
                 self._update_rms_from_raw(r_raw)
             r = self._normalize_intrinsic(r_raw)
@@ -217,8 +261,7 @@ class RND(BaseIntrinsicModule, nn.Module):
         """
         with torch.no_grad():
             x_src = next_obs if next_obs is not None else obs
-            x = as_tensor(x_src, self.device)
-            r_raw = self._intrinsic_raw_per_sample(x)
+            r_raw = self._intrinsic_raw_per_sample(x_src)
             if self.cfg.normalize_intrinsic:
                 self._update_rms_from_raw(r_raw)
             r = self._normalize_intrinsic(r_raw)
@@ -240,8 +283,7 @@ class RND(BaseIntrinsicModule, nn.Module):
             Mapping with keys ``"total"`` (scalar loss) and
             ``"intrinsic_mean"`` (mean unnormalised intrinsic).
         """
-        o = as_tensor(obs, self.device)
-        p, t = self._pred_and_targ(o)
+        p, t = self._pred_and_targ(obs)
         per = F.mse_loss(p, t, reduction="none").mean(dim=-1)  # [B]
         total = per.mean()
 
