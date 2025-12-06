@@ -82,6 +82,8 @@ def evaluate(
     frame_skip = int(env_cfg.get("frame_skip", 1))
     # For CarRacing, discrete vs Box(3,) matters — use the original training setting.
     discrete_actions = bool(env_cfg.get("discrete_actions", True))
+    # Optional CarRacing discrete action set, if present in the original config.
+    car_action_set = env_cfg.get("car_discrete_action_set", None)
     # Deterministic evaluation: disable domain randomization regardless of training value.
     domain_randomization = False
 
@@ -93,6 +95,7 @@ def evaluate(
         frame_skip=frame_skip,
         domain_randomization=domain_randomization,
         discrete_actions=discrete_actions,
+        car_action_set=car_action_set,
     )
     e = manager.make()
     obs_space, act_space = single_spaces(e)
