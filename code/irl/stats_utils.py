@@ -1,14 +1,16 @@
-from __future__ import annotations
-
 """Statistical utilities: Mann–Whitney U and simple bootstrapping.
 
 This module implements:
-- rankdata(): average ranks with tie handling (SciPy-like)
-- mannwhitney_u(): U statistic + normal-approx p-value with tie correction
-- bootstrap_ci(): generic bootstrap percentile CI helper
 
-All implementations rely only on NumPy/stdlib to avoid new dependencies.
+- ``rankdata()``: average ranks with tie handling (SciPy-like).
+- ``mannwhitney_u()``: U statistic + normal-approximation p-value with tie correction.
+- ``bootstrap_ci()``: generic bootstrap percentile confidence-interval helper.
+
+All implementations rely only on NumPy and the standard library to avoid
+extra dependencies.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from math import erfc, sqrt
@@ -26,13 +28,13 @@ def _as_1d_float(a: Iterable[float] | np.ndarray) -> np.ndarray:
 
 
 def rankdata(a: Sequence[float] | np.ndarray) -> np.ndarray:
-    """Return average ranks (1..N) for `a`, using stable sort and tie averaging."""
+    """Return average ranks (1..N) for ``a`` using stable sort and tie averaging."""
     x = _as_1d_float(a)
     n = x.size
     if n == 0:
         return np.empty((0,), dtype=np.float64)
 
-    # Stable sort so equal values keep input order before averaging
+    # Stable sort so equal values keep input order before averaging.
     order = np.argsort(x, kind="mergesort")
     xs = x[order]
 
@@ -40,7 +42,7 @@ def rankdata(a: Sequence[float] | np.ndarray) -> np.ndarray:
     i = 0
     while i < n:
         j = i + 1
-        # advance j while tied
+        # Advance j while tied.
         while j < n and xs[j] == xs[i]:
             j += 1
         if j - i > 1:
@@ -62,10 +64,10 @@ class MWUResult:
     U1: float  # U for X (sum of ranks for X minus n_x*(n_x+1)/2)
     U2: float  # U for Y (n_x*n_y - U1)
     U: float  # U used for p-value (min(U1, U2) for two-sided)
-    z: float  # Normal-approx z (with tie & continuity correction)
+    z: float  # Normal-approximation z (with tie & continuity correction)
     p_value: float  # P-value (Alt: two-sided / greater / less)
     cles: float  # Common-language effect size P(X > Y) + 0.5*P(=)
-    cliffs_delta: float  # δ = 2*cles - 1  (rank-biserial correlation)
+    cliffs_delta: float  # δ = 2*cles - 1 (rank-biserial correlation)
     mean_x: float
     mean_y: float
     median_x: float
@@ -83,17 +85,19 @@ def mannwhitney_u(
 
     Parameters
     ----------
-    x, y
+    x, y:
         Two independent samples (1-D).
-    alternative
-        "two-sided" (default), "greater" (X tends larger), or "less".
-    use_continuity
-        Apply ±0.5 continuity correction in z.
+    alternative:
+        Hypothesis form: ``"two-sided"`` (default), ``"greater"`` (X tends larger),
+        or ``"less"``.
+    use_continuity:
+        Apply ±0.5 continuity correction in the z statistic.
 
     Notes
     -----
     Variance uses the standard tie correction:
-        var(U) = n_x n_y / 12 * ( N + 1 - sum(t_i^3 - t_i) / (N (N - 1)) )
+
+        var(U) = n_x n_y / 12 * (N + 1 - sum(t_i^3 - t_i) / (N (N - 1)))
     """
     X = _as_1d_float(x)
     Y = _as_1d_float(y)
@@ -117,28 +121,28 @@ def mannwhitney_u(
 
     mean_U = n_x * n_y / 2.0
 
-    if var_U <= 0.0:  # fully tied or degenerate
+    if var_U <= 0.0:  # fully tied or otherwise degenerate
         z = 0.0
         p = 1.0
     else:
-        # Continuity correction based on the direction (for U1 w.r.t mean)
+        # Continuity correction based on the direction (for U1 w.r.t mean).
         cc = 0.0
         if use_continuity:
-            cc = 0.5 if (U_for_p > mean_U) else (-0.5)
-            # For two-sided with min(U1,U2), U_for_p ≤ mean_U; keep sign consistent
+            cc = 0.5 if (U_for_p > mean_U) else -0.5
+            # For two-sided tests using min(U1, U2), U_for_p <= mean_U so we move toward the mean.
             if alternative == "two-sided":
-                cc = +0.5  # when using min(U), add 0.5 toward the mean
+                cc = 0.5
 
         z = (U_for_p - mean_U + cc) / sqrt(var_U)
 
-        # Normal tail probabilities (no SciPy): sf(z) = 0.5 * erfc(z / sqrt(2))
+        # Normal tail probabilities (no SciPy): sf(z) = 0.5 * erfc(z / sqrt(2)).
         sf = 0.5 * erfc(z / sqrt(2.0))
         cdf = 1.0 - sf
 
         if alternative == "two-sided":
             p = erfc(abs(z) / sqrt(2.0))
         elif alternative == "greater":
-            # H1: X tends larger → large U1 → large z (since U_for_p=U1)
+            # H1: X tends larger → large U1 → large z (since U_for_p=U1).
             p = sf
         else:  # "less"
             p = cdf
@@ -174,7 +178,26 @@ def bootstrap_ci(
 ) -> Tuple[float, float, float]:
     """Percentile bootstrap CI for a scalar statistic of two samples.
 
-    Returns (stat_point_estimate, lo, hi), where (lo, hi) is a two-sided (100*ci)% interval from bootstrap percentiles.
+    Returns (point_estimate, lo, hi), where ``(lo, hi)`` is a two-sided
+    percentile interval with coverage ``ci``.
+
+    Parameters
+    ----------
+    x, y:
+        Two samples to be compared.
+    stat_fn:
+        Statistic function applied to ``(x, y)``; must return a scalar.
+    n_boot:
+        Number of bootstrap draws. If 0, only the point estimate is returned.
+    ci:
+        Two-sided confidence level.
+    rng:
+        Optional NumPy RNG to control bootstrap sampling.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        (point_estimate, lower_quantile, upper_quantile).
     """
     X = _as_1d_float(x)
     Y = _as_1d_float(y)
