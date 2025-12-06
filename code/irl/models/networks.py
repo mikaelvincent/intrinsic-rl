@@ -1,10 +1,15 @@
-"""MLP/CNN-based Policy/Value networks for PPO.
+"""MLP/CNN-based policy and value networks for PPO.
 
-Supports:
-- **Vector Box** observations: standard MLP backbone.
-- **Image Box** observations (rank >= 2): ConvEncoder backbone (NCHW/NHWC tolerant, auto 0..1 scaling).
+This module provides neural network backbones that support both vector and
+image observations:
 
-Discrete actions -> categorical logits. Continuous actions -> diagonal Gaussian with state-independent log_std.
+* Vector ``Box`` observations → MLP backbone.
+* Image ``Box`` observations (rank ≥ 2) → :class:`ConvEncoder` backbone
+  (tolerant of NCHW/NHWC layouts with automatic 0–1 scaling).
+
+Discrete action spaces use a categorical policy distribution, while
+continuous ``Box`` action spaces use a diagonal Gaussian with a
+state-independent log standard deviation.
 """
 
 from __future__ import annotations
@@ -23,6 +28,11 @@ from irl.utils.image import preprocess_image, ImagePreprocessConfig
 
 
 def _space_dims(space: gym.Space) -> int:
+    """Return the dimensionality associated with a Gymnasium space.
+
+    For ``Box`` spaces this is the size of the last dimension. For
+    ``Discrete`` spaces this is the number of actions.
+    """
     if isinstance(space, gym.spaces.Box):
         return int(space.shape[0])
     if isinstance(space, gym.spaces.Discrete):
@@ -31,11 +41,16 @@ def _space_dims(space: gym.Space) -> int:
 
 
 def _is_image_space(space: gym.Space) -> bool:
+    """Return ``True`` if a ``Box`` space is treated as image-like."""
     return isinstance(space, gym.spaces.Box) and len(space.shape) >= 2
 
 
 def _infer_in_channels(shape: tuple[int, ...]) -> int:
-    """Return likely channel count from either leading or trailing axis."""
+    """Infer likely channel count from either the leading or trailing axis.
+
+    This helper prefers shapes with channels-first (C, H, W) but will fall
+    back to channels-last (H, W, C) when necessary.
+    """
     cand = [int(shape[0]), int(shape[-1])]
     if cand[0] in (1, 3, 4):
         return cand[0]
@@ -43,13 +58,18 @@ def _infer_in_channels(shape: tuple[int, ...]) -> int:
 
 
 def _to_tensor(x: Tensor | object, device: torch.device, dtype: torch.dtype = torch.float32) -> Tensor:
+    """Convert an input to a tensor on ``device`` with the requested ``dtype``."""
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype)
     return torch.as_tensor(x, device=device, dtype=dtype)
 
 
 def _prep_vector(x: Tensor, obs_dim: int) -> Tensor:
-    """Return [N, obs_dim] for vector observations given arbitrary leading dims."""
+    """Return a ``[N, obs_dim]`` view for vector observations.
+
+    Inputs with extra leading dimensions are flattened along all but the
+    final feature dimension.
+    """
     t = x
     if t.dim() == 1:
         return t.view(1, obs_dim)
@@ -60,10 +80,12 @@ def _prep_vector(x: Tensor, obs_dim: int) -> Tensor:
 
 
 def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.device) -> Tensor:
-    """Return [N, C, H, W] float32 in [0,1] from inputs with arbitrary leading dims.
+    """Return ``[N, C, H, W]`` float32 images in ``[0, 1]`` from arbitrary layouts.
 
-    Centralized pathway that delegates scaling/layout to `utils.image.preprocess_image`.
-    Accepts HWC/CHW/NHWC/NCHW and also collapses extra leading dims (e.g., (T,B,H,W,C)).
+    This is a centralised pathway that delegates layout and dtype handling
+    to :func:`irl.utils.image.preprocess_image`. It accepts inputs in HWC,
+    CHW, NHWC, or NCHW format and collapses any extra leading dimensions,
+    for example ``(T, B, H, W, C)``.
     """
     # Convert to a tensor only to inspect rank; avoid forcing float32 here so we retain uint8 scaling semantics.
     xt = x if torch.is_tensor(x) else torch.as_tensor(x)
@@ -71,7 +93,13 @@ def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.devi
         # Collapse leading dims to [N, H, W, C] or [N, C, H, W]
         xt = xt.reshape(-1, *xt.shape[-3:])
     # Use a shared, explicit preprocessing config: keep channel count as-is (no grayscale), channels-first output.
-    cfg = ImagePreprocessConfig(grayscale=False, scale_uint8=True, normalize_mean=None, normalize_std=None, channels_first=True)
+    cfg = ImagePreprocessConfig(
+        grayscale=False,
+        scale_uint8=True,
+        normalize_mean=None,
+        normalize_std=None,
+        channels_first=True,
+    )
     out = preprocess_image(xt, cfg=cfg, device=device)  # -> NCHW float32 in [0,1]
     # Sanity: channel count must match ConvEncoder's configured in_channels to avoid silent mismatches.
     c = int(out.shape[1])
@@ -89,7 +117,22 @@ def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.devi
 class PolicyNetwork(nn.Module):
     """PPO policy with MLP (vector) or CNN (image) backbone.
 
-    Discrete → categorical logits; Box → mean + state-independent log_std.
+    Parameters
+    ----------
+    obs_space :
+        Observation space of the environment. Must be a ``Box``; spaces
+        with rank ≥ 2 are treated as image observations.
+    action_space :
+        Action space for the policy. Discrete spaces produce a
+        :class:`CategoricalDist`, while continuous ``Box`` spaces produce
+        a :class:`DiagGaussianDist`.
+    hidden_sizes :
+        Hidden-layer sizes for the MLP backbone used with vector
+        observations.
+    cnn_cfg :
+        Optional :class:`ConvEncoderConfig` used for image observations.
+        When provided, its ``in_channels`` field is overridden to match
+        the number of channels implied by ``obs_space``.
     """
 
     def __init__(
@@ -132,6 +175,21 @@ class PolicyNetwork(nn.Module):
     # ----- API -----
 
     def distribution(self, obs: Tensor | object) -> Union[CategoricalDist, DiagGaussianDist]:
+        """Return the action distribution induced by the current policy.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations. For image observations this can be in
+            HWC, NHWC, CHW, or NCHW format with optional leading time or
+            batch dimensions.
+
+        Returns
+        -------
+        CategoricalDist or DiagGaussianDist
+            A distribution object that provides ``sample()``,
+            ``log_prob()``, and ``entropy()``.
+        """
         device = self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device  # type: ignore[union-attr]
         if self.is_image:
             x = _prep_images_to_nchw(obs, expected_c=self.cnn.in_channels, device=device)  # type: ignore[attr-defined]
@@ -149,21 +207,50 @@ class PolicyNetwork(nn.Module):
             return DiagGaussianDist(mean=mu, log_std=self.log_std.expand_as(mu))  # type: ignore[attr-defined]
 
     def act(self, obs: Tensor | object) -> tuple[Tensor, Tensor]:
-        """Sample action and compute its log-prob."""
+        """Sample an action and return it together with its log-probability.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations as accepted by :meth:`distribution`.
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            A tuple ``(actions, log_probs)`` where both tensors have
+            batch dimension ``[B]`` (and additional action dimensions
+            for continuous control).
+        """
         dist = self.distribution(obs)
         a = dist.sample()
         logp = dist.log_prob(a)
         return a, logp
 
     def log_prob(self, obs: Tensor | object, actions: Tensor) -> Tensor:
+        """Return log-probabilities for ``actions`` under the current policy."""
         return self.distribution(obs).log_prob(actions)
 
     def entropy(self, obs: Tensor | object) -> Tensor:
+        """Return the per-sample entropy of the policy."""
         return self.distribution(obs).entropy()
 
 
 class ValueNetwork(nn.Module):
-    """State-value function V(s) with MLP (vector) or CNN (image) backbone."""
+    """State-value function :math:`V(s)` with MLP or CNN backbone.
+
+    Parameters
+    ----------
+    obs_space :
+        Observation space of the environment. Must be a ``Box``. Vector
+        spaces use an MLP; image-like spaces (rank ≥ 2) use a
+        :class:`ConvEncoder`.
+    hidden_sizes :
+        Hidden-layer sizes for the MLP backbone with vector observations.
+    cnn_cfg :
+        Optional :class:`ConvEncoderConfig` used for image observations.
+        When provided, its ``in_channels`` field is overridden to match
+        the number of channels implied by ``obs_space``.
+    """
 
     def __init__(
         self,
@@ -189,6 +276,18 @@ class ValueNetwork(nn.Module):
             self.net = mlp(self.obs_dim, tuple(hidden_sizes), out_dim=1)
 
     def forward(self, obs: Tensor | object) -> Tensor:
+        """Compute value estimates for a batch of observations.
+
+        Parameters
+        ----------
+        obs :
+            Batch of observations with arbitrary leading dimensions.
+
+        Returns
+        -------
+        torch.Tensor
+            Tensor of shape ``[B]`` containing scalar values.
+        """
         device = next(self.parameters()).device
         if self.is_image:
             x = _prep_images_to_nchw(obs, expected_c=self.cnn.in_channels, device=device)  # type: ignore[attr-defined]
