@@ -1,7 +1,17 @@
-"""Proposed intrinsic module (refactor of monolith).
+"""Proposed intrinsic module combining impact and learning progress.
 
-Files: core (Proposed), gating (_RegionStats/gate update), normalize (RMS helpers).
-Public API: `from irl.intrinsic.proposed import Proposed, _RegionStats`.
+Files
+-----
+* ``core``:
+    Main :class:`Proposed` implementation.
+* ``gating``:
+    :class:`_RegionStats` container and region-gating update helpers.
+* ``normalize``:
+    Per-component RMS helpers for impact and learning-progress signals.
+
+Public API
+----------
+``from irl.intrinsic.proposed import Proposed, _RegionStats``.
 """
 
 from __future__ import annotations
