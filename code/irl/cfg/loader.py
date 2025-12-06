@@ -127,7 +127,18 @@ def _nearest_divisor_suggestions(
 
 
 def validate_config(cfg: Config) -> None:
-    """Check common PPO/env invariants (ranges, divisibility, gentle hints)."""
+    """Check common PPO/env invariants (ranges, divisibility, gentle hints).
+
+    Notes
+    -----
+    The minibatch divisibility checks below are applied to the *nominal*
+    rollout size implied by ``ppo.steps_per_update`` (and its product with
+    ``env.vec_envs``). The trainer may still use a smaller batch on the
+    very last PPO update of a run when the remaining ``total_steps`` is
+    not an exact multiple of the nominal rollout size; the
+    :func:`irl.algo.ppo.ppo_update` implementation is written to handle
+    such partial batches safely.
+    """
     # Basic ranges
     if cfg.env.vec_envs < 1:
         raise ConfigError("env.vec_envs must be >= 1")
@@ -241,7 +252,10 @@ def validate_config(cfg: Config) -> None:
                 UserWarning,
             )
 
-    # Minibatch divisibility: accept either interpretation of steps_per_update
+    # Minibatch divisibility: accept either interpretation of steps_per_update.
+    # This check is relative to the nominal rollout size only; the trainer may
+    # still generate a shorter final batch when it approaches the requested
+    # total_steps, and PPO handles that partial batch without special casing.
     total_a = cfg.ppo.steps_per_update
     total_b = cfg.ppo.steps_per_update * cfg.env.vec_envs
     if (total_a % cfg.ppo.minibatches != 0) and (total_b % cfg.ppo.minibatches != 0):
