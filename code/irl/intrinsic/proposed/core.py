@@ -1,14 +1,10 @@
-from __future__ import annotations
+"""Proposed unified intrinsic combining impact and learning progress.
 
-"""Proposed unified intrinsic: α_impact·impact + α_LP·LP with region gating.
+This module defines the Proposed intrinsic reward:
+    r = α_impact · impact + α_LP · LP
 
-- Impact: ||φ(s') − φ(s)||₂ (RIDE-like)
-- LP: region-wise learning progress from long/short EMAs (R-IAC-like)
-- Gating: suppress regions with low LP and high stochasticity (hysteresis)
-- Per-component RMS normalization; outputs flagged as normalized.
-
-Supports both vector and **image** observations by delegating φ(s) to ICM,
-which routes vectors through an MLP and images through a ConvEncoder.
+where impact is a RIDE-style embedding change, LP is a region-wise learning
+progress signal, and an optional gating mechanism can suppress noisy regions.
 
 Image dtype contract
 --------------------
@@ -19,6 +15,8 @@ accidentally bypassing scaling, do **not** pre-cast images to float32 unless you
 scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
 layout and normalization.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Tuple, Union, List
@@ -38,27 +36,29 @@ from .normalize import ComponentRMS
 
 
 class Proposed(nn.Module):
-    """Unified intrinsic with gating; outputs can be normalized internally or left raw.
+    """Unified intrinsic with gating; outputs can be normalized or left raw.
 
     Parameters
     ----------
     obs_space, act_space, device, icm, icm_cfg
         Standard constructor arguments mirroring ICM-backed modules.
     alpha_impact, alpha_lp
-        Coefficients for combining components.
+        Coefficients for combining impact and learning-progress components.
     region_capacity, depth_max, ema_beta_long, ema_beta_short
         Region partitioning and EMA settings.
     gate_tau_lp_mult, gate_tau_s, gate_hysteresis_up_mult, gate_min_consec_to_gate
-        Gating thresholds/behavior.
+        Gating thresholds and hysteresis behaviour.
     gate_min_regions_for_gating
-        Minimum populated regions before global medians are trusted.
+        Minimum number of populated regions before global medians are trusted.
     normalize_inside
-        When True (default), impact and LP are normalized internally via per-component
-        RunningRMS and `outputs_normalized=True` is set so the trainer skips its global RMS.
-        When False, the module emits raw combined signals (still gated) and sets
-        `outputs_normalized=False` so the trainer applies its global normalization.
+        When ``True`` (default), impact and LP are normalized internally via
+        per-component ``RunningRMS`` and ``outputs_normalized=True`` is set so
+        the trainer skips its global intrinsic normalization. When ``False``,
+        the module emits raw combined signals (still gated) and sets
+        ``outputs_normalized=False`` so the trainer applies its own global
+        normalization.
     gating_enabled
-        Master on/off for region gating (True by default).
+        Master on/off switch for region gating (``True`` by default).
     """
 
     def __init__(
@@ -81,7 +81,7 @@ class Proposed(nn.Module):
         gate_hysteresis_up_mult: float = 2.0,
         gate_min_consec_to_gate: int = 5,
         gate_min_regions_for_gating: int = 3,  # regions required before medians/gating engage
-        # NEW toggles
+        # Normalization and gating toggles
         normalize_inside: bool = True,
         gating_enabled: bool = True,
     ) -> None:
@@ -118,7 +118,7 @@ class Proposed(nn.Module):
         self.min_regions_for_gating = int(gate_min_regions_for_gating)
         self._eps = 1e-8
 
-        # NEW: master toggles
+        # Master toggles for gating and normalization behaviour.
         self.gating_enabled: bool = bool(gating_enabled)
         self._normalize_inside: bool = bool(normalize_inside)
 
@@ -135,6 +135,7 @@ class Proposed(nn.Module):
 
     @torch.no_grad()
     def _impact_per_sample(self, obs: Any, next_obs: Any) -> Tensor:
+        """Return per-sample impact ``||φ(s') − φ(s)||₂``."""
         phi_t = self.icm._phi(obs)
         phi_tp1 = self.icm._phi(next_obs)
         return torch.norm(phi_tp1 - phi_t, p=2, dim=-1)
@@ -143,6 +144,7 @@ class Proposed(nn.Module):
     def _forward_error_and_phi(
         self, obs: Any, next_obs: Any, actions: Any
     ) -> Tuple[Tensor, Tensor]:
+        """Return mean forward error per sample and φ(s_t)."""
         o = obs
         op = next_obs
         a = as_tensor(actions, self.device)
@@ -177,11 +179,11 @@ class Proposed(nn.Module):
     # ----------------------------- gating -----------------------------
 
     def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
-        """Update region gate based on LP/stochasticity; return 0/1.
+        """Update region gate based on LP and stochasticity; return ``0`` or ``1``.
 
         Medians used by the gating rule only engage once at least
-        `self.min_regions_for_gating` regions have observed samples. Until
-        then, gating remains permissive (all regions 'on').
+        ``self.min_regions_for_gating`` regions have observed samples. Until
+        then, gating remains permissive (all regions on).
         """
         st = self._stats.get(rid)
         if st is None:
@@ -257,9 +259,8 @@ class Proposed(nn.Module):
     ) -> Tensor:
         """Vectorized intrinsic with gating and optional internal normalization.
 
-        Optimization: group samples by region id and update region EMAs once per
-        region using that region's mean error. Gates are then refreshed per region.
-        Per-sample LP/gate inherit their region's post-update values.
+        Samples are grouped by region id, region EMAs are updated once per
+        region, and per-sample LP/gates inherit the region-wise values.
         """
         o = obs
         op = next_obs
@@ -341,14 +342,14 @@ class Proposed(nn.Module):
         return vals
 
     def _current_gate_for_rids(self, rids: Iterable[int]) -> list[int]:
-        g: list[int] = []
+        gates: list[int] = []
         for rid in rids:
             st = self._stats.get(int(rid))
-            g.append(1 if (st is None) else int(st.gate))
-        return g
+            gates.append(1 if (st is None) else int(st.gate))
+        return gates
 
     def loss(self, obs: Any, next_obs: Any, actions: Any) -> dict[str, Tensor]:
-        """ICM training loss + diagnostic r_int mean (non-mutating)."""
+        """ICM training loss plus a diagnostic intrinsic mean (non-mutating)."""
         icm_losses = self.icm.loss(obs, next_obs, actions)
 
         with torch.no_grad():
@@ -385,7 +386,7 @@ class Proposed(nn.Module):
         }
 
     def update(self, obs: Any, next_obs: Any, actions: Any, steps: int = 1) -> dict[str, float]:
-        """Train ICM and report losses + current intrinsic mean (raw or normalized)."""
+        """Train ICM and report losses plus the current intrinsic mean."""
         with torch.no_grad():
             o = obs
             op = next_obs
@@ -425,7 +426,7 @@ class Proposed(nn.Module):
 
     @property
     def gate_rate(self) -> float:
-        """Fraction of regions currently gated-off."""
+        """Fraction of regions currently gated off."""
         n = sum(1 for s in self._stats.values() if s.count > 0)
         if n == 0:
             return 0.0
@@ -434,10 +435,10 @@ class Proposed(nn.Module):
 
     @property
     def impact_rms(self) -> float:
-        """Current RMS for impact component normalization."""
+        """Current RMS for the impact component."""
         return float(self._rms.impact.rms)
 
     @property
     def lp_rms(self) -> float:
-        """Current RMS for LP component normalization."""
+        """Current RMS for the learning-progress component."""
         return float(self._rms.lp.rms)
