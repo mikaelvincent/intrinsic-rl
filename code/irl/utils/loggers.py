@@ -272,19 +272,37 @@ class MetricLogger:
     def log(self, step: int, **metrics: float) -> None:
         """Log floats by step.
 
-        TB every call; CSV when cadence matches.
+        TensorBoard receives every call. CSV rows are written when the
+        configured ``csv_interval`` in steps has been *crossed* since the
+        last CSV write, rather than only when ``step % csv_interval == 0``.
+
+        This threshold-based rule is robust when ``step`` advances in large
+        chunks (for example, once per PPO update).
         """
         if self.tb is not None:
             self.tb.log_scalars(metrics, step)
 
+        interval = int(max(1, self.cfg.csv_interval))
+        s = int(step)
+        last = self._last_csv_write_step
+
         should_write_csv = False
-        if self._last_csv_write_step is None or step != self._last_csv_write_step:
-            if int(step) % int(self.cfg.csv_interval) == 0:
+
+        if last is None:
+            # First CSV row: always allow an initial write at step 0, and
+            # otherwise write as soon as we have crossed the first interval
+            # boundary.
+            if s == 0 or s >= interval:
+                should_write_csv = True
+        else:
+            # Subsequent rows: write once we have advanced by at least one
+            # full interval since the last CSV write.
+            if s >= last + interval:
                 should_write_csv = True
 
         if should_write_csv:
-            self.csv.log_row(step, metrics)
-            self._last_csv_write_step = int(step)
+            self.csv.log_row(s, metrics)
+            self._last_csv_write_step = s
 
     def log_hparams(self, params: Mapping[str, object]) -> None:
         """Optional: snapshot hparams as text (TB only)."""
