@@ -9,7 +9,7 @@ from typing import Optional
 import typer
 
 from irl.evaluator import evaluate as run_evaluate
-from irl.utils.checkpoint import atomic_write_text  # <-- atomic helper
+from irl.utils.checkpoint import atomic_write_text  # Atomic text write helper.
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -53,6 +53,7 @@ def cli_eval(
 
 
 def main() -> None:
+    """Entry point for the ``irl-eval`` console script."""
     app()
 
 
