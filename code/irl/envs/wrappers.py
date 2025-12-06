@@ -21,6 +21,12 @@ class FrameSkip(gym.Wrapper):
         self.skip = int(skip)
 
     def step(self, action):
+        """Step the environment, repeating the same action for ``skip`` frames.
+
+        The wrapper accumulates rewards across the repeated inner steps and
+        stops early if a termination or truncation signal is observed. The
+        observation and info dict from the last inner step are returned.
+        """
         total_reward = 0.0
         terminated = False
         truncated = False
@@ -260,6 +266,14 @@ class DomainRandomizationWrapper(gym.Wrapper):
     # ------------------ gym API ------------------
 
     def reset(self, **kwargs):
+        """Reset the environment after applying domain randomization.
+
+        Randomization is applied before delegating to the wrapped
+        ``reset`` method. The returned info dict is copied (to avoid
+        mutating upstream containers) and always contains a
+        ``"dr_applied"`` entry with per-backend diagnostics for
+        MuJoCo and Box2D, even when no perturbations were applied.
+        """
         self._apply_randomization()
         obs, info = self.env.reset(**kwargs)
         # Ensure info is a dict we can enrich with diagnostics
