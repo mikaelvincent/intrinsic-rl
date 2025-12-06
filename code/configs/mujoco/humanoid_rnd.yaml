@@ -1,14 +1,15 @@
 seed: 1
-device: "cuda:0"
+device: "cpu"
 method: "rnd"
 
 env:
   id: "Humanoid-v5"
-  vec_envs: 16
+  vec_envs: 32
   frame_skip: 1
   domain_randomization: true
   discrete_actions: false
   car_discrete_action_set: null
+  async_vector: true
 
 ppo:
   steps_per_update: 2048
