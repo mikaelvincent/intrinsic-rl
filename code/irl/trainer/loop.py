@@ -172,6 +172,7 @@ def train(
         frame_skip=cfg.env.frame_skip,
         domain_randomization=cfg.env.domain_randomization,
         discrete_actions=cfg.env.discrete_actions,
+        car_action_set=cfg.env.car_discrete_action_set,
         render_mode=None,
         async_vector=False,
         make_kwargs=None,
