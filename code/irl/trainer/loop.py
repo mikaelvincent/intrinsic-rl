@@ -182,10 +182,18 @@ def train(
         discrete_actions=cfg.env.discrete_actions,
         car_action_set=cfg.env.car_discrete_action_set,
         render_mode=None,
-        async_vector=False,
+        async_vector=bool(getattr(cfg.env, "async_vector", False)),
         make_kwargs=None,
     )
     env = manager.make()
+    if int(cfg.env.vec_envs) > 1:
+        _LOG.info(
+            "Vector env mode: %s (num_envs=%d) for env_id=%s",
+            "Async" if bool(getattr(cfg.env, "async_vector", False)) else "Sync",
+            int(cfg.env.vec_envs),
+            cfg.env.id,
+        )
+
     obs_space, act_space = single_spaces(env)
 
     is_image = _is_image_space(obs_space)
