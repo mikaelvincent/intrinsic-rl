@@ -185,6 +185,10 @@ class CheckpointManager:
         self.run_dir = Path(self.run_dir)
         self.ckpt_dir = self.run_dir / self.subdir
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+        # Track the most recent checkpoint step so cadence logic can detect
+        # when an interval boundary has been crossed between calls to
+        # ``should_save``. This is initialised from disk when possible.
+        self._last_saved_step: Optional[int] = self._discover_last_saved_step()
 
     # ------------- Paths -------------
 
@@ -215,23 +219,51 @@ class CheckpointManager:
         pathlib.Path
             The path of the step-numbered checkpoint.
         """
+        step_int = int(step)
         if "step" not in payload:
             payload = dict(payload)
-            payload["step"] = int(step)
+            payload["step"] = step_int
 
-        path = self.path_for_step(step)
+        path = self.path_for_step(step_int)
         _safe_torch_save(payload, path)
 
-        # Update latest
+        # Update latest alias.
         _safe_torch_save(payload, self.latest_path)
+
+        # Update in-memory cadence tracker so subsequent calls to
+        # ``should_save`` use this step as the last checkpoint boundary.
+        self._last_saved_step = step_int
 
         # Prune old checkpoints (except 'latest')
         self._prune_old()
         return path
 
     def should_save(self, step: int) -> bool:
-        """Return ``True`` if a checkpoint should be saved at ``step``."""
-        return int(step) % int(self.interval_steps) == 0
+        """Return ``True`` when a new checkpoint should be written.
+
+        The manager requests a checkpoint whenever:
+
+        * the configured interval is positive,
+        * the current step is strictly greater than the last checkpoint
+          step, and
+        * the difference ``step - last_saved_step`` is at least
+          ``interval_steps``.
+
+        This threshold-based rule ensures that interval boundaries crossed
+        inside long rollouts are honoured at the next call site instead of
+        relying on ``step % interval == 0``.
+        """
+        if self.interval_steps <= 0:
+            return False
+
+        s = int(step)
+        last = self._last_saved_step if self._last_saved_step is not None else 0
+
+        # Never request a save twice for the same (or a smaller) step.
+        if s <= last:
+            return False
+
+        return (s - last) >= int(self.interval_steps)
 
     def load_latest(self, map_location: str | torch.device = "cpu") -> Tuple[Dict[str, Any], int]:
         """Load the latest checkpoint payload and its associated step.
@@ -291,6 +323,37 @@ class CheckpointManager:
             return int(m.group(1))
         except Exception:
             return None
+
+    def _discover_last_saved_step(self) -> Optional[int]:
+        """Best-effort detection of the last checkpoint step on disk.
+
+        Preference is given to ``ckpt_latest.pt`` when present; if it
+        cannot be loaded, the method falls back to scanning step-numbered
+        checkpoint filenames. Returns ``None`` when no checkpoints are
+        found.
+        """
+        # Prefer the latest alias: it should contain a 'step' entry.
+        if self.latest_path.exists():
+            try:
+                payload = _torch_load_compat(self.latest_path, map_location="cpu")
+                step = payload.get("step")
+                if isinstance(step, (int, float)):
+                    return int(step)
+            except Exception:
+                # Ignore and fall back to filename-based discovery.
+                pass
+
+        max_step: Optional[int] = None
+        if self.ckpt_dir.exists():
+            for p in self.ckpt_dir.iterdir():
+                if not p.is_file():
+                    continue
+                s = self._infer_step_from_name(p.name)
+                if s is None:
+                    continue
+                if max_step is None or s > max_step:
+                    max_step = s
+        return max_step
 
 
 def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
