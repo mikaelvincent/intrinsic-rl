@@ -1,6 +1,6 @@
-"""ICM subpackage (refactor).
+"""ICM intrinsic module subpackage.
 
-Public API: ICM, ICMConfig.
+Public API: :class:`ICM` and :class:`ICMConfig`.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ __all__ = ["ICM", "ICMConfig"]
 
 
 def __getattr__(name: str):
-    """Legacy shims for deep/old imports with deprecation notice.
+    """Deprecated aliases for older deep imports.
 
-    - `irl.intrinsic.icm.mlp` → `irl.intrinsic.icm.encoder.mlp`
+    - ``irl.intrinsic.icm.mlp`` → ``irl.intrinsic.icm.encoder.mlp``
     """
     if name == "mlp":
         warnings.warn(
