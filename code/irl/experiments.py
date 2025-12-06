@@ -108,6 +108,7 @@ def _run_dir_for(cfg: Config, cfg_path: Path, seed: int, runs_root: Path) -> Pat
 
 
 def _format_steps(step: int) -> str:
+    """Human-friendly representation of a step count."""
     if step >= 1_000_000:
         return f"{step / 1_000_000:.1f}M"
     if step >= 1_000:
@@ -125,7 +126,40 @@ def run_training_suite(
     device: Optional[str],
     resume: bool,
 ) -> None:
-    """Train all (config, seed) combinations into runs_root."""
+    """Train all (config, seed) combinations into a suite of runs.
+
+    Parameters
+    ----------
+    configs_dir : Path
+        Root directory containing YAML configuration files.
+    include : Sequence[str]
+        Glob patterns (relative to ``configs_dir``) selecting which configs
+        to run. When empty, all ``*.yaml``/``*.yml`` files are considered.
+    exclude : Sequence[str]
+        Glob patterns (relative to ``configs_dir``) that are excluded from
+        the included set.
+    total_steps : int
+        Target number of environment steps per run. The trainer resumes
+        until this global step is reached.
+    runs_root : Path
+        Root directory into which per-run subdirectories are created.
+    seeds : Sequence[int]
+        Optional list of seeds to use for each config. When empty, the
+        seed stored in the configuration is used instead.
+    device : str or None
+        Optional device override for training (for example ``"cpu"`` or
+        ``"cuda:0"``). When ``None``, each config's ``device`` field is
+        respected.
+    resume : bool
+        When ``True``, resume from existing checkpoints (if present) and
+        skip runs that already reached ``total_steps``.
+
+    Returns
+    -------
+    None
+        The function is called for its side effects: training runs are
+        executed and checkpoints/logs are written under ``runs_root``.
+    """
     cfg_paths = _discover_configs(configs_dir, include=include, exclude=exclude)
     if not cfg_paths:
         typer.echo(f"[suite] No configuration files found under {configs_dir}")
@@ -188,7 +222,26 @@ def run_eval_suite(
     episodes: int,
     device: str,
 ) -> None:
-    """Evaluate latest checkpoints for all run dirs under runs_root."""
+    """Evaluate latest checkpoints for all run directories.
+
+    Parameters
+    ----------
+    runs_root : Path
+        Root directory that holds individual run subdirectories.
+    results_dir : Path
+        Directory where evaluation CSV files will be written.
+    episodes : int
+        Number of evaluation episodes to run per checkpoint.
+    device : str
+        Device string to use for evaluation (for example ``"cpu"`` or
+        ``"cuda:0"``).
+
+    Returns
+    -------
+    None
+        Evaluation summaries are written to ``results_dir`` as
+        ``summary_raw.csv`` and ``summary.csv``.
+    """
     root = runs_root.resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
@@ -238,7 +291,29 @@ def run_plots_suite(
     smooth: int,
     shade: bool,
 ) -> None:
-    """Generate per-environment overlay plots from suite runs."""
+    """Generate per-environment overlay plots from suite runs.
+
+    Parameters
+    ----------
+    runs_root : Path
+        Root directory that holds individual run subdirectories.
+    results_dir : Path
+        Directory where the ``plots/`` subdirectory is created.
+    metric : str
+        Scalar metric name from ``scalars.csv`` to plot (for example
+        ``"reward_total_mean"``).
+    smooth : int
+        Moving-average window (in logged points) applied to each run
+        before aggregation. A value of ``1`` disables smoothing.
+    shade : bool
+        If ``True``, shade a ±1 standard deviation band around each
+        mean curve when at least two runs are available for a method.
+
+    Returns
+    -------
+    None
+        Plot images are written under ``results_dir / "plots"``.
+    """
     root = runs_root.resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
