@@ -106,10 +106,18 @@ def train(
         step=S, training continues until step reaches `total_steps` (no extra offset).
     run_dir:
         Directory for logs/checkpoints. If omitted, a fresh timestamped directory is created.
-        When provided with `resume=True`, the latest checkpoint in this directory is loaded.
     resume:
         If True and a latest checkpoint exists in `run_dir`, restore state and continue.
         A config-hash mismatch aborts with a clear error to avoid accidental cross-run resumes.
+
+    Notes
+    -----
+    The trainer collects nominal rollouts of length ``T = cfg.ppo.steps_per_update``
+    per environment, but the final PPO update in a run may use a shorter rollout
+    if fewer than ``T * cfg.env.vec_envs`` steps remain before reaching
+    ``total_steps``. That partial batch is still split into minibatches and
+    passed to :func:`irl.algo.ppo.ppo_update`, which is designed to handle
+    non-divisible batch sizes robustly.
     """
     validate_config(cfg)
     device = ensure_device(cfg.device)
