@@ -151,6 +151,22 @@ class RND(BaseIntrinsicModule, nn.Module):
         p, t = self._pred_and_targ(x)
         return F.mse_loss(p, t, reduction="none").mean(dim=-1)
 
+    def _update_rms_from_raw(self, per: Tensor) -> None:
+        """Update the internal RMS EMA from a batch of unnormalised values.
+
+        This helper centralises RMS updates so that both training
+        (``loss``/``update``) and intrinsic computation paths can opt in
+        without duplicating the EMA logic.
+        """
+        if per.numel() == 0:
+            return
+        with torch.no_grad():
+            vals = per.to(device=self._r2_ema.device, dtype=torch.float32)
+            r2_batch_mean = (vals**2).mean()
+            self._r2_ema.mul_(self.cfg.rms_beta).add_(
+                (1.0 - self.cfg.rms_beta) * r2_batch_mean
+            )
+
     def _normalize_intrinsic(self, r: Tensor) -> Tensor:
         """Optionally normalise intrinsic values with the module's RMS.
 
@@ -172,8 +188,10 @@ class RND(BaseIntrinsicModule, nn.Module):
         with torch.no_grad():
             x = tr.s_next if hasattr(tr, "s_next") and tr.s_next is not None else tr.s
             xt = as_tensor(x, self.device)
-            r = self._intrinsic_raw_per_sample(xt)
-            r = self._normalize_intrinsic(r)
+            r_raw = self._intrinsic_raw_per_sample(xt)
+            if self.cfg.normalize_intrinsic:
+                self._update_rms_from_raw(r_raw)
+            r = self._normalize_intrinsic(r_raw)
             return IntrinsicOutput(r_int=float(r.view(-1)[0].item()))
 
     def compute_batch(
@@ -200,8 +218,10 @@ class RND(BaseIntrinsicModule, nn.Module):
         with torch.no_grad():
             x_src = next_obs if next_obs is not None else obs
             x = as_tensor(x_src, self.device)
-            r = self._intrinsic_raw_per_sample(x)
-            r = self._normalize_intrinsic(r)
+            r_raw = self._intrinsic_raw_per_sample(x)
+            if self.cfg.normalize_intrinsic:
+                self._update_rms_from_raw(r_raw)
+            r = self._normalize_intrinsic(r_raw)
             return r.mean() if reduction == "mean" else r
 
     # ----------------------------- Training ----------------------------
@@ -225,9 +245,13 @@ class RND(BaseIntrinsicModule, nn.Module):
         per = F.mse_loss(p, t, reduction="none").mean(dim=-1)  # [B]
         total = per.mean()
 
-        with torch.no_grad():
-            r2_batch_mean = (per**2).mean()
-            self._r2_ema.mul_(self.cfg.rms_beta).add_((1.0 - self.cfg.rms_beta) * r2_batch_mean)
+        # For the default (normalize_intrinsic=False) path, keep updating the
+        # internal RMS here so `rms` remains a useful diagnostic while the
+        # trainer applies its own global normaliser. When intrinsic
+        # normalisation is enabled, RMS is maintained in compute/compute_batch
+        # to avoid double-updating on the same batch.
+        if not self.cfg.normalize_intrinsic:
+            self._update_rms_from_raw(per)
 
         return {"total": total, "intrinsic_mean": per.mean()}
 
