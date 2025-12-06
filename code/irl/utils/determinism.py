@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 """Determinism helpers.
 
-Provide a single place to seed Python's `random`, NumPy, and PyTorch, with an
+Provides a single place to seed Python's ``random``, NumPy, and PyTorch, with an
 optional switch for stricter deterministic behavior in PyTorch.
 
 Usage
@@ -10,6 +8,8 @@ Usage
 >>> from irl.utils.determinism import seed_everything
 >>> seed_everything(123, deterministic=True)
 """
+
+from __future__ import annotations
 
 import os
 import random
@@ -23,7 +23,9 @@ __all__ = ["seed_everything"]
 
 
 def seed_everything(seed: int, deterministic: bool = False) -> None:
-    """Seed Python, NumPy, and PyTorch RNGs. Optionally enable deterministic ops.
+    """Seed Python, NumPy, and PyTorch RNGs.
+
+    Optionally requests deterministic behaviour from PyTorch where supported.
 
     Parameters
     ----------
@@ -31,8 +33,8 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
         Seed value applied across libraries.
     deterministic:
         If True, request deterministic PyTorch behavior where supported.
-        (This may disable some fast kernels or raise if a non-deterministic
-        op is used.)
+        This may disable some fast kernels or raise if a non-deterministic
+        op is used.
     """
     s = int(seed)
 
@@ -46,15 +48,15 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
         try:
             torch.cuda.manual_seed_all(s)
         except Exception:
-            # Be robust on CPU-only builds or unusual runtimes
+            # Be robust on CPU-only builds or unusual runtimes.
             pass
 
     if deterministic:
-        # Best-effort deterministic settings for PyTorch
+        # Best-effort deterministic settings for PyTorch.
         try:
             torch.use_deterministic_algorithms(True)
         except Exception:
-            # Older versions may not support this API; ignore
+            # Older versions may not support this API; ignore.
             pass
         try:
             import torch.backends.cudnn as cudnn  # noqa: WPS433 (runtime import OK)
@@ -64,5 +66,5 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
         except Exception:
             pass
 
-        # CUDA matmul determinism (must be set before first CUDA context usage)
+        # CUDA matmul determinism (must be set before first CUDA context usage).
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
