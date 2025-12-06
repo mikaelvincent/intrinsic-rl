@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Experiment suite runner for intrinsic-rl.
 
 This module provides a small Typer-based CLI that can:
@@ -20,13 +18,19 @@ Or individual stages:
     python -m irl.experiments plots
 """
 
+from __future__ import annotations
+
 import glob
 from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-import matplotlib.pyplot as plt  # backend is configured in irl.plot
-import typer
+# Ensure a non-interactive backend for headless environments before importing pyplot
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import typer  # noqa: E402
 
 from irl.cfg import load_config
 from irl.cfg.schema import Config
