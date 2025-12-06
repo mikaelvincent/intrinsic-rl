@@ -139,8 +139,9 @@ def run_training_suite(
         Glob patterns (relative to ``configs_dir``) that are excluded from
         the included set.
     total_steps : int
-        Target number of environment steps per run. The trainer resumes
-        until this global step is reached.
+        Default target environment steps per run. If a configuration
+        provides ``exp.total_steps``, that value takes precedence for
+        that particular run.
     runs_root : Path
         Root directory into which per-run subdirectories are created.
     seeds : Sequence[int]
@@ -152,7 +153,7 @@ def run_training_suite(
         respected.
     resume : bool
         When ``True``, resume from existing checkpoints (if present) and
-        skip runs that already reached ``total_steps``.
+        skip runs that already reached their target step budget.
 
     Returns
     -------
@@ -181,6 +182,10 @@ def run_training_suite(
             if device is not None:
                 cfg_seeded = replace(cfg_seeded, device=str(device))
 
+            # Prefer per-config exp.total_steps when provided; otherwise, use CLI/default.
+            steps_from_cfg = getattr(getattr(cfg_seeded, "exp", object()), "total_steps", None)
+            target_steps = int(steps_from_cfg) if steps_from_cfg is not None else int(total_steps)
+
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
 
             latest_ckpt = run_dir / "checkpoints" / "ckpt_latest.pt"
@@ -192,11 +197,11 @@ def run_training_suite(
                 except Exception:
                     existing_step = 0
 
-            if resume and existing_step >= int(total_steps):
+            if resume and existing_step >= target_steps:
                 typer.echo(
                     f"[suite] SKIP  {cfg_path.name} "
                     f"(method={cfg_seeded.method}, env={cfg_seeded.env.id}, seed={seed_val}) "
-                    f"— already at step {existing_step} ≥ {total_steps}"
+                    f"— already at step {existing_step} ≥ {target_steps}"
                 )
                 continue
 
@@ -205,12 +210,12 @@ def run_training_suite(
             typer.echo(
                 f"[suite] TRAIN {cfg_path.name} "
                 f"(method={cfg_seeded.method}, env={cfg_seeded.env.id}, seed={seed_val}) "
-                f"[{mode}, from step {_format_steps(existing_step)} → {_format_steps(total_steps)}, "
+                f"[{mode}, from step {_format_steps(existing_step)} → {_format_steps(target_steps)}, "
                 f"device={cfg_seeded.device}]"
             )
             run_train(
                 cfg_seeded,
-                total_steps=int(total_steps),
+                total_steps=int(target_steps),
                 run_dir=run_dir,
                 resume=resume_flag,
             )
@@ -415,7 +420,7 @@ def cli_train(
         150_000,
         "--total-steps",
         "-n",
-        help="Target environment steps per run (trainer will resume until this step).",
+        help="Default target environment steps per run (overridden by exp.total_steps in config if present).",
     ),
     runs_root: Path = typer.Option(
         Path("runs_suite"),
@@ -568,7 +573,7 @@ def cli_full(
         150_000,
         "--total-steps",
         "-n",
-        help="Target environment steps per run.",
+        help="Default step budget per run (overridden by exp.total_steps in config if present).",
     ),
     runs_root: Path = typer.Option(
         Path("runs_suite"),
@@ -611,7 +616,7 @@ def cli_full(
         5,
         "--smooth",
         "-s",
-        help="Moving-average window (in logged points) for smoothing.",
+        help="Moving-average window (in logged points).",
     ),
     shade: bool = typer.Option(
         True,
