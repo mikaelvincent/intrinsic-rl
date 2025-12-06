@@ -11,7 +11,25 @@ from irl.intrinsic.regions import KDTreeRegionStore
 
 
 def _region_records(store: KDTreeRegionStore, stats: Dict[int, Any], step: int) -> List[dict]:
-    """Build a list of JSON-serializable records for current regions."""
+    """Build a list of JSON-serializable records for current regions.
+
+    Parameters
+    ----------
+    store : KDTreeRegionStore
+        Region store used by the RIAC module.
+    stats : dict[int, Any]
+        Mapping from region id to per-region statistics objects. The
+        objects are expected to expose ``ema_long`` and ``ema_short``
+        attributes and a ``count`` field.
+    step : int
+        Training step associated with this snapshot.
+
+    Returns
+    -------
+    list[dict]
+        One record per leaf region describing counts, EMAs, learning
+        progress, gate state, and bounding boxes.
+    """
     recs: List[dict] = []
     for leaf in store.iter_leaves():
         rid = int(leaf.region_id) if leaf.region_id is not None else -1
@@ -45,7 +63,29 @@ def _region_records(store: KDTreeRegionStore, stats: Dict[int, Any], step: int) 
 def export_diagnostics(
     store: KDTreeRegionStore, stats: Dict[int, Any], out_dir: Path, step: int
 ) -> None:
-    """Append region stats to `regions.jsonl` and gates to `gates.csv`."""
+    """Append region statistics to ``regions.jsonl`` and ``gates.csv``.
+
+    Parameters
+    ----------
+    store : KDTreeRegionStore
+        Region store that defines the current set of leaf regions.
+    stats : dict[int, Any]
+        Mapping from region id to statistics objects used to compute
+        learning progress.
+    out_dir : pathlib.Path
+        Directory where diagnostic files will be created if necessary
+        and subsequently appended to.
+    step : int
+        Global training step to record alongside each diagnostic row.
+
+    Notes
+    -----
+    The function appends one JSON record per region to
+    ``regions.jsonl`` and a corresponding row to ``gates.csv`` with
+    columns ``step``, ``region_id``, and ``gate``. For RIAC, the gate
+    value is always ``1`` to remain compatible with the Proposed
+    intrinsic diagnostics.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     regions_path = out_dir / "regions.jsonl"
