@@ -1,22 +1,27 @@
-"""Sweep / multi-seed evaluation, aggregation, and statistics.
+"""Sweep and multi-seed evaluation, aggregation, and statistics.
 
-This CLI discovers checkpoints and evaluates them deterministically (eval-many),
-writes aggregated CSVs, and (new) provides non-parametric statistical tests
-between methods using the per-seed raw summary (Mann–Whitney U + bootstrap CIs).
+This CLI discovers checkpoints and evaluates them deterministically
+(:code:`eval-many`), writes aggregated CSVs, and provides non-parametric
+statistical tests between methods using the per-seed raw summary
+(Mann–Whitney U plus bootstrap confidence intervals).
 
 Usage examples
 --------------
-# Evaluate latest checkpoints and write summary CSVs
-python -m irl.sweep eval-many --runs "runs/proposed__BipedalWalker*" --out results/summary.csv
+Evaluate latest checkpoints and write summary CSVs::
 
-# Compare two methods on a given env using the raw results
-python -m irl.sweep stats \
-  --summary-raw results/summary_raw.csv \
-  --env BipedalWalker-v3 \
-  --method-a proposed \
-  --method-b ride \
-  --metric mean_return \
-  --boot 5000
+    python -m irl.sweep eval-many \
+        --runs "runs/proposed__BipedalWalker*" \
+        --out results/summary.csv
+
+Compare two methods on a given env using the raw results::
+
+    python -m irl.sweep stats \
+        --summary-raw results/summary_raw.csv \
+        --env BipedalWalker-v3 \
+        --method-a proposed \
+        --method-b ride \
+        --metric mean_return \
+        --boot 5000
 """
 
 from __future__ import annotations
@@ -32,8 +37,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import typer
 
 from irl.evaluator import evaluate
-from irl.utils.checkpoint import load_checkpoint, atomic_replace  # <-- added atomic_replace
-from irl.stats_utils import bootstrap_ci, mannwhitney_u  # NEW: stats helpers
+from irl.utils.checkpoint import load_checkpoint, atomic_replace  # checkpoint I/O helpers
+from irl.stats_utils import bootstrap_ci, mannwhitney_u  # statistical testing utilities
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -60,7 +65,7 @@ class RunResult:
 
 
 def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
-    """Return the latest checkpoint Path inside a run directory, if any."""
+    """Return the latest checkpoint path inside a run directory, if any."""
     if not run_dir.exists() or not run_dir.is_dir():
         return None
     ckpt_dir = run_dir / "checkpoints"
@@ -91,21 +96,22 @@ def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
 
 
 def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
-    """Expand globs and return latest checkpoints from each matching run dir.
+    """Expand globs and return latest checkpoints from each matching run directory.
 
-    Each entry in `run_globs` may be:
-      * A glob pattern pointing at run directories, or
-      * A concrete run directory, or
-      * A direct checkpoint path (ckpt_step_*.pt).
+    Each entry in ``run_globs`` may be:
 
-    All are normalized into checkpoint paths, with duplicates removed.
+    * A glob pattern pointing at run directories.
+    * A concrete run directory.
+    * A direct checkpoint path (``ckpt_step_*.pt``).
+
+    All are normalised into checkpoint paths, with duplicates removed.
     """
     out: list[Path] = []
     for pattern in run_globs:
         for p in glob.glob(pattern):
             rd = Path(p)
             if rd.is_file():
-                # Allow passing a checkpoint file via --runs by accident; accept it.
+                # Allow passing a checkpoint file via --runs; accept it directly.
                 if rd.name.startswith("ckpt_") and rd.suffix == ".pt":
                     out.append(rd.resolve())
                 continue
@@ -123,12 +129,12 @@ def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
 
 
 def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) -> List[Path]:
-    """Union of checkpoints gathered from run globs and explicit --ckpt paths.
+    """Combine checkpoints gathered from run globs and explicit --ckpt paths.
 
-    `runs` is a list of patterns and/or concrete run directories. On shells that
-    expand wildcards eagerly (notably Windows cmd.exe in some configurations),
-    a single pattern argument may arrive as multiple concrete directories; this
-    helper treats both cases uniformly.
+    ``runs`` is a list of patterns and/or concrete run directories. On shells
+    that expand wildcards eagerly (notably Windows ``cmd.exe`` in some
+    configurations), a single pattern argument may arrive as multiple concrete
+    directories; this helper treats both cases uniformly.
     """
     paths: list[Path] = []
     if runs:
@@ -148,7 +154,7 @@ def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) ->
 
 
 def _evaluate_ckpt(ckpt: Path, episodes: int, device: str) -> RunResult:
-    """Load metadata from the checkpoint, pick env/method/seed, and evaluate."""
+    """Load metadata from the checkpoint, resolve env/method/seed, and evaluate."""
     payload = load_checkpoint(ckpt, map_location=device)
     cfg = payload.get("cfg", {}) or {}
     env_id = str(((cfg.get("env") or {}).get("id")) or "MountainCar-v0")
@@ -175,7 +181,7 @@ def _evaluate_ckpt(ckpt: Path, episodes: int, device: str) -> RunResult:
 
 
 def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
-    """Write per-checkpoint results to CSV (atomic)."""
+    """Write per-checkpoint results to CSV using an atomic rename."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -259,7 +265,7 @@ def _aggregate(rows: List[RunResult]) -> List[Dict[str, object]]:
 
 
 def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
-    """Write aggregated summary to CSV (atomic)."""
+    """Write aggregated summary to CSV using an atomic rename."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -322,7 +328,7 @@ def cli_eval_many(
         "--out",
         "-o",
         help=(
-            "Path to aggregated CSV (summary.csv). " "A sibling summary_raw.csv is also written."
+            "Path to aggregated CSV (summary.csv). A sibling summary_raw.csv is also written."
         ),
         dir_okay=False,
     ),
@@ -385,11 +391,11 @@ def cli_eval_many(
         )
 
 
-# ---------------------- NEW: Statistics CLI ----------------------
+# ---------------------- Statistics CLI ----------------------
 
 
 def _read_summary_raw(path: Path) -> list[dict]:
-    """Read results/summary_raw.csv into a list of dicts with typed fields."""
+    """Read ``results/summary_raw.csv`` into a list of typed dictionaries."""
     rows: list[dict] = []
     with path.open("r", newline="", encoding="utf-8") as f:
         r = csv.DictReader(f)
@@ -412,7 +418,7 @@ def _read_summary_raw(path: Path) -> list[dict]:
                     }
                 )
             except Exception:
-                # Skip malformed rows; keep going
+                # Skip malformed rows; keep going.
                 continue
     return rows
 
@@ -425,13 +431,13 @@ def _values_for_method(
     metric: str,
     latest_per_seed: bool = True,
 ) -> list[float]:
-    """Collect per-seed values for (env, method), choosing latest step per seed if enabled."""
+    """Collect per-seed values for (env, method), optionally using latest step per seed."""
     filt = [r for r in raw if r["env_id"] == env and r["method"] == method]
     if not filt:
         return []
 
     if latest_per_seed:
-        # Keep highest ckpt_step per seed
+        # Keep highest ckpt_step per seed.
         by_seed: dict[int, dict] = {}
         for r in filt:
             sid = int(r["seed"])
@@ -463,7 +469,9 @@ def cli_stats(
     method_a: str = typer.Option(
         ..., "--method-a", "-a", help="First method name (e.g., proposed)."
     ),
-    method_b: str = typer.Option(..., "--method-b", "-b", help="Second method name (e.g., ride)."),
+    method_b: str = typer.Option(
+        ..., "--method-b", "-b", help="Second method name (e.g., ride)."
+    ),
     metric: str = typer.Option(
         "mean_return",
         "--metric",
@@ -476,8 +484,10 @@ def cli_stats(
     alternative: str = typer.Option(
         "two-sided",
         "--alt",
-        help='Alternative hypothesis: "two-sided" | "greater" | "less". '
-        '"greater" tests if method-a tends larger than method-b.',
+        help=(
+            'Alternative hypothesis: "two-sided" | "greater" | "less". '
+            '"greater" tests if method-a tends larger than method-b.'
+        ),
     ),
     latest_per_seed: bool = typer.Option(
         True,
@@ -485,7 +495,7 @@ def cli_stats(
         help="Use the latest ckpt per seed (default) or all rows.",
     ),
 ) -> None:
-    """Compare two methods non-parametrically with Mann–Whitney U and bootstrap CIs."""
+    """Compare two methods with Mann–Whitney U and bootstrap CIs."""
     alt = alternative.strip().lower()
     if alt not in ("two-sided", "greater", "less"):
         raise typer.BadParameter("--alt must be one of: two-sided, greater, less")
@@ -508,7 +518,7 @@ def cli_stats(
 
     res = mannwhitney_u(x, y, alternative=alt)  # MWU (normal approx + tie corr)
 
-    # Bootstrap CIs for differences in mean and median
+    # Bootstrap CIs for differences in mean and median.
     def diff_mean(a, b):  # noqa: ANN001 - simple inline for bootstrap
         return float(float(sum(a)) / len(a) - float(sum(b)) / len(b))
 
@@ -535,10 +545,12 @@ def cli_stats(
         f"U1={res.U1:.3f}, U2={res.U2:.3f}, U_used={res.U:.3f}, z={res.z:.3f}, p={res.p_value:.6g}  (alt={alt})"
     )
     typer.echo(
-        f"Means   : {method_a}={res.mean_x:.3f}, {method_b}={res.mean_y:.3f}  (Δ={res.mean_x - res.mean_y:+.3f})"
+        f"Means   : {method_a}={res.mean_x:.3f}, {method_b}={res.mean_y:.3f}  "
+        f"(Δ={res.mean_x - res.mean_y:+.3f})"
     )
     typer.echo(
-        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  (Δ={res.median_x - res.median_y:+.3f})"
+        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
+        f"(Δ={res.median_x - res.median_y:+.3f})"
     )
     typer.echo(
         f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)"
@@ -558,8 +570,9 @@ def cli_stats(
 
 
 def main() -> None:
+    """Entry point for :mod:`irl.sweep` when executed as a module."""
     app()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entry
     main()
