@@ -9,6 +9,14 @@ import sys
 
 import torch
 
+from irl.utils.loggers import (
+    get_logger,
+    log_mujoco_gl_default,
+    log_mujoco_gl_preserve,
+)
+
+_LOG = get_logger(__name__)
+
 
 def single_spaces(env) -> Tuple:
     """Return (obs_space, action_space) for both single and vector envs."""
@@ -29,9 +37,13 @@ def default_run_dir(cfg) -> Path:
 
 
 def ensure_device(dev_str: str) -> torch.device:
+    """Resolve a torch.device, warning once if CUDA is requested but unavailable."""
     d = dev_str.strip().lower()
     if d.startswith("cuda") and not torch.cuda.is_available():
-        print("[warning] CUDA requested but not available; falling back to CPU.")
+        _LOG.warning(
+            "CUDA requested via device=%r but no CUDA device is available; falling back to CPU.",
+            dev_str,
+        )
         return torch.device("cpu")
     return torch.device(dev_str)
 
@@ -58,11 +70,11 @@ def ensure_mujoco_gl(env_id: str) -> str:
 
     Behavior:
     * If `env_id` looks like a MuJoCo task and MUJOCO_GL is *unset*:
-        - On Linux: set MUJOCO_GL='egl' (common headless default) and print a notice.
+        - On Linux: set MUJOCO_GL='egl' (common headless default).
         - On Windows/macOS: leave MUJOCO_GL unset and stay quiet (hint is Linux-only).
     * If MUJOCO_GL is already set:
-        - On Linux: print the current value once per process.
-        - On Windows/macOS: return the value without printing (avoid noise).
+        - On Linux: emit an informational log once per process.
+        - On Windows/macOS: return the value without additional noise.
 
     Returns
     -------
@@ -77,7 +89,7 @@ def ensure_mujoco_gl(env_id: str) -> str:
     if current:
         # Only log on Linux to avoid noisy hints on Windows/macOS.
         if sys.platform.startswith("linux"):
-            print(f"[info] MUJOCO_GL={current} (pre-set).")
+            log_mujoco_gl_preserve(current)
         return current
 
     # If unset, choose a safe default on Linux; stay silent elsewhere.
@@ -87,5 +99,5 @@ def ensure_mujoco_gl(env_id: str) -> str:
         return ""
 
     os.environ["MUJOCO_GL"] = "egl"
-    print("[info] MUJOCO_GL not set; defaulting to 'egl' for headless MuJoCo rendering.")
+    log_mujoco_gl_default("egl")
     return "egl"
