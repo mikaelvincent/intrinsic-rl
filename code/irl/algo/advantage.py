@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Tuple, Optional
 
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 
 
 def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
