@@ -1,26 +1,32 @@
-"""Minimal PPO update over minibatches (with reusable optimizers).
+"""PPO update over minibatches with optional statistics and reusable optimizers.
 
-Batch must contain observations and actions; `old_log_probs` is optional.
-Advantages/targets are 1-D tensors from `irl.algo.advantage.compute_gae`.
+The batch must contain observations and actions; ``old_log_probs`` is
+optional. Advantages and value targets are 1-D tensors, typically produced
+by :func:`irl.algo.advantage.compute_gae`.
 
-New (backward-compatible):
-- Optional `optimizers=(pol_opt, val_opt)` parameter allows callers (the
-  trainer) to pass persistent Adam optimizers so momentum/state is reused
-  across updates and can be checkpointed/resumed.
-- Optional `return_stats=True` returns a small dict with **means over the
-  whole update**: `approx_kl`, `clip_frac`, `entropy`, `policy_loss`,
-  `value_loss`, plus `early_stop` and `epochs_ran` for monitoring.
+This implementation supports:
 
-Enhancements:
-- Optional **value function clipping** controlled by `cfg.value_clip_range`
-  (<=0 disables). Uses the standard PPO formulation with a detached
-  baseline `v_old`, i.e. max(MSE(v, vt), MSE(v_clipped, vt)).
-- Optional **value loss coefficient** via `cfg.value_coef` (default 0.5).
-- Optional **KL penalty** added to the policy loss (`cfg.kl_penalty_coef`)
-  and/or **early stop** when the approximate KL exceeds `cfg.kl_stop`.
-  The KL used here is the common, non-negative estimator:
-      approx_kl = mean((ratio - 1) - logratio)
-  with ratio = exp(logp_new - logp_old) and logratio = (logp_new - logp_old).
+* Passing persistent Adam optimizers via ``optimizers=(pol_opt, val_opt)``
+  so momentum/state can be reused and checkpointed.
+* Returning a dictionary of update-wide statistics when
+  ``return_stats=True``: ``approx_kl``, ``clip_frac``, ``entropy``,
+  ``policy_loss``, ``value_loss``, plus ``early_stop`` and ``epochs_ran``
+  for monitoring.
+* Optional value-function clipping controlled by ``cfg.value_clip_range``
+  (``<= 0`` disables), using the standard PPO formulation with a detached
+  baseline ``v_old``, i.e. ``max(MSE(v, vt), MSE(v_clipped, vt))``.
+* A configurable value-loss coefficient via ``cfg.value_coef`` (default
+  ``0.5``).
+* A KL penalty term added to the policy loss via ``cfg.kl_penalty_coef``
+  and/or early stopping when the approximate KL exceeds ``cfg.kl_stop``.
+
+The approximate KL used here is the common, non-negative estimator
+
+.. math::
+
+    \\text{approx\\_kl} = \\mathbb{E}[(r - 1) - \\log r],
+
+with ``r = \\exp(\\text{logp_new} - \\text{logp_old})``.
 """
 
 from __future__ import annotations
