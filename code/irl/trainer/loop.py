@@ -30,6 +30,8 @@ from .obs_norm import RunningObsNorm
 
 # NEW: config hash helper for resume verification
 from irl.utils.checkpoint import compute_cfg_hash
+# Unified seeding helper (Python, NumPy, PyTorch)
+from irl.utils.determinism import seed_everything
 
 
 def _is_image_space(space) -> bool:
@@ -91,8 +93,9 @@ def train(
     """
     validate_config(cfg)
     device = ensure_device(cfg.device)
-    torch.manual_seed(int(cfg.seed))
-    np.random.seed(int(cfg.seed))
+
+    # Unified seeding: Python, NumPy, and PyTorch. Keep deterministic=False for training speed.
+    seed_everything(int(cfg.seed), deterministic=False)
 
     # Ensure sensible MUJOCO_GL for MuJoCo tasks (no-op for others)
     try:
