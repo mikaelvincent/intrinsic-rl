@@ -11,17 +11,14 @@ from irl.trainer import train as run_train
 
 
 def test_trainer_seeds_python_random(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Trainer must seed Python's RNG via seed_everything at startup.
+    """Verify that the trainer seeds Python's RNG at startup.
 
-    We patch the trainer's seed_everything alias to:
-
-      1. Call the real irl.utils.determinism.seed_everything so NumPy/torch
-         seeding behavior remains unchanged.
-      2. Immediately draw a small sequence from random.random() after seeding.
-
-    After a tiny training run, we independently reproduce the expected
-    random.random() sequence for the same seed and assert they match,
-    confirming that the trainer actually reset Python's RNG.
+    The test monkeypatches the trainer's ``seed_everything`` helper to
+    call the real implementation and then record a short
+    :func:`random.random` sequence immediately after seeding. After a
+    tiny training run, the same sequence is reproduced independently to
+    confirm that the trainer reinitialises the Python RNG at the start
+    of training.
     """
     samples: dict[str, object] = {}
 
