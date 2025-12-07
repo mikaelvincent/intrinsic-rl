@@ -54,6 +54,7 @@ class IntrinsicConfig:
     ema_beta_long: float = 0.995
     ema_beta_short: float = 0.90
     normalize_inside: bool = True  # Proposed-only internal normalization toggle
+    fail_on_error: bool = True  # fatal intrinsic construction errors by default
     gate: GateConfig = field(default_factory=GateConfig)
 
 
