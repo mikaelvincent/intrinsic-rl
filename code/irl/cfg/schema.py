@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
 
 # ----- Section Schemas -------------------------------------------------------
@@ -134,6 +134,7 @@ class LoggingConfig:
     tb: bool = True
     csv_interval: int = 10_000
     checkpoint_interval: int = 100_000
+    checkpoint_max_to_keep: Optional[int] = None
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Checkpoint manager with atomic writes and bounded retention.
+"""Checkpoint manager with atomic writes and optional retention.
 
 This module provides:
 
