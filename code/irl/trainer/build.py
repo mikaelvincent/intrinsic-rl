@@ -7,6 +7,8 @@ devices, and configure MuJoCo rendering for headless and desktop runs.
 
 from __future__ import annotations
 
+from ctypes import CDLL
+from ctypes.util import find_library
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -96,7 +98,9 @@ def ensure_mujoco_gl(env_id: str) -> str:
     Behavior
     --------
     * If ``env_id`` looks like a MuJoCo task and ``MUJOCO_GL`` is *unset*:
-      - On Linux: set ``MUJOCO_GL='egl'`` (a common headless default).
+      - On Linux: pick the first loadable backend in ``["egl", "osmesa"]``
+        (checked via ``ctypes``); warn and leave unset if neither is
+        available.
       - On Windows/macOS: leave ``MUJOCO_GL`` unset and stay quiet.
     * If ``MUJOCO_GL`` is already set:
       - On Linux: emit an informational log once per process.
@@ -124,6 +128,25 @@ def ensure_mujoco_gl(env_id: str) -> str:
         # platforms a missing variable is usually fine and no hint is needed.
         return ""
 
-    os.environ["MUJOCO_GL"] = "egl"
-    log_mujoco_gl_default("egl")
-    return "egl"
+    def _can_load(names: Tuple[str, ...]) -> bool:
+        for name in names:
+            lib_path = find_library(name)
+            if not lib_path:
+                continue
+            try:
+                CDLL(lib_path)
+                return True
+            except OSError:
+                continue
+        return False
+
+    for backend, libs in (("egl", ("EGL",)), ("osmesa", ("OSMesa", "osmesa"))):
+        if _can_load(libs):
+            os.environ["MUJOCO_GL"] = backend
+            log_mujoco_gl_default(backend)
+            return backend
+
+    _LOG.warning(
+        "MUJOCO_GL not set; EGL/OSMesa libraries not found. Rendering may fail unless a GL backend is installed."
+    )
+    return ""
