@@ -125,6 +125,7 @@ def run_training_suite(
     seeds: Sequence[int],
     device: Optional[str],
     resume: bool,
+    auto_async: bool = False,
 ) -> None:
     """Train all (config, seed) combinations into a suite of runs.
 
@@ -154,6 +155,11 @@ def run_training_suite(
     resume : bool
         When ``True``, resume from existing checkpoints (if present) and
         skip runs that already reached their target step budget.
+    auto_async : bool
+        When ``True``, automatically enable ``async_vector`` for configs that
+        request more than one vector environment and have not explicitly set
+        ``env.async_vector``. When ``False``, the value from each config is
+        respected as-is.
 
     Returns
     -------
@@ -186,8 +192,10 @@ def run_training_suite(
             steps_from_cfg = getattr(getattr(cfg_seeded, "exp", object()), "total_steps", None)
             target_steps = int(steps_from_cfg) if steps_from_cfg is not None else int(total_steps)
 
-            # Enable AsyncVectorEnv automatically when multiple envs are requested.
-            if int(cfg_seeded.env.vec_envs) > 1 and not bool(getattr(cfg_seeded.env, "async_vector", False)):
+            # Optionally enable AsyncVectorEnv automatically when multiple envs are requested.
+            if auto_async and int(cfg_seeded.env.vec_envs) > 1 and not bool(
+                getattr(cfg_seeded.env, "async_vector", False)
+            ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
                     f"[suite]  -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
@@ -453,6 +461,11 @@ def cli_train(
         "--resume/--no-resume",
         help="When enabled, resume from existing checkpoints and skip runs that already reached total_steps.",
     ),
+    auto_async: bool = typer.Option(
+        False,
+        "--auto-async/--no-auto-async",
+        help="When enabled, auto-enable async vector envs for configs requesting multiple environments.",
+    ),
 ) -> None:
     """Train all eligible configs into a deterministic runs_root."""
     run_training_suite(
@@ -464,6 +477,7 @@ def cli_train(
         seeds=seed,
         device=device,
         resume=resume,
+        auto_async=auto_async,
     )
 
 
@@ -635,6 +649,11 @@ def cli_full(
         "--resume/--no-resume",
         help="When enabled, resume from existing checkpoints and skip runs that already reached total_steps.",
     ),
+    auto_async: bool = typer.Option(
+        False,
+        "--auto-async/--no-auto-async",
+        help="When enabled, auto-enable async vector envs for configs requesting multiple environments.",
+    ),
 ) -> None:
     """Run training, evaluation, and plotting in one shot."""
     run_training_suite(
@@ -646,6 +665,7 @@ def cli_full(
         seeds=seed,
         device=device,
         resume=resume,
+        auto_async=auto_async,
     )
 
     eval_device = device if device is not None else "cpu"
