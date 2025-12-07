@@ -147,9 +147,10 @@ class KDTreeRegionStore:
         """
         leaf = self.root.route(p)
         leaf.add_point(p)
+        split_performed = False
         if leaf.count >= self.capacity and leaf.depth < self.depth_max:
-            self._split_leaf(leaf)
-        final_leaf = self.root.route(p)
+            split_performed = self._split_leaf(leaf)
+        final_leaf = self.root.route(p) if split_performed else leaf
         assert final_leaf.region_id is not None
         return int(final_leaf.region_id)
 
@@ -178,17 +179,25 @@ class KDTreeRegionStore:
             leaf = self.root.route(x)
             # 2) Add the point and split if necessary
             leaf.add_point(x)
+            split_performed = False
             if leaf.count >= self.capacity and leaf.depth < self.depth_max:
                 # Cache split after mutation: _split_leaf turns `leaf` into an internal node
-                self._split_leaf(leaf)
-                # 3) Decide which child owns the newly added point using the split criterion
-                assert leaf.split_dim is not None and leaf.split_val is not None
-                assert leaf.left is not None and leaf.right is not None
-                if float(x[leaf.split_dim]) <= float(leaf.split_val):
-                    final_leaf = leaf.left
-                else:
-                    final_leaf = leaf.right
-            else:
+                split_attempted = self._split_leaf(leaf)
+                split_performed = (
+                    split_attempted
+                    and not leaf.is_leaf
+                    and leaf.split_dim is not None
+                    and leaf.split_val is not None
+                    and leaf.left is not None
+                    and leaf.right is not None
+                )
+                if split_performed:
+                    # 3) Decide which child owns the newly added point using the split criterion
+                    if float(x[leaf.split_dim]) <= float(leaf.split_val):
+                        final_leaf = leaf.left
+                    else:
+                        final_leaf = leaf.right
+            if not split_performed:
                 final_leaf = leaf
 
             rid = final_leaf.region_id
@@ -225,7 +234,7 @@ class KDTreeRegionStore:
 
     # ------------------- internal: splitting -------------------
 
-    def _split_leaf(self, leaf: RegionNode) -> None:
+    def _split_leaf(self, leaf: RegionNode) -> bool:
         """Split a leaf along its maximum-variance dimension at the median.
 
         Both children are guaranteed to be non-empty. When a suitable
@@ -235,7 +244,7 @@ class KDTreeRegionStore:
         assert leaf.is_leaf
         pts = leaf.points()
         if pts.shape[0] <= 1:
-            return
+            return False
 
         split_dim: Optional[int] = None
         split_val: Optional[float] = None
@@ -248,7 +257,7 @@ class KDTreeRegionStore:
                 break
 
         if split_dim is None or split_val is None or left_mask is None or right_mask is None:
-            return
+            return False
 
         # Children (left inherits parent region_id; right gets a new one)
         left = RegionNode(
@@ -284,6 +293,8 @@ class KDTreeRegionStore:
         assert left.region_id is not None and right.region_id is not None
         self.leaf_by_id[left.region_id] = left
         self.leaf_by_id[right.region_id] = right
+
+        return True
 
     # ------------------- debug/diagnostics -------------------
 

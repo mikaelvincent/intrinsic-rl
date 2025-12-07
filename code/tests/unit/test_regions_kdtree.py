@@ -69,3 +69,34 @@ def test_kdtree_locate_matches_insert_id():
 
     for p, rid in zip(pts, ids):
         assert store.locate(p) == rid
+
+
+def test_bulk_insert_handles_unsplittable_leaf():
+    store = KDTreeRegionStore(dim=3, capacity=2, depth_max=4)
+    pts = np.zeros((5, 3), dtype=np.float32)  # degenerate: identical points cannot be split
+
+    ids = store.bulk_insert(pts)
+
+    assert np.all(ids == 0)  # all samples stay in the root region
+    assert store.num_regions() == 1
+    assert store.root.is_leaf
+    assert store.root.count == pts.shape[0]
+
+
+def test_bulk_insert_handles_failed_split_signal():
+    """Gracefully handle a split that reports success but leaves the node unchanged."""
+
+    store = KDTreeRegionStore(dim=3, capacity=2, depth_max=4)
+
+    # Simulate a faulty splitter that claims a split but performs none.
+    def fake_split(leaf):
+        return True
+
+    store._split_leaf = fake_split  # type: ignore[assignment]
+
+    pts = np.ones((3, 3), dtype=np.float32)
+
+    ids = store.bulk_insert(pts)
+
+    assert np.all(ids == 0)
+    assert store.num_regions() == 1
