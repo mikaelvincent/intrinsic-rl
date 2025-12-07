@@ -4,7 +4,7 @@ method: "proposed"
 
 env:
   id: "MountainCar-v0"
-  vec_envs: 20
+  vec_envs: 32
   frame_skip: 1
   domain_randomization: false
   discrete_actions: true

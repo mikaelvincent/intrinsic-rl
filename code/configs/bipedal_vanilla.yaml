@@ -4,7 +4,7 @@ method: "vanilla"
 
 env:
   id: "BipedalWalker-v3"
-  vec_envs: 20
+  vec_envs: 32
   frame_skip: 1
   domain_randomization: true
   discrete_actions: false

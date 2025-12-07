@@ -4,7 +4,7 @@ method: "ride"
 
 env:
   id: "HalfCheetah-v5"
-  vec_envs: 24
+  vec_envs: 32
   frame_skip: 1
   domain_randomization: true
   discrete_actions: false
