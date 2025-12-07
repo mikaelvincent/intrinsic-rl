@@ -144,7 +144,11 @@ def train(
 
     # ---- Resolve run directory & (optional) resume payload ----
     run_dir = Path(run_dir) if run_dir is not None else default_run_dir(cfg)
-    ckpt = CheckpointManager(run_dir, interval_steps=cfg.logging.checkpoint_interval, max_to_keep=3)
+    ckpt = CheckpointManager(
+        run_dir,
+        interval_steps=cfg.logging.checkpoint_interval,
+        max_to_keep=getattr(cfg.logging, "checkpoint_max_to_keep", None),
+    )
 
     resume_payload: Optional[dict] = None
     resume_step: int = 0
