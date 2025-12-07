@@ -4,7 +4,7 @@ method: "ride"
 
 env:
   id: "CarRacing-v3"
-  vec_envs: 32
+  vec_envs: 6
   frame_skip: 2
   domain_randomization: true
   discrete_actions: true
