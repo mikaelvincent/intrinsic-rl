@@ -426,7 +426,7 @@ def cli_train(
     total_steps: int = typer.Option(
         150_000,
         "--total-steps",
-        "-n",
+        "-t",
         help="Default target environment steps per run (overridden by exp.total_steps in config if present).",
     ),
     runs_root: Path = typer.Option(
@@ -437,7 +437,7 @@ def cli_train(
     seed: List[int] = typer.Option(
         [],
         "--seed",
-        "-s",
+        "-r",
         help="Override seeds to run for every config (repeatable). "
         "If omitted, each config's own seed is used.",
     ),
@@ -487,7 +487,7 @@ def cli_eval(
     episodes: int = typer.Option(
         5,
         "--episodes",
-        "-n",
+        "-e",
         help="Number of evaluation episodes per checkpoint.",
     ),
     device: str = typer.Option(
@@ -579,7 +579,7 @@ def cli_full(
     total_steps: int = typer.Option(
         150_000,
         "--total-steps",
-        "-n",
+        "-t",
         help="Default step budget per run (overridden by exp.total_steps in config if present).",
     ),
     runs_root: Path = typer.Option(
@@ -590,7 +590,7 @@ def cli_full(
     seed: List[int] = typer.Option(
         [],
         "--seed",
-        "-s",
+        "-r",
         help="Override seeds to run for every config (repeatable). "
         "If omitted, each config's own seed is used.",
     ),
@@ -604,7 +604,7 @@ def cli_full(
     episodes: int = typer.Option(
         5,
         "--episodes",
-        "-n",
+        "-e",
         help="Number of evaluation episodes per checkpoint.",
     ),
     results_dir: Path = typer.Option(
@@ -622,7 +622,7 @@ def cli_full(
     smooth: int = typer.Option(
         5,
         "--smooth",
-        "-s",
+        "-w",
         help="Moving-average window (in logged points).",
     ),
     shade: bool = typer.Option(
