@@ -4,7 +4,7 @@ method: "proposed"
 
 env:
   id: "HalfCheetah-v5"
-  vec_envs: 32
+  vec_envs: 16
   frame_skip: 1
   domain_randomization: true
   discrete_actions: false
