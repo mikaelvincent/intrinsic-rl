@@ -7,6 +7,7 @@ modules, logging, and checkpointing into a single training entry point.
 from __future__ import annotations
 
 import dataclasses
+import time
 from dataclasses import replace
 from math import ceil
 from pathlib import Path
@@ -56,6 +57,8 @@ def _is_image_space(space) -> bool:
 
 # Ensure we have a module-level logger for this trainer.
 _LOG = get_logger(__name__)
+# How often (in PPO updates) to emit a console progress line.
+_LOG_TRAIN_EVERY_UPDATES = 10
 
 
 def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
@@ -402,6 +405,11 @@ def train(
             update_idx = update_idx
 
         log_resume_state_restored(global_step)
+
+    # Wall-clock tracking for SPS and periodic console logging
+    start_wall = time.time()
+    last_log_time = start_wall
+    last_log_step = global_step
 
     try:
         while global_step < int(total_steps):
@@ -854,6 +862,40 @@ def train(
 
             ml.log(step=int(global_step), **log_payload)
 
+            # --- Periodic console progress log ---
+            if (
+                update_idx % _LOG_TRAIN_EVERY_UPDATES == 0
+                or global_step >= int(total_steps)
+            ):
+                now = time.time()
+                elapsed = max(now - start_wall, 1e-6)
+                avg_sps = float(global_step) / elapsed if global_step > 0 else 0.0
+                delta_steps = int(global_step - last_log_step)
+                delta_t = max(now - last_log_time, 1e-6)
+                recent_sps = (
+                    float(delta_steps) / delta_t if delta_steps > 0 else 0.0
+                )
+
+                approx_kl = float(log_payload.get("approx_kl", float("nan")))
+                clip_frac = float(log_payload.get("clip_frac", float("nan")))
+                r_total = float(log_payload.get("reward_total_mean", float("nan")))
+                r_int_mean = float(log_payload.get("r_int_mean", 0.0)) if "r_int_mean" in log_payload else 0.0
+
+                _LOG.info(
+                    "Train progress: step=%d update=%d avg_sps=%.1f recent_sps=%.1f "
+                    "reward_total_mean=%.3f r_int_mean=%.3f approx_kl=%.4f clip_frac=%.3f",
+                    int(global_step),
+                    int(update_idx),
+                    avg_sps,
+                    recent_sps,
+                    r_total,
+                    r_int_mean,
+                    approx_kl,
+                    clip_frac,
+                )
+                last_log_time = now
+                last_log_step = global_step
+
             # RIAC diagnostics cadence
             try:
                 if (
@@ -909,7 +951,8 @@ def train(
                         }
                     except Exception:
                         pass
-                ckpt.save(step=int(global_step), payload=payload)
+                ckpt_path = ckpt.save(step=int(global_step), payload=payload)
+                _LOG.info("Saved checkpoint at step=%d to %s", int(global_step), ckpt_path)
 
         # Final checkpoint
         payload = {
@@ -944,7 +987,8 @@ def train(
                 }
             except Exception:
                 pass
-        ckpt.save(step=int(global_step), payload=payload)
+        final_ckpt_path = ckpt.save(step=int(global_step), payload=payload)
+        _LOG.info("Saved final checkpoint at step=%d to %s", int(global_step), final_ckpt_path)
 
     finally:
         ml.close()
