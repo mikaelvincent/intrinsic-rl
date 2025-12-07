@@ -169,8 +169,15 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         N = int(err_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
+        # Fast path: route the full batch through the KD-tree in one call.
+        # KDTreeRegionStore.bulk_insert guarantees the same region-id
+        # sequence as sequential insert() calls, so this preserves the
+        # per-sample causality exercised by `compute()` while avoiding an
+        # extra traversal per point.
+        rids = self.store.bulk_insert(phi_np)
+
         for i in range(N):
-            rid = int(self.store.insert(phi_np[i]))
+            rid = int(rids[i])
             lp_val = float(self._update_region(rid, float(err_np[i])))
 
             self._lp_rms.update([lp_val])
