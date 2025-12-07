@@ -57,6 +57,50 @@ def _single_run_dir(runs_root: Path) -> Path:
     return run_dirs[0]
 
 
+def _write_vec_config(
+    configs_dir: Path, filename: str = "mc_vec.yaml", *, async_vector: bool | None = None
+) -> Path:
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    async_line = f"  async_vector: {str(async_vector).lower()}\n" if async_vector is not None else ""
+    cfg_text = f"""
+seed: 1
+device: "cpu"
+method: "vanilla"
+env:
+  id: "MountainCar-v0"
+  vec_envs: 2
+  frame_skip: 1
+  domain_randomization: false
+  discrete_actions: true
+{async_line}ppo:
+  steps_per_update: 8
+  minibatches: 2
+  epochs: 1
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  entropy_coef: 0.0
+intrinsic:
+  eta: 0.0
+adaptation:
+  enabled: false
+evaluation:
+  interval_steps: 100000
+  episodes: 1
+logging:
+  tb: false
+  csv_interval: 1
+  checkpoint_interval: 8
+exp:
+  deterministic: true
+  total_steps: 16
+"""
+    path = configs_dir / filename
+    path.write_text(cfg_text.lstrip(), encoding="utf-8")
+    return path
+
+
 def test_suite_train_creates_run_and_checkpoint(tmp_path: Path) -> None:
     """Training suite should create a run dir, checkpoint, and scalars CSV."""
     configs_dir = tmp_path / "configs"
@@ -142,6 +186,59 @@ def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.M
     step_after = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
     # Checkpoint should be unchanged by the skipped run.
     assert step_after == step_before
+
+
+def test_suite_respects_async_vector_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default behavior should keep env.async_vector as provided by the config."""
+    configs_dir = tmp_path / "configs"
+    _write_vec_config(configs_dir, async_vector=False)
+
+    captured = {}
+
+    def fake_run_train(cfg, *args, **kwargs):
+        captured["cfg"] = cfg
+
+    monkeypatch.setattr("irl.experiments.run_train", fake_run_train)
+
+    run_training_suite(
+        configs_dir=configs_dir,
+        include=[],
+        exclude=[],
+        total_steps=16,
+        runs_root=tmp_path / "runs_suite",
+        seeds=[1],
+        device="cpu",
+        resume=False,
+    )
+
+    assert captured["cfg"].env.async_vector is False
+
+
+def test_suite_can_auto_enable_async_vector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """auto_async flag should enable async_vector when vec_envs > 1 and config left it disabled."""
+    configs_dir = tmp_path / "configs"
+    _write_vec_config(configs_dir, async_vector=False)
+
+    captured = {}
+
+    def fake_run_train(cfg, *args, **kwargs):
+        captured["cfg"] = cfg
+
+    monkeypatch.setattr("irl.experiments.run_train", fake_run_train)
+
+    run_training_suite(
+        configs_dir=configs_dir,
+        include=[],
+        exclude=[],
+        total_steps=16,
+        runs_root=tmp_path / "runs_suite",
+        seeds=[1],
+        device="cpu",
+        resume=False,
+        auto_async=True,
+    )
+
+    assert captured["cfg"].env.async_vector is True
 
 
 def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
