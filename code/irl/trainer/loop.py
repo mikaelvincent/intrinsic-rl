@@ -221,6 +221,7 @@ def train(
     intrinsic_outputs_normalized_flag: Optional[bool] = None  # module-owned vs trainer RMS
 
     if is_intrinsic_method(method_l):
+        fail_on_intrinsic_error = bool(getattr(cfg.intrinsic, "fail_on_error", True))
         try:
             intrinsic_module = create_intrinsic_module(
                 method_l,
@@ -253,10 +254,17 @@ def train(
                     eta,
                 )
         except Exception as exc:
-            _LOG.warning(
-                "Failed to create intrinsic module %r (%s). Continuing without intrinsic.",
-                method_l,
-                exc,
+            _LOG.error(
+                "Failed to create intrinsic module %r (%s).", method_l, exc
+            )
+            if fail_on_intrinsic_error:
+                raise RuntimeError(
+                    "Intrinsic module construction failed for method "
+                    f"{method_l!r}. Set intrinsic.fail_on_error=False to continue without "
+                    "intrinsic rewards."
+                ) from exc
+            _LOG.error(
+                "intrinsic.fail_on_error is False; continuing without intrinsic rewards."
             )
             intrinsic_module = None
             use_intrinsic = False
