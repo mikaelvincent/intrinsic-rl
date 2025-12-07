@@ -1,10 +1,10 @@
 seed: 1
-device: "cpu"
+device: "cuda:0"
 method: "proposed"
 
 env:
   id: "MountainCar-v0"
-  vec_envs: 32
+  vec_envs: 20
   frame_skip: 1
   domain_randomization: false
   discrete_actions: true
@@ -55,9 +55,9 @@ evaluation:
 
 logging:
   tb: true
-  csv_interval: 10000
-  checkpoint_interval: 100000
+  csv_interval: 5000
+  checkpoint_interval: 50000
 
 exp:
   deterministic: true
-  total_steps: 1500000
+  total_steps: 1000000
