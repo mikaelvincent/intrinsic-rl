@@ -285,12 +285,17 @@ class Proposed(nn.Module):
         N = int(imp_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
+        # Fast path: route all embeddings through the KD-tree in one call.
+        # KDTreeRegionStore.bulk_insert preserves the exact region-id assignment
+        # that a sequence of `insert` calls would produce, so this keeps the
+        # per-sample causality exercised by `compute()` intact while avoiding an
+        # extra root→leaf traversal per point.
+        rids = self.store.bulk_insert(phi_np)
+
         for i in range(N):
-            # Causal region insertion and EMA update for this sample.
-            rid = int(self.store.insert(phi_np[i]))
+            rid = int(rids[i])
             lp_raw = float(self._update_region(rid, float(err_np[i])))
 
-            # Region gating (if enabled) uses up-to-date global medians.
             gate = 1
             if self.gating_enabled:
                 gate = int(self._maybe_update_gate(rid, float(lp_raw)))
