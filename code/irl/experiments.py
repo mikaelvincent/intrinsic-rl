@@ -31,6 +31,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import typer  # noqa: E402
+import torch  # noqa: E402
 
 from irl.cfg import load_config
 from irl.cfg.schema import Config
@@ -668,7 +669,11 @@ def cli_full(
         auto_async=auto_async,
     )
 
-    eval_device = device if device is not None else "cpu"
+    if device is None:
+        eval_device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    else:
+        eval_device = device
+
     run_eval_suite(
         runs_root=runs_root,
         results_dir=results_dir,
