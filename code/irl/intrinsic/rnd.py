@@ -115,15 +115,22 @@ class RND(BaseIntrinsicModule, nn.Module):
         if self.is_image:
             # Infer channel count from either leading or trailing axis (CHW vs HWC)
             shape = tuple(int(s) for s in obs_space.shape)
-            cand = [shape[0], shape[-1]]
-            in_channels = cand[0] if cand[0] in (1, 3, 4) else cand[1]
-            if in_channels not in (1, 3, 4):
+            if len(shape) == 3:
+                c0 = shape[0]
+                c2 = shape[-1]
+                if c0 in (1, 3, 4) and c2 not in (1, 3, 4):
+                    in_channels, in_hw = c0, (shape[1], shape[2])
+                else:
+                    in_channels, in_hw = c2, (shape[0], shape[1])
+            else:
                 in_channels = shape[-1]
+                in_hw = (shape[0], shape[1])
 
             # CNN target/predictor (same architecture; target frozen)
             cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.feature_dim))
-            self.target = ConvEncoder(cnn_cfg)
-            self.predictor = ConvEncoder(cnn_cfg)
+            # Pass in_hw so final projection is created immediately (checkpoint compat)
+            self.target = ConvEncoder(cnn_cfg, in_hw=in_hw)
+            self.predictor = ConvEncoder(cnn_cfg, in_hw=in_hw)
 
             for p in self.target.parameters():
                 p.requires_grad = False
@@ -325,7 +332,7 @@ class RND(BaseIntrinsicModule, nn.Module):
 
             metrics = {
                 "loss_total": float(out["total"].detach().item()),
-                "intrinsic_mean": float(out["intrinsic_mean"].detach().item()),
+                "loss_intrinsic_mean": float(out["intrinsic_mean"].detach().item()),
                 "rms": self.rms,
             }
         return metrics

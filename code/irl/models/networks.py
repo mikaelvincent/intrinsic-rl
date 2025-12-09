@@ -15,7 +15,7 @@ state-independent log standard deviation.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Iterable, Union
+from typing import Iterable, Tuple, Union
 
 import gymnasium as gym
 import torch
@@ -45,16 +45,23 @@ def _is_image_space(space: gym.Space) -> bool:
     return isinstance(space, gym.spaces.Box) and len(space.shape) >= 2
 
 
-def _infer_in_channels(shape: tuple[int, ...]) -> int:
-    """Infer likely channel count from either the leading or trailing axis.
+def _infer_c_hw(shape: tuple[int, ...]) -> Tuple[int, Tuple[int, int]]:
+    """Infer (C, (H, W)) from a shape tuple (assuming 3D).
 
-    This helper prefers shapes with channels-first (C, H, W) but will fall
-    back to channels-last (H, W, C) when necessary.
+    Heuristic: if dim 0 is small (1, 3, 4), assume CHW. Otherwise HWC.
     """
-    cand = [int(shape[0]), int(shape[-1])]
-    if cand[0] in (1, 3, 4):
-        return cand[0]
-    return cand[1]
+    if len(shape) != 3:
+        # Fallback for non-3D shapes: treat as square-ish or fail downstream
+        # Usually Gym images are 3D.
+        return shape[-1], (shape[0], shape[1]) if len(shape) >= 2 else (0, 0)
+
+    c0 = shape[0]
+    c2 = shape[-1]
+    # If c0 is a typical channel count and c2 is large, assume CHW.
+    if c0 in (1, 3, 4) and c2 not in (1, 3, 4):
+        return c0, (shape[1], shape[2])
+    # Default to HWC
+    return c2, (shape[0], shape[1])
 
 
 def _to_tensor(x: Tensor | object, device: torch.device, dtype: torch.dtype = torch.float32) -> Tensor:
@@ -137,12 +144,16 @@ class PolicyNetwork(nn.Module):
 
     def __init__(
         self,
-        obs_space: gym.Space,
+        self_obs_space: gym.Space,  # renamed param to avoid shadowing
         action_space: gym.Space,
         hidden_sizes: Iterable[int] = (256, 256),
         cnn_cfg: ConvEncoderConfig | None = None,
     ) -> None:
         super().__init__()
+        # Use arg name compatibility for users passing by keyword (obs_space) if needed,
+        # though strictly we use positionals.
+        obs_space = self_obs_space
+
         if not isinstance(obs_space, gym.spaces.Box):
             raise TypeError("PolicyNetwork supports Box observations (vector or images).")
 
@@ -150,12 +161,13 @@ class PolicyNetwork(nn.Module):
         self.is_discrete = isinstance(action_space, gym.spaces.Discrete)
 
         if self.is_image:
-            in_ch = _infer_in_channels(tuple(int(s) for s in obs_space.shape))
+            in_ch, in_hw = _infer_c_hw(tuple(int(s) for s in obs_space.shape))
             # Honor user-supplied ConvEncoderConfig; override only in_channels to match the space.
             cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
             if int(cfg.in_channels) != int(in_ch):
                 cfg = replace(cfg, in_channels=int(in_ch))
-            self.cnn = ConvEncoder(cfg)
+            # Pass in_hw so projection is initialized immediately
+            self.cnn = ConvEncoder(cfg, in_hw=in_hw)
             feat_dim = int(self.cnn.out_dim)
         else:
             self.obs_dim = int(obs_space.shape[0])
@@ -264,12 +276,13 @@ class ValueNetwork(nn.Module):
 
         self.is_image = _is_image_space(obs_space)
         if self.is_image:
-            in_ch = _infer_in_channels(tuple(int(s) for s in obs_space.shape))
+            in_ch, in_hw = _infer_c_hw(tuple(int(s) for s in obs_space.shape))
             # Honor user-supplied ConvEncoderConfig; override only in_channels.
             cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
             if int(cfg.in_channels) != int(in_ch):
                 cfg = replace(cfg, in_channels=int(in_ch))
-            self.cnn = ConvEncoder(cfg)
+            # Pass in_hw so projection is initialized immediately
+            self.cnn = ConvEncoder(cfg, in_hw=in_hw)
             self.head = nn.Linear(int(self.cnn.out_dim), 1)
         else:
             self.obs_dim = int(obs_space.shape[0])

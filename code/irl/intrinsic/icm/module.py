@@ -100,15 +100,23 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
         # ----- Encoder φ(s) -----
         if self.is_image_obs:
-            # Infer channel count from either leading or trailing axis (CHW vs HWC)
+            # Infer channel count and HW from either leading or trailing axis (CHW vs HWC)
             shape = tuple(int(s) for s in obs_space.shape)
-            cand = [shape[0], shape[-1]]
-            in_channels = cand[0] if cand[0] in (1, 3, 4) else cand[1]
-            if in_channels not in (1, 3, 4):
-                # Fallback: assume channels-last
+            if len(shape) == 3:
+                c0 = shape[0]
+                c2 = shape[-1]
+                if c0 in (1, 3, 4) and c2 not in (1, 3, 4):
+                    in_channels, in_hw = c0, (shape[1], shape[2])
+                else:
+                    in_channels, in_hw = c2, (shape[0], shape[1])
+            else:
+                # Fallback for unexpected rank
                 in_channels = shape[-1]
+                in_hw = (shape[0], shape[1])
+
             cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.phi_dim))
-            self.encoder = ConvEncoder(cnn_cfg)  # lazy projection init handled internally
+            # Pass in_hw so final projection is created immediately (needed for state_dict loading)
+            self.encoder = ConvEncoder(cnn_cfg, in_hw=in_hw)
 
             # Centralized image preprocessing config: keep original channels; output NCHW; scale uint8 → [0,1]
             self._img_pre_cfg = ImagePreprocessConfig(
