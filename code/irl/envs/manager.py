@@ -6,6 +6,7 @@ best-effort domain randomization. Returns a ``gym.Env`` or a ``VectorEnv``.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
@@ -147,6 +148,11 @@ class EnvManager:
             kwargs = dict(self.make_kwargs or {})
             if self.render_mode is not None:
                 kwargs["render_mode"] = self.render_mode
+
+            # Ensure CarRacing works headless by using the dummy video driver if no display is detected.
+            # This prevents hangs/crashes on servers lacking an X server (e.g. CI, cloud VMs).
+            if _is_car_racing(self.env_id) and "SDL_VIDEODRIVER" not in os.environ:
+                os.environ["SDL_VIDEODRIVER"] = "dummy"
 
             env = gym.make(self.env_id, **kwargs)
 
