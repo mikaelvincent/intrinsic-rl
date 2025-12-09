@@ -1,5 +1,11 @@
 """Intrinsic RL research codebase for impact and learning-progress methods."""
 
+import os
+
+# Disable NNPACK to prevent "Unsupported hardware" crashes/hangs on some
+# containerized CPUs during CNN evaluation (e.g. CarRacing).
+os.environ.setdefault("ATEN_NNPACK_ENABLED", "0")
+
 from ._version import __version__
 
 # Expose utilities for convenience (logging & checkpoints)
