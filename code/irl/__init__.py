@@ -4,7 +4,8 @@ import os
 
 # Disable NNPACK to prevent "Unsupported hardware" crashes/hangs on some
 # containerized CPUs during CNN evaluation (e.g. CarRacing).
-os.environ.setdefault("ATEN_NNPACK_ENABLED", "0")
+# We set this forcefully (overwriting any system default) to ensure stability.
+os.environ["ATEN_NNPACK_ENABLED"] = "0"
 
 from ._version import __version__
 
