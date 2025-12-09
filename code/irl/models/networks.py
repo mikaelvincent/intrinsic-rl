@@ -107,7 +107,12 @@ def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.devi
         normalize_std=None,
         channels_first=True,
     )
-    out = preprocess_image(xt, cfg=cfg, device=device)  # -> NCHW float32 in [0,1]
+    out = preprocess_image(xt, cfg=cfg, device=device)  # -> NCHW or CHW float32 in [0,1]
+
+    # If the input was unbatched (C, H, W), unsqueeze to (1, C, H, W) to satisfy NCHW contract.
+    if out.dim() == 3:
+        out = out.unsqueeze(0)
+
     # Sanity: channel count must match ConvEncoder's configured in_channels to avoid silent mismatches.
     c = int(out.shape[1])
     if c != int(expected_c):
