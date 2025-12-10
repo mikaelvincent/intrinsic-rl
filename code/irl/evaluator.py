@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, List
 
 import numpy as np
 import typer
@@ -17,6 +17,7 @@ from irl.models import PolicyNetwork
 from irl.trainer.build import single_spaces  # use shared helper
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything  # unified seeding helper
+from irl.intrinsic.factory import create_intrinsic_module # factory for loading intrinsic modules
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -43,6 +44,8 @@ def evaluate(
     ckpt: Path,
     episodes: int = 10,
     device: str = "cpu",
+    save_traj: bool = False,
+    traj_out_dir: Optional[Path] = None,
 ) -> dict:
     """Evaluate a saved policy deterministically (no intrinsic), returning stats.
 
@@ -56,6 +59,12 @@ def evaluate(
         Number of episodes to run.
     device:
         Torch device string, such as "cpu" or "cuda:0".
+    save_traj:
+        If True, record observations and (if available) intrinsic stats/gates
+        for visualization.
+    traj_out_dir:
+        Directory to save the trajectory .npz file if save_traj is True.
+        Defaults to the parent directory of the checkpoint.
 
     Returns
     -------
@@ -105,6 +114,43 @@ def evaluate(
     policy.load_state_dict(payload["policy"])
     policy.eval()
 
+    # Optional: Load intrinsic module to recover gating/value stats for visualization
+    intrinsic_module = None
+    method = str(cfg.get("method", "vanilla"))
+    if save_traj and "intrinsic" in payload:
+        try:
+            intr_state = payload["intrinsic"]
+            # Re-create using config params
+            int_cfg = cfg.get("intrinsic", {})
+            gate_cfg = int_cfg.get("gate", {})
+            # We need to reconstruct with the same args as training
+            intrinsic_module = create_intrinsic_module(
+                method,
+                obs_space,
+                act_space,
+                device=device,
+                bin_size=float(int_cfg.get("bin_size", 0.25)),
+                alpha_impact=float(int_cfg.get("alpha_impact", 1.0)),
+                alpha_lp=float(int_cfg.get("alpha_lp", 0.5)),
+                region_capacity=int(int_cfg.get("region_capacity", 200)),
+                depth_max=int(int_cfg.get("depth_max", 12)),
+                ema_beta_long=float(int_cfg.get("ema_beta_long", 0.995)),
+                ema_beta_short=float(int_cfg.get("ema_beta_short", 0.9)),
+                gate_tau_lp_mult=float(gate_cfg.get("tau_lp_mult", 0.01)),
+                gate_tau_s=float(gate_cfg.get("tau_s", 2.0)),
+                gate_hysteresis_up_mult=float(gate_cfg.get("hysteresis_up_mult", 2.0)),
+                gate_min_consec_to_gate=int(gate_cfg.get("min_consec_to_gate", 5)),
+                gate_min_regions_for_gating=int(gate_cfg.get("min_regions_for_gating", 3)),
+                normalize_inside=bool(int_cfg.get("normalize_inside", True)),
+                gating_enabled=bool(gate_cfg.get("enabled", True)),
+            )
+            if "state_dict" in intr_state:
+                intrinsic_module.load_state_dict(intr_state["state_dict"])
+            intrinsic_module.eval()
+        except Exception:
+            # Intrinsic loading is best-effort for visualization
+            intrinsic_module = None
+
     # Observation normalization for vector observations if stored
     is_image = _is_image_space(obs_space)
     norm = None if is_image else _build_normalizer(payload)
@@ -118,15 +164,23 @@ def evaluate(
     returns: list[float] = []
     lengths: list[int] = []
 
+    # Trajectory storage
+    traj_obs: list[np.ndarray] = []
+    traj_gates: list[int] = []
+    traj_int_vals: list[float] = []
+
     for _ in range(int(episodes)):
         obs, _ = e.reset()
         done = False
         ep_ret = 0.0
         ep_len = 0
 
+        # Trajectory recording: flush existing buffer for new episode if we separated them,
+        # but here we'll just concat everything for a heatmap.
+       
         while not done:
-            x = obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
-            x = _normalize(x)
+            x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
+            x = _normalize(x_raw)
 
             with torch.no_grad():
                 obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
@@ -143,6 +197,47 @@ def evaluate(
             next_obs, r, term, trunc, _ = e.step(action_for_env)
             ep_ret += float(r)
             ep_len += 1
+
+            # --- Trajectory Capture ---
+            if save_traj and not is_image:
+                # Store raw observation for plotting (normalized might be weird to interpret)
+                traj_obs.append(x_raw.copy())
+                gate_val = 1
+                int_val = 0.0
+                if intrinsic_module is not None:
+                    # We need to run a "dummy" compute to get the state/gate
+                    # Prepare batch-dim inputs
+                    batch_obs = obs_t.unsqueeze(0)
+                    batch_next = torch.as_tensor(_normalize(next_obs), dtype=torch.float32, device=device).unsqueeze(0)
+                    batch_act = act.unsqueeze(0)
+                    try:
+                        # Some modules (Proposed) update internal stats on compute.
+                        # In eval we strictly shouldn't update, but for visualization we might need
+                        # to query the *current* gate status for this point.
+                        # Proposed.compute_batch does updates. Proposed.compute does updates.
+                        # We'll accept slight state drift or just use the current value.
+                        # Better approach: Proposed.compute returns IntrinsicOutput with r_int.
+                        # But we want the gate.
+                        # HACK: Just run compute_batch (reduction=none) and inspect internal stats if possible,
+                        # or rely on the returned reward being 0 if gated.
+                        # Ideally we'd have an inspect() method.
+                        r_out = intrinsic_module.compute_batch(batch_obs, batch_next, batch_act, reduction="none")
+                        int_val = float(r_out.mean().item())
+                        # Infer gate from internal state if Proposed
+                        if method == "proposed" and hasattr(intrinsic_module, "store"):
+                            # We need phi to find the region
+                            with torch.no_grad():
+                                phi = intrinsic_module.icm._phi(batch_obs)
+                                phi_np = phi.cpu().numpy().reshape(-1)
+                                rid = intrinsic_module.store.locate(phi_np)
+                                st = intrinsic_module._stats.get(rid)
+                                if st:
+                                    gate_val = st.gate
+                    except Exception:
+                        pass
+                traj_gates.append(gate_val)
+                traj_int_vals.append(int_val)
+
             obs = next_obs
             done = bool(term) or bool(trunc)
 
@@ -163,6 +258,19 @@ def evaluate(
         "returns": [float(x) for x in returns],
         "lengths": [int(x) for x in lengths],
     }
+
+    # Save trajectories if requested and data exists
+    if save_traj and traj_obs:
+        traj_out_dir = traj_out_dir or ckpt.parent
+        traj_out_dir.mkdir(parents=True, exist_ok=True)
+        env_tag = env.replace("/", "-")
+        traj_file = traj_out_dir / f"{env_tag}_trajectory.npz"
+        np.savez_compressed(
+            traj_file,
+            obs=np.stack(traj_obs),
+            gates=np.array(traj_gates),
+            intrinsic=np.array(traj_int_vals),
+        )
 
     e.close()
     return summary
@@ -185,9 +293,14 @@ def cli_eval(
         help="Optional path to write aggregated results as JSON.",
         dir_okay=False,
     ),
+    save_traj: bool = typer.Option(
+        False, "--save-traj", help="Save obs/gates to .npz for visualization."
+    ),
 ) -> None:
     """Run evaluation episodes using mode actions and report aggregate stats."""
-    summary = evaluate(env=env, ckpt=ckpt, episodes=episodes, device=device)
+    summary = evaluate(
+        env=env, ckpt=ckpt, episodes=episodes, device=device, save_traj=save_traj
+    )
 
     # Per-episode lines
     for i, (ret, length) in enumerate(zip(summary["returns"], summary["lengths"]), start=1):
