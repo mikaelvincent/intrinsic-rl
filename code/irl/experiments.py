@@ -35,7 +35,7 @@ import torch  # noqa: E402
 
 from irl.cfg import load_config
 from irl.cfg.schema import Config
-from irl.plot import _aggregate_runs, _parse_run_name, plot_normalized_summary
+from irl.plot import _aggregate_runs, _parse_run_name, plot_normalized_summary, plot_trajectory_heatmap
 from irl.sweep import (
     RunResult,
     _aggregate,
@@ -46,6 +46,7 @@ from irl.sweep import (
 )
 from irl.trainer import train as run_train
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
+from irl.evaluator import evaluate
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -276,6 +277,10 @@ def run_eval_suite(
     typer.echo(f"[suite] Evaluating {len(run_dirs)} run(s) from {root}")
     results: List[RunResult] = []
 
+    # Also save trajectory files for the plots/ directory
+    traj_dir = results_dir / "plots" / "trajectories"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
@@ -283,10 +288,40 @@ def run_eval_suite(
             continue
         typer.echo(f"[suite]    - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
-            res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
+            # We call evaluate directly to capture stats, AND set save_traj=True to populate files for heatmap
+            summary = evaluate(
+                env=str(_parse_run_name(rd).get("env", "UnknownEnv")), # best effort env, evaluate uses checkpoint anyway
+                ckpt=ckpt, 
+                episodes=episodes, 
+                device=device,
+                save_traj=True,
+                traj_out_dir=traj_dir
+            )
+            
+            # Construct RunResult manually since we bypassed _evaluate_ckpt
+            payload = load_checkpoint(ckpt, map_location="cpu")
+            step = int(payload.get("step", -1))
+            
+            # Re-parse method/env/seed from the run directory name for the CSV
+            info = _parse_run_name(rd)
+            
+            res = RunResult(
+                method=info.get("method", "unknown"),
+                env_id=summary["env_id"],
+                seed=int(info.get("seed", 0)),
+                ckpt_path=ckpt,
+                ckpt_step=step,
+                episodes=int(summary["episodes"]),
+                mean_return=float(summary["mean_return"]),
+                std_return=float(summary["std_return"]),
+                min_return=float(summary["min_return"]),
+                max_return=float(summary["max_return"]),
+                mean_length=float(summary["mean_length"]),
+                std_length=float(summary["std_length"]),
+            )
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]       ! evaluation failed: {exc}")
+            typer.echo(f"[suite]        ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -558,6 +593,37 @@ def _generate_component_plot(
         typer.echo(f"[suite] Saved component plot: {out}")
 
 
+def _generate_trajectory_plots(
+    results_dir: Path,
+    plots_root: Path,
+) -> None:
+    """Generate heatmaps for all saved trajectories in results_dir/plots/trajectories.
+    
+    Looks for .npz files saved by the evaluation step.
+    """
+    traj_dir = results_dir / "plots" / "trajectories"
+    if not traj_dir.exists():
+        return
+
+    npz_files = list(traj_dir.glob("*_trajectory.npz"))
+    if not npz_files:
+        return
+
+    typer.echo(f"[suite] Generating trajectory heatmaps for {len(npz_files)} files...")
+    
+    for npz_file in npz_files:
+        # File name convention: {env_id}_trajectory.npz
+        env_tag = npz_file.stem.replace("_trajectory", "")
+        out_name = f"{env_tag}__state_heatmap.png"
+        out_path = plots_root / out_name
+        
+        try:
+            plot_trajectory_heatmap(npz_file, out_path)
+            typer.echo(f"[suite] Saved heatmap: {out_path}")
+        except Exception as exc:
+            typer.echo(f"[warn] Failed to plot heatmap for {npz_file}: {exc}")
+
+
 def run_plots_suite(
     runs_root: Path,
     results_dir: Path,
@@ -577,6 +643,7 @@ def run_plots_suite(
       4. Gating Dynamics (Extrinsic vs Gate Rate).
       5. Intrinsic Component Evolution (Impact vs LP RMS).
       6. Normalized Performance Profile (Bar Chart).
+      7. Trajectory Heatmaps (State Space).
     """
     root = runs_root.resolve()
     if not root.exists():
@@ -701,6 +768,9 @@ def run_plots_suite(
         typer.echo(f"[suite] Saved normalized summary bars: {bar_plot_path}")
     else:
         typer.echo("[suite] Skipping bar chart (summary.csv not found; run 'eval' stage first).")
+
+    # 7. Trajectory Heatmaps
+    _generate_trajectory_plots(results_dir, plots_root)
 
 
 @app.command("train")
