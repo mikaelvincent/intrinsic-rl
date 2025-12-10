@@ -20,6 +20,7 @@ dependencies = [
   "typer>=0.9",
   "pyyaml>=6.0",
   "imageio>=2.30",  # Video generation
+  "imageio-ffmpeg>=0.4.8",  # FFMPEG backend for MP4 writing
   "pillow>=10.0",   # Image manipulation/text overlay
 ]
 
