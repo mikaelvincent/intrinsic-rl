@@ -281,7 +281,7 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        metric="reward_total_mean",
+        metrics=["reward_total_mean"],
         smooth=1,
         shade=False,
     )
@@ -292,3 +292,4 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
     # MountainCar-v0 env tag should appear in the overlay file name.
     overlay_files = list(plots_dir.glob("MountainCar-v0__overlay_reward_total_mean.png"))
     assert overlay_files, "Expected an overlay plot for MountainCar-v0"
+  
