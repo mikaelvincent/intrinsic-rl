@@ -321,7 +321,7 @@ def run_eval_suite(
             )
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]         ! evaluation failed: {exc}")
+            typer.echo(f"[suite]          ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -600,7 +600,7 @@ def _generate_trajectory_plots(
     plots_root: Path,
 ) -> None:
     """Generate heatmaps for all saved trajectories in results_dir/plots/trajectories.
-     
+      
     Looks for .npz files saved by the evaluation step.
     """
     traj_dir = results_dir / "plots" / "trajectories"
@@ -731,7 +731,7 @@ def run_plots_suite(
         plots_root=plots_root,
     )
 
-    # 3. Ablation Study
+    # 3. Ablation Study (Extrinsic)
     # Component analysis using extrinsic reward.
     _generate_comparison_plot(
         groups,
@@ -741,6 +741,20 @@ def run_plots_suite(
         shade=True,
         title="Ablation Study (Extrinsic Reward)",
         filename_suffix="ablations",
+        plots_root=plots_root,
+    )
+
+    # 3b. Ablation Study (Total) - NEW
+    # Shows the density/scale of the shaped objective for ablation variants.
+    # High smoothing (25) used to dampen intrinsic noise and highlight the dense signal trend.
+    _generate_comparison_plot(
+        groups,
+        methods_to_plot=ablations,
+        metric="reward_total_mean",
+        smooth=25,
+        shade=True,
+        title="Ablation Study (Total Reward Objective)",
+        filename_suffix="ablations_total",
         plots_root=plots_root,
     )
 
