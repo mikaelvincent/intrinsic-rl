@@ -5,10 +5,11 @@ This module provides a small Typer-based CLI that can:
   * Train all eligible configuration files under a configs/ tree.
   * Evaluate the latest checkpoint for each run directory.
   * Generate simple per-environment overlay plots.
+  * Generate split-screen comparison videos.
 
 Typical usage from the repo's `code/` directory:
 
-    # One-shot: train all configs, then eval + plots
+    # One-shot: train all configs, then eval + plots + videos
     python -m irl.experiments full
 
 Or individual stages:
@@ -16,6 +17,7 @@ Or individual stages:
     python -m irl.experiments train
     python -m irl.experiments eval
     python -m irl.experiments plots
+    python -m irl.experiments videos
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd # noqa: E402
 import typer  # noqa: E402
 import torch  # noqa: E402
 
@@ -47,6 +50,7 @@ from irl.sweep import (
 from irl.trainer import train as run_train
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
 from irl.evaluator import evaluate
+from irl.video import render_side_by_side
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -378,11 +382,12 @@ def _generate_comparison_plot(
 
             # Visual Emphasis Logic:
             # - Proposed method gets higher z-order, thicker line, full alpha, and explicit red color.
-            # - Baselines are slightly more transparent, thinner, and rely on cycle colors.
+            # - Baselines are more transparent (0.4), thinner, and rely on cycle colors.
+            # - "Inflate" effect via visual hierarchy: Proposed stands out sharply against a noisy background.
             is_main_proposed = method.lower() == "proposed"
             
             lw = 2.5 if is_main_proposed else 1.5
-            alpha = 1.0 if is_main_proposed else 0.6
+            alpha = 1.0 if is_main_proposed else 0.4  # more transparent baselines
             zorder = 10 if is_main_proposed else 2
             color = "#d62728" if is_main_proposed else None  # tab:red for proposed
             
@@ -600,7 +605,7 @@ def _generate_trajectory_plots(
     plots_root: Path,
 ) -> None:
     """Generate heatmaps for all saved trajectories in results_dir/plots/trajectories.
-      
+       
     Looks for .npz files saved by the evaluation step.
     """
     traj_dir = results_dir / "plots" / "trajectories"
@@ -789,6 +794,97 @@ def run_plots_suite(
     _generate_trajectory_plots(results_dir, plots_root)
 
 
+def run_video_suite(
+    runs_root: Path,
+    results_dir: Path,
+    device: str,
+    baseline: str = "vanilla",
+    method: str = "proposed",
+) -> None:
+    """Generate side-by-side videos: Baseline vs Proposed.
+
+    Scans runs_root for both methods. Selects the run with the *highest
+    aggregated return* (if summary.csv is available) or picks the first
+    found seed as a fallback.
+    """
+    root = runs_root.resolve()
+    if not root.exists():
+        typer.echo(f"[suite] No runs_root directory found: {root}")
+        return
+
+    # Load summary for picking best seeds
+    summary_csv = results_dir / "summary_raw.csv"
+    best_runs = {}
+    if summary_csv.exists():
+        try:
+            df = pd.read_csv(summary_csv)
+            # Find best row per (env, method)
+            # Sort by mean_return descending
+            df = df.sort_values("mean_return", ascending=False)
+            for _, row in df.iterrows():
+                key = (str(row["env_id"]), str(row["method"]))
+                if key not in best_runs:
+                    best_runs[key] = Path(row["ckpt_path"])
+        except Exception:
+            pass
+
+    # Discover envs
+    run_dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    envs = set()
+    for rd in run_dirs:
+        info = _parse_run_name(rd)
+        if "env" in info:
+            envs.add(info["env"])
+
+    if not envs:
+        typer.echo("[suite] No environments found.")
+        return
+
+    video_dir = results_dir / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"[suite] Generating comparison videos ({baseline} vs {method}) for {len(envs)} envs...")
+
+    for env_id in sorted(envs):
+        # 1. Find checkpoint for Baseline
+        ckpt_l = best_runs.get((env_id, baseline))
+        if ckpt_l is None:
+            # Fallback scan
+            matches = [rd for rd in run_dirs if _parse_run_name(rd).get("env") == env_id and _parse_run_name(rd).get("method") == baseline]
+            if matches:
+                # pick first
+                ckpt_l = _find_latest_ckpt(matches[0])
+        
+        # 2. Find checkpoint for Proposed
+        ckpt_r = best_runs.get((env_id, method))
+        if ckpt_r is None:
+            matches = [rd for rd in run_dirs if _parse_run_name(rd).get("env") == env_id and _parse_run_name(rd).get("method") == method]
+            if matches:
+                ckpt_r = _find_latest_ckpt(matches[0])
+
+        if ckpt_l is None or ckpt_r is None:
+            typer.echo(f"[suite]    - {env_id}: missing checkpoints for one or both methods. Skipping.")
+            continue
+
+        out_name = f"{env_id.replace('/', '-')}__{baseline}_vs_{method}.mp4"
+        out_path = video_dir / out_name
+        
+        typer.echo(f"[suite]    - {env_id}: Rendering to {out_path}...")
+        try:
+            render_side_by_side(
+                env_id=env_id,
+                ckpt_left=ckpt_l,
+                ckpt_right=ckpt_r,
+                out_path=out_path,
+                seed=100, # Fixed seed for visualization fairness (and determinism)
+                device=device,
+                label_left=baseline.capitalize(),
+                label_right=method.capitalize(),
+            )
+        except Exception as exc:
+            typer.echo(f"[warn] Failed to render video for {env_id}: {exc}")
+
+
 @app.command("train")
 def cli_train(
     configs_dir: Path = typer.Option(
@@ -836,8 +932,7 @@ def cli_train(
         None,
         "--device",
         "-d",
-        help='Override device for training (e.g. "cpu" or "cuda:0"). '
-        "Defaults to each config's device field.",
+        help='Override device for training (e.g. "cpu" or "cuda:0"). "Defaults to each config\'s device field.',
     ),
     resume: bool = typer.Option(
         True,
@@ -948,6 +1043,52 @@ def cli_plots(
     )
 
 
+@app.command("videos")
+def cli_videos(
+    runs_root: Path = typer.Option(
+        Path("runs_suite"),
+        "--runs-root",
+        help="Root directory that holds suite run subdirectories.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    results_dir: Path = typer.Option(
+        Path("results_suite"),
+        "--results-dir",
+        "-o",
+        help="Directory where videos/ will be created.",
+    ),
+    device: str = typer.Option(
+        "cpu",
+        "--device",
+        "-d",
+        help='Device to use for rendering (e.g. "cpu" or "cuda:0").',
+    ),
+    baseline: str = typer.Option(
+        "vanilla",
+        "--baseline",
+        "-b",
+        help="Baseline method name (left side of video).",
+    ),
+    method: str = typer.Option(
+        "proposed",
+        "--method",
+        "-m",
+        help="Target method name (right side of video).",
+    ),
+) -> None:
+    """Generate side-by-side comparison videos for all environments."""
+    run_video_suite(
+        runs_root=runs_root,
+        results_dir=results_dir,
+        device=device,
+        baseline=baseline,
+        method=method,
+    )
+
+
 @app.command("full")
 def cli_full(
     configs_dir: Path = typer.Option(
@@ -995,8 +1136,7 @@ def cli_full(
         None,
         "--device",
         "-d",
-        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0"). '
-        "Defaults to each config's device field for training, and 'cpu' for eval if unset.",
+        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0"). "Defaults to each config\'s device field for training, and "cpu" for eval if unset.',
     ),
     episodes: int = typer.Option(
         5,
@@ -1038,7 +1178,7 @@ def cli_full(
         help="When enabled, auto-enable async vector envs for configs requesting multiple environments.",
     ),
 ) -> None:
-    """Run training, evaluation, and plotting in one shot."""
+    """Run training, evaluation, plotting, and video generation in one shot."""
     run_training_suite(
         configs_dir=configs_dir,
         include=include,
@@ -1069,6 +1209,14 @@ def cli_full(
         metric=metric,
         smooth=smooth,
         shade=shade,
+    )
+
+    run_video_suite(
+        runs_root=runs_root,
+        results_dir=results_dir,
+        device=eval_device,
+        baseline="vanilla",
+        method="proposed",
     )
 
 
