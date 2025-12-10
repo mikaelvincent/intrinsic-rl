@@ -161,7 +161,7 @@ def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.M
     step_before = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
 
     # Second run: patch run_train so the test fails if it is called.
-    import irl.experiments as exp_module
+    import irl.experiments.training as training_module
 
     called = {"count": 0}
 
@@ -169,7 +169,7 @@ def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.M
         called["count"] += 1
         raise AssertionError("run_train should not be invoked when run is already up to date")
 
-    monkeypatch.setattr(exp_module, "run_train", fake_run_train)
+    monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
     run_training_suite(
         configs_dir=configs_dir,
@@ -195,10 +195,12 @@ def test_suite_respects_async_vector_by_default(tmp_path: Path, monkeypatch: pyt
 
     captured = {}
 
+    import irl.experiments.training as training_module
+
     def fake_run_train(cfg, *args, **kwargs):
         captured["cfg"] = cfg
 
-    monkeypatch.setattr("irl.experiments.run_train", fake_run_train)
+    monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
     run_training_suite(
         configs_dir=configs_dir,
@@ -221,10 +223,12 @@ def test_suite_can_auto_enable_async_vector(tmp_path: Path, monkeypatch: pytest.
 
     captured = {}
 
+    import irl.experiments.training as training_module
+
     def fake_run_train(cfg, *args, **kwargs):
         captured["cfg"] = cfg
 
-    monkeypatch.setattr("irl.experiments.run_train", fake_run_train)
+    monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
     run_training_suite(
         configs_dir=configs_dir,
