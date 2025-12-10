@@ -35,7 +35,7 @@ import torch  # noqa: E402
 
 from irl.cfg import load_config
 from irl.cfg.schema import Config
-from irl.plot import aggregate_runs, parse_run_name
+from irl.plot import _aggregate_runs, _parse_run_name
 from irl.sweep import (
     RunResult,
     _aggregate,
@@ -199,7 +199,7 @@ def run_training_suite(
             ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
-                    f"[suite]   -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    f"[suite]  -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
                 )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
@@ -279,14 +279,14 @@ def run_eval_suite(
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
-            typer.echo(f"[suite]   - {rd.name}: no checkpoints found, skipping")
+            typer.echo(f"[suite]  - {rd.name}: no checkpoints found, skipping")
             continue
-        typer.echo(f"[suite]   - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
+        typer.echo(f"[suite]  - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
             res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]     ! evaluation failed: {exc}")
+            typer.echo(f"[suite]    ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -345,10 +345,10 @@ def run_plots_suite(
         typer.echo(f"[suite] No run directories under {root}")
         return
 
-    # Group run dirs by env and method using the public parser from irl.plot
+    # Group run dirs by env and method using the same parser as irl.plot
     groups: dict[str, dict[str, List[Path]]] = {}
     for rd in run_dirs:
-        info = parse_run_name(rd)
+        info = _parse_run_name(rd)
         env = info.get("env")
         method = info.get("method")
         if not env or not method:
@@ -371,7 +371,7 @@ def run_plots_suite(
 
         for method, dirs in sorted(by_method.items(), key=lambda kv: kv[0]):
             try:
-                agg = aggregate_runs(dirs, metric=metric, smooth=int(smooth))
+                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
             except Exception as exc:
                 typer.echo(
                     f"[suite] Plot skip for env={env_id}, method={method}: aggregate error ({exc})"
