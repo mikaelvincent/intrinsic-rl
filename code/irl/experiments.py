@@ -23,7 +23,7 @@ from __future__ import annotations
 import glob
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Dict
 
 # Ensure a non-interactive backend for headless environments before importing pyplot
 import matplotlib
@@ -199,7 +199,7 @@ def run_training_suite(
             ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
-                    f"[suite]  -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    f"[suite]   -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
                 )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
@@ -279,14 +279,14 @@ def run_eval_suite(
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
-            typer.echo(f"[suite]  - {rd.name}: no checkpoints found, skipping")
+            typer.echo(f"[suite]   - {rd.name}: no checkpoints found, skipping")
             continue
-        typer.echo(f"[suite]  - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
+        typer.echo(f"[suite]   - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
             res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]    ! evaluation failed: {exc}")
+            typer.echo(f"[suite]     ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -305,35 +305,81 @@ def run_eval_suite(
     typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
 
 
-def run_plots_suite(
-    runs_root: Path,
-    results_dir: Path,
+def _generate_comparison_plot(
+    groups_by_env: Dict[str, Dict[str, List[Path]]],
+    methods_to_plot: List[str],
     metric: str,
     smooth: int,
     shade: bool,
+    title: str,
+    filename_suffix: str,
+    plots_root: Path,
 ) -> None:
-    """Generate per-environment overlay plots from suite runs.
+    """Generate one plot per environment comparing specific methods."""
+    for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
+        # Filter available methods
+        relevant_methods = [m for m in methods_to_plot if m in by_method]
+        if not relevant_methods:
+            continue
 
-    Parameters
-    ----------
-    runs_root : Path
-        Root directory that holds individual run subdirectories.
-    results_dir : Path
-        Directory where the ``plots/`` subdirectory is created.
-    metric : str
-        Scalar metric name from ``scalars.csv`` to plot (for example
-        ``"reward_total_mean"``).
-    smooth : int
-        Moving-average window (in logged points) applied to each run
-        before aggregation. A value of ``1`` disables smoothing.
-    shade : bool
-        If ``True``, shade a ±1 standard deviation band around each
-        mean curve when at least two runs are available for a method.
+        fig, ax = plt.subplots(figsize=(9, 5))
+        any_plotted = False
 
-    Returns
-    -------
-    None
-        Plot images are written under ``results_dir / "plots"``.
+        # Sort methods to match the requested order (e.g. Proposed first/last)
+        for method in relevant_methods:
+            dirs = by_method[method]
+            try:
+                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
+            except Exception:
+                continue
+
+            if agg.n_runs == 0:
+                continue
+
+            label = f"{method} (n={agg.n_runs})"
+            ax.plot(agg.steps, agg.mean, label=label)
+            any_plotted = True
+
+            if shade and agg.n_runs >= 2 and agg.std.size > 0:
+                lo = agg.mean - agg.std
+                hi = agg.mean + agg.std
+                ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0)
+
+        if not any_plotted:
+            plt.close(fig)
+            continue
+
+        ax.set_xlabel("Environment steps")
+        ax.set_ylabel(metric.replace("_", " "))
+        ax.set_title(f"{env_id} — {title}")
+        ax.legend(loc="best")
+        ax.grid(True, alpha=0.3)
+
+        env_tag = env_id.replace("/", "-")
+        out = plots_root / f"{env_tag}__{filename_suffix}.png"
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format="png")
+        atomic_replace(tmp, out)
+        plt.close(fig)
+        typer.echo(f"[suite] Saved {filename_suffix} plot: {out}")
+
+
+def run_plots_suite(
+    runs_root: Path,
+    results_dir: Path,
+    metric: Optional[str],
+    smooth: int,
+    shade: bool,
+) -> None:
+    """Generate per-environment overlay plots.
+
+    If ``metric`` is provided, generates one generic overlay plot per environment
+    including all methods found.
+
+    If ``metric`` is ``None`` (Paper Mode), generates specific comparative plots:
+      1. Main Comparison (Extrinsic): Proposed vs Baselines (reward_mean).
+      2. Main Comparison (Total): Proposed vs Baselines (reward_total_mean).
+      3. Ablation Study: Proposed vs Variants (reward_mean).
     """
     root = runs_root.resolve()
     if not root.exists():
@@ -346,7 +392,7 @@ def run_plots_suite(
         return
 
     # Group run dirs by env and method using the same parser as irl.plot
-    groups: dict[str, dict[str, List[Path]]] = {}
+    groups: Dict[str, Dict[str, List[Path]]] = {}
     for rd in run_dirs:
         info = _parse_run_name(rd)
         env = info.get("env")
@@ -362,49 +408,66 @@ def run_plots_suite(
     plots_root = (results_dir / "plots").resolve()
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    for env_id, by_method in sorted(groups.items(), key=lambda kv: kv[0]):
-        if not by_method:
-            continue
+    if metric is not None:
+        # Legacy/Single-metric mode: Plot everything found
+        _generate_comparison_plot(
+            groups,
+            methods_to_plot=sorted({m for m_map in groups.values() for m in m_map}),
+            metric=metric,
+            smooth=smooth,
+            shade=shade,
+            title=f"All Methods ({metric})",
+            filename_suffix=f"overlay_{metric}",
+            plots_root=plots_root,
+        )
+        return
 
-        fig, ax = plt.subplots(figsize=(9, 5))
-        any_plotted = False
+    # --- Paper Mode: Generate specific figures ---
+    # Methods definitions
+    baselines = ["proposed", "ride", "rnd", "icm", "vanilla"]
+    ablations = [
+        "proposed",
+        "proposed_nogate",
+        "proposed_impact_only",
+        "proposed_lp_only",
+        "proposed_global_rms",
+    ]
 
-        for method, dirs in sorted(by_method.items(), key=lambda kv: kv[0]):
-            try:
-                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
-            except Exception as exc:
-                typer.echo(
-                    f"[suite] Plot skip for env={env_id}, method={method}: aggregate error ({exc})"
-                )
-                continue
+    # 1. Main Comparison (Extrinsic)
+    _generate_comparison_plot(
+        groups,
+        methods_to_plot=baselines,
+        metric="reward_mean",
+        smooth=10,  # Explicit smoothing for paper figures
+        shade=True,
+        title="Task Performance (Extrinsic Reward)",
+        filename_suffix="perf_extrinsic",
+        plots_root=plots_root,
+    )
 
-            label = f"{method} (n={agg.n_runs})"
-            ax.plot(agg.steps, agg.mean, label=label)
-            any_plotted = True
+    # 2. Main Comparison (Total Reward)
+    _generate_comparison_plot(
+        groups,
+        methods_to_plot=baselines,
+        metric="reward_total_mean",
+        smooth=10,
+        shade=True,
+        title="Total Reward Objective",
+        filename_suffix="perf_total",
+        plots_root=plots_root,
+    )
 
-            if shade and agg.n_runs >= 2 and agg.std.size > 0:
-                lo = agg.mean - agg.std
-                hi = agg.mean + agg.std
-                ax.fill_between(agg.steps, lo, hi, alpha=0.2, linewidth=0)
-
-        if not any_plotted:
-            plt.close(fig)
-            continue
-
-        ax.set_xlabel("Environment steps")
-        ax.set_ylabel(metric.replace("_", " "))
-        ax.set_title(f"{env_id} — {metric}")
-        ax.legend(loc="best")
-        ax.grid(True, alpha=0.3)
-
-        env_tag = env_id.replace("/", "-")
-        out = plots_root / f"{env_tag}__overlay_{metric}.png"
-        tmp = out.with_suffix(out.suffix + ".tmp")
-        fmt = out.suffix.lstrip(".") or "png"
-        fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
-        atomic_replace(tmp, out)
-        plt.close(fig)
-        typer.echo(f"[suite] Saved overlay plot: {out}")
+    # 3. Ablation Study
+    _generate_comparison_plot(
+        groups,
+        methods_to_plot=ablations,
+        metric="reward_mean",
+        smooth=10,
+        shade=True,
+        title="Ablation Study (Extrinsic Reward)",
+        filename_suffix="ablations",
+        plots_root=plots_root,
+    )
 
 
 @app.command("train")
@@ -538,22 +601,22 @@ def cli_plots(
         "-o",
         help="Directory where plots/ will be created.",
     ),
-    metric: str = typer.Option(
-        "reward_total_mean",
+    metric: Optional[str] = typer.Option(
+        None,
         "--metric",
         "-m",
-        help="Scalar metric name from scalars.csv to plot.",
+        help="Scalar metric to plot. If omitted, generates standard paper plots (Extrinsic, Total, Ablation).",
     ),
     smooth: int = typer.Option(
         5,
         "--smooth",
         "-s",
-        help="Moving-average window (in logged points) for smoothing.",
+        help="Moving-average window (in logged points). Used only if --metric is specified.",
     ),
     shade: bool = typer.Option(
         True,
         "--shade/--no-shade",
-        help="Shade ±1 std as a translucent band when ≥2 runs are available.",
+        help="Shade ±1 std band on overlay plots when ≥2 runs are available.",
     ),
 ) -> None:
     """Generate per-environment overlay plots from suite runs."""
@@ -628,11 +691,11 @@ def cli_full(
         "-o",
         help="Directory to write summaries and plots.",
     ),
-    metric: str = typer.Option(
-        "reward_total_mean",
+    metric: Optional[str] = typer.Option(
+        None,
         "--metric",
         "-m",
-        help="Scalar metric name from scalars.csv to plot.",
+        help="Scalar metric to plot. If omitted, generates standard paper plots.",
     ),
     smooth: int = typer.Option(
         5,
