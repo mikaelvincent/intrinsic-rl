@@ -149,9 +149,10 @@ class EnvManager:
             if self.render_mode is not None:
                 kwargs["render_mode"] = self.render_mode
 
-            # Ensure CarRacing works headless by using the dummy video driver if no display is detected.
-            # This prevents hangs/crashes on servers lacking an X server (e.g. CI, cloud VMs).
-            if _is_car_racing(self.env_id) and "SDL_VIDEODRIVER" not in os.environ:
+            # Force SDL to use the dummy driver if not otherwise configured.
+            # This prevents PyGame-based environments (Classic Control, Box2D) from
+            # attempting to open a window or spamming "XDG_RUNTIME_DIR not set" in headless setups.
+            if "SDL_VIDEODRIVER" not in os.environ:
                 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
             env = gym.make(self.env_id, **kwargs)
