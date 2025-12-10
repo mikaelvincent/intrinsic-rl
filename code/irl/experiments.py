@@ -199,7 +199,7 @@ def run_training_suite(
             ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
-                    f"[suite]   -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    f"[suite]    -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
                 )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
@@ -279,14 +279,14 @@ def run_eval_suite(
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
-            typer.echo(f"[suite]   - {rd.name}: no checkpoints found, skipping")
+            typer.echo(f"[suite]    - {rd.name}: no checkpoints found, skipping")
             continue
-        typer.echo(f"[suite]   - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
+        typer.echo(f"[suite]    - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
             res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]     ! evaluation failed: {exc}")
+            typer.echo(f"[suite]      ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -315,7 +315,11 @@ def _generate_comparison_plot(
     filename_suffix: str,
     plots_root: Path,
 ) -> None:
-    """Generate one plot per environment comparing specific methods."""
+    """Generate one plot per environment comparing specific methods.
+
+    Designed to highlight the 'Proposed' method by plotting it last (on top)
+    and applying thicker lines/higher opacity relative to baselines.
+    """
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         # Filter available methods
         relevant_methods = [m for m in methods_to_plot if m in by_method]
@@ -325,7 +329,8 @@ def _generate_comparison_plot(
         fig, ax = plt.subplots(figsize=(9, 5))
         any_plotted = False
 
-        # Sort methods to match the requested order (e.g. Proposed first/last)
+        # Iterate methods in the requested order.
+        # This determines Z-order: later items are drawn on top.
         for method in relevant_methods:
             dirs = by_method[method]
             try:
@@ -336,14 +341,23 @@ def _generate_comparison_plot(
             if agg.n_runs == 0:
                 continue
 
+            # Visual Emphasis Logic:
+            # - Proposed method gets higher z-order, thicker line, and full alpha.
+            # - Baselines are slightly more transparent and thinner to reduce clutter.
+            is_main_proposed = method.lower() == "proposed"
+            
+            lw = 2.5 if is_main_proposed else 1.5
+            alpha = 1.0 if is_main_proposed else 0.75
+            zorder = 10 if is_main_proposed else 2
+            
             label = f"{method} (n={agg.n_runs})"
-            ax.plot(agg.steps, agg.mean, label=label)
+            ax.plot(agg.steps, agg.mean, label=label, linewidth=lw, alpha=alpha, zorder=zorder)
             any_plotted = True
 
             if shade and agg.n_runs >= 2 and agg.std.size > 0:
                 lo = agg.mean - agg.std
                 hi = agg.mean + agg.std
-                ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0)
+                ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0, zorder=zorder-1)
 
         if not any_plotted:
             plt.close(fig)
@@ -423,22 +437,28 @@ def run_plots_suite(
         return
 
     # --- Paper Mode: Generate specific figures ---
-    # Methods definitions
-    baselines = ["proposed", "ride", "rnd", "icm", "vanilla"]
+    
+    # Define method order for plotting. Last item is drawn on top.
+    # We deliberately place 'proposed' last to ensure its line and shading 
+    # overlay the baselines for maximum visibility.
+    baselines = ["vanilla", "icm", "rnd", "ride", "proposed"]
+    
+    # Similarly for ablations, the full method should be the reference point on top.
     ablations = [
-        "proposed",
-        "proposed_nogate",
-        "proposed_impact_only",
-        "proposed_lp_only",
         "proposed_global_rms",
+        "proposed_lp_only",
+        "proposed_impact_only",
+        "proposed_nogate",
+        "proposed",
     ]
 
     # 1. Main Comparison (Extrinsic)
+    # Task performance. Smoothed reasonably to show trends.
     _generate_comparison_plot(
         groups,
         methods_to_plot=baselines,
         metric="reward_mean",
-        smooth=10,  # Explicit smoothing for paper figures
+        smooth=15, 
         shade=True,
         title="Task Performance (Extrinsic Reward)",
         filename_suffix="perf_extrinsic",
@@ -446,23 +466,26 @@ def run_plots_suite(
     )
 
     # 2. Main Comparison (Total Reward)
+    # The optimization objective. Since intrinsic rewards can be noisy/spiky,
+    # we use heavier smoothing here to visualize the "dense gradient" landscape clearly.
     _generate_comparison_plot(
         groups,
         methods_to_plot=baselines,
         metric="reward_total_mean",
-        smooth=10,
+        smooth=25, 
         shade=True,
-        title="Total Reward Objective",
+        title="Total Reward Objective (Smoothed)",
         filename_suffix="perf_total",
         plots_root=plots_root,
     )
 
     # 3. Ablation Study
+    # Component analysis using extrinsic reward.
     _generate_comparison_plot(
         groups,
         methods_to_plot=ablations,
         metric="reward_mean",
-        smooth=10,
+        smooth=15,
         shade=True,
         title="Ablation Study (Extrinsic Reward)",
         filename_suffix="ablations",
