@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import pandas as pd
+import torch
 
 from irl.experiments import run_video_suite
 import irl.video
@@ -15,7 +16,7 @@ def test_render_video_frame_composition(tmp_path, monkeypatch):
     
     # Mock dependencies to avoid real env/policy overhead
     mock_pol = MagicMock()
-    mock_pol.act.return_value = (np.array([0]), np.array([0.0])) # dummy action
+    mock_pol.act.return_value = (torch.tensor([0]), torch.tensor([0.0])) # dummy action
     
     # Mock _load_policy_for_eval to return our mock policy and a dummy config
     def mock_load(path, device):
