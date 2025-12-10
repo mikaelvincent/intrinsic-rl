@@ -334,7 +334,9 @@ def plot_normalized_summary(
     
     _ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    # Explicitly tell matplotlib the format to avoid "tmp" extension error
+    fmt = out_path.suffix.lstrip(".").lower() or "png"
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out_path)
     plt.close(fig)
 
@@ -405,7 +407,9 @@ def plot_trajectory_heatmap(
 
     _ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    # Explicitly tell matplotlib the format to avoid "tmp" extension error
+    fmt = out_path.suffix.lstrip(".").lower() or "png"
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out_path)
     plt.close(fig)
 
@@ -419,8 +423,7 @@ def cli_curves(
         ...,
         "--runs",
         "-r",
-        help='Glob(s) to run directories (e.g., "runs/proposed__BipedalWalker*"). '
-        "You may pass this option multiple times.",
+        help='Glob(s) to run directories (e.g., "runs/proposed__BipedalWalker*"). "You may pass this option multiple times.',
     ),
     metric: str = typer.Option(
         "reward_total_mean",
