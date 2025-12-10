@@ -23,7 +23,7 @@ from __future__ import annotations
 import glob
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Sequence, Dict
+from typing import List, Optional, Sequence
 
 # Ensure a non-interactive backend for headless environments before importing pyplot
 import matplotlib
@@ -199,7 +199,7 @@ def run_training_suite(
             ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
-                    f"[suite]   -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    f"[suite]  -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
                 )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
@@ -279,14 +279,14 @@ def run_eval_suite(
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
-            typer.echo(f"[suite]   - {rd.name}: no checkpoints found, skipping")
+            typer.echo(f"[suite]  - {rd.name}: no checkpoints found, skipping")
             continue
-        typer.echo(f"[suite]   - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
+        typer.echo(f"[suite]  - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
             res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]     ! evaluation failed: {exc}")
+            typer.echo(f"[suite]    ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -311,16 +311,8 @@ def run_plots_suite(
     metric: str,
     smooth: int,
     shade: bool,
-    ylabel: Optional[str] = None,
-    title: Optional[str] = None,
-    filename_suffix: Optional[str] = None,
 ) -> None:
     """Generate per-environment overlay plots from suite runs.
-
-    Features automatic styling to highlight the "Proposed" method:
-    - Thicker lines
-    - Top z-order
-    - Higher alpha
 
     Parameters
     ----------
@@ -337,12 +329,6 @@ def run_plots_suite(
     shade : bool
         If ``True``, shade a ±1 standard deviation band around each
         mean curve when at least two runs are available for a method.
-    ylabel : str, optional
-        Custom Y-axis label. Defaults to metric name if None.
-    title : str, optional
-        Custom chart title prefix.
-    filename_suffix : str, optional
-        Suffix for the output filename (e.g. "extrinsic"). Defaults to metric name.
 
     Returns
     -------
@@ -383,17 +369,7 @@ def run_plots_suite(
         fig, ax = plt.subplots(figsize=(9, 5))
         any_plotted = False
 
-        # Sort methods to draw "proposed" last (on top) for visual clarity.
-        # Primary sort key: is_proposed (False first, True last).
-        # Secondary sort key: method name (alphabetical).
-        def sort_key(item):
-            method_name, _ = item
-            is_proposed = "proposed" in method_name.lower()
-            return (is_proposed, method_name)
-
-        sorted_methods = sorted(by_method.items(), key=sort_key)
-
-        for method, dirs in sorted_methods:
+        for method, dirs in sorted(by_method.items(), key=lambda kv: kv[0]):
             try:
                 agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
             except Exception as exc:
@@ -402,62 +378,27 @@ def run_plots_suite(
                 )
                 continue
 
-            # Styling for high impact
-            is_proposed = "proposed" in method.lower()
-            
-            # Label
             label = f"{method} (n={agg.n_runs})"
-            
-            # Proposed gets emphasis
-            linewidth = 2.5 if is_proposed else 1.5
-            alpha = 1.0 if is_proposed else 0.7
-            zorder = 10 if is_proposed else 2  # Higher draws on top
-
-            p = ax.plot(
-                agg.steps, 
-                agg.mean, 
-                label=label, 
-                linewidth=linewidth, 
-                alpha=alpha,
-                zorder=zorder
-            )
+            ax.plot(agg.steps, agg.mean, label=label)
             any_plotted = True
 
             if shade and agg.n_runs >= 2 and agg.std.size > 0:
                 lo = agg.mean - agg.std
                 hi = agg.mean + agg.std
-                color = p[0].get_color()
-                # Translucent band matching line color
-                ax.fill_between(
-                    agg.steps, 
-                    lo, 
-                    hi, 
-                    color=color, 
-                    alpha=0.2 if is_proposed else 0.1, 
-                    linewidth=0,
-                    zorder=zorder - 1  # Band below line
-                )
+                ax.fill_between(agg.steps, lo, hi, alpha=0.2, linewidth=0)
 
         if not any_plotted:
             plt.close(fig)
             continue
 
         ax.set_xlabel("Environment steps")
-        ax.set_ylabel(ylabel or metric.replace("_", " "))
-        
-        title_text = title or f"{env_id} — {metric}"
-        if title:
-            ax.set_title(f"{env_id} — {title}")
-        else:
-            ax.set_title(f"{env_id} — {metric}")
-            
+        ax.set_ylabel(metric.replace("_", " "))
+        ax.set_title(f"{env_id} — {metric}")
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
 
         env_tag = env_id.replace("/", "-")
-        suffix = filename_suffix or metric
-        out = plots_root / f"{env_tag}__overlay_{suffix}.png"
-        
+        out = plots_root / f"{env_tag}__overlay_{metric}.png"
         tmp = out.with_suffix(out.suffix + ".tmp")
         fmt = out.suffix.lstrip(".") or "png"
         fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
@@ -513,7 +454,8 @@ def cli_train(
         None,
         "--device",
         "-d",
-        help='Override device for training (e.g. "cpu" or "cuda:0"). "Defaults to each config\'s device field.',
+        help='Override device for training (e.g. "cpu" or "cuda:0"). '
+        "Defaults to each config's device field.",
     ),
     resume: bool = typer.Option(
         True,
@@ -671,7 +613,8 @@ def cli_full(
         None,
         "--device",
         "-d",
-        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0"). "Defaults to each config\'s device field for training, and \'cpu\' for eval if unset.',
+        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0"). '
+        "Defaults to each config's device field for training, and 'cpu' for eval if unset.",
     ),
     episodes: int = typer.Option(
         5,
@@ -713,11 +656,7 @@ def cli_full(
         help="When enabled, auto-enable async vector envs for configs requesting multiple environments.",
     ),
 ) -> None:
-    """Run training, evaluation, and plotting in one shot.
-
-    Automatically generates Extrinsic Return and Total Return plots to compare
-    task performance and optimization objectives.
-    """
+    """Run training, evaluation, and plotting in one shot."""
     run_training_suite(
         configs_dir=configs_dir,
         include=include,
@@ -742,30 +681,12 @@ def cli_full(
         device=eval_device,
     )
 
-    # 1. Extrinsic Return (Task Performance)
-    # The pure measure of task success, unbiased by intrinsic shaping.
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        metric="reward_mean",
+        metric=metric,
         smooth=smooth,
         shade=shade,
-        ylabel="Extrinsic Return",
-        title="Task Performance (Extrinsic)",
-        filename_suffix="extrinsic_return",
-    )
-
-    # 2. Total Return (Optimization Objective)
-    # Shows the density/scale of the signal the agent actually sees.
-    run_plots_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        metric="reward_total_mean",
-        smooth=smooth,
-        shade=shade,
-        ylabel="Total Return (Ext + Int)",
-        title="Optimization Objective (Total Return)",
-        filename_suffix="total_return",
     )
 
 
