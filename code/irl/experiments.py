@@ -199,7 +199,7 @@ def run_training_suite(
             ):
                 cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
                 typer.echo(
-                    f"[suite]   -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    f"[suite]  -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
                 )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
@@ -279,14 +279,14 @@ def run_eval_suite(
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
         if ckpt is None:
-            typer.echo(f"[suite]   - {rd.name}: no checkpoints found, skipping")
+            typer.echo(f"[suite]  - {rd.name}: no checkpoints found, skipping")
             continue
-        typer.echo(f"[suite]   - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
+        typer.echo(f"[suite]  - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
             res = _evaluate_ckpt(ckpt, episodes=episodes, device=device)
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]     ! evaluation failed: {exc}")
+            typer.echo(f"[suite]    ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -305,26 +305,14 @@ def run_eval_suite(
     typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
 
 
-def _method_sort_key(method_name: str) -> tuple[int, str]:
-    """Sort key to ensure 'proposed' comes last (plotted on top)."""
-    m = method_name.lower()
-    if "proposed" in m:
-        return (1, m)
-    return (0, m)
-
-
 def run_plots_suite(
     runs_root: Path,
     results_dir: Path,
-    metrics: Sequence[str],
+    metric: str,
     smooth: int,
     shade: bool,
 ) -> None:
     """Generate per-environment overlay plots from suite runs.
-
-    Supports generating multiple plots per environment (one for each metric).
-    Specifically highlights the 'Proposed' method with thicker lines and higher
-    z-order to ensure visibility.
 
     Parameters
     ----------
@@ -332,9 +320,9 @@ def run_plots_suite(
         Root directory that holds individual run subdirectories.
     results_dir : Path
         Directory where the ``plots/`` subdirectory is created.
-    metrics : Sequence[str]
-        List of scalar metric names from ``scalars.csv`` to plot (e.g.
-        ``["reward_mean", "reward_total_mean"]``).
+    metric : str
+        Scalar metric name from ``scalars.csv`` to plot (for example
+        ``"reward_total_mean"``).
     smooth : int
         Moving-average window (in logged points) applied to each run
         before aggregation. A value of ``1`` disables smoothing.
@@ -374,72 +362,49 @@ def run_plots_suite(
     plots_root = (results_dir / "plots").resolve()
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    for metric in metrics:
-        typer.echo(f"[suite] Generating plots for metric: {metric}")
-        for env_id, by_method in sorted(groups.items(), key=lambda kv: kv[0]):
-            if not by_method:
-                continue
+    for env_id, by_method in sorted(groups.items(), key=lambda kv: kv[0]):
+        if not by_method:
+            continue
 
-            fig, ax = plt.subplots(figsize=(9, 5))
-            any_plotted = False
+        fig, ax = plt.subplots(figsize=(9, 5))
+        any_plotted = False
 
-            # Sort methods so Proposed is last (on top)
-            methods_sorted = sorted(by_method.items(), key=lambda kv: _method_sort_key(kv[0]))
-
-            for method, dirs in methods_sorted:
-                try:
-                    agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
-                except Exception as exc:
-                    # Metric might be missing for some methods (e.g. intrinsic metrics for vanilla)
-                    # Be quiet about expected misses, verbose about errors.
-                    if "not found" in str(exc).lower():
-                        continue
-                    typer.echo(
-                        f"[suite] Plot skip for env={env_id}, method={method}: aggregate error ({exc})"
-                    )
-                    continue
-
-                label = f"{method} (n={agg.n_runs})"
-
-                # Style logic: highlight Proposed
-                is_proposed = "proposed" in method.lower()
-                lw = 2.5 if is_proposed else 1.5
-                alpha = 1.0 if is_proposed else 0.8
-                zorder = 10 if is_proposed else 2
-
-                ax.plot(
-                    agg.steps,
-                    agg.mean,
-                    label=label,
-                    linewidth=lw,
-                    alpha=alpha,
-                    zorder=zorder,
+        for method, dirs in sorted(by_method.items(), key=lambda kv: kv[0]):
+            try:
+                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
+            except Exception as exc:
+                typer.echo(
+                    f"[suite] Plot skip for env={env_id}, method={method}: aggregate error ({exc})"
                 )
-                any_plotted = True
-
-                if shade and agg.n_runs >= 2 and agg.std.size > 0:
-                    lo = agg.mean - agg.std
-                    hi = agg.mean + agg.std
-                    ax.fill_between(agg.steps, lo, hi, alpha=0.2, linewidth=0, zorder=zorder - 1)
-
-            if not any_plotted:
-                plt.close(fig)
                 continue
 
-            ax.set_xlabel("Environment steps")
-            ax.set_ylabel(metric.replace("_", " "))
-            ax.set_title(f"{env_id} — {metric}")
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
+            label = f"{method} (n={agg.n_runs})"
+            ax.plot(agg.steps, agg.mean, label=label)
+            any_plotted = True
 
-            env_tag = env_id.replace("/", "-")
-            out = plots_root / f"{env_tag}__overlay_{metric}.png"
-            tmp = out.with_suffix(out.suffix + ".tmp")
-            fmt = out.suffix.lstrip(".") or "png"
-            fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
-            atomic_replace(tmp, out)
+            if shade and agg.n_runs >= 2 and agg.std.size > 0:
+                lo = agg.mean - agg.std
+                hi = agg.mean + agg.std
+                ax.fill_between(agg.steps, lo, hi, alpha=0.2, linewidth=0)
+
+        if not any_plotted:
             plt.close(fig)
-            typer.echo(f"[suite] Saved overlay plot: {out}")
+            continue
+
+        ax.set_xlabel("Environment steps")
+        ax.set_ylabel(metric.replace("_", " "))
+        ax.set_title(f"{env_id} — {metric}")
+        ax.legend(loc="best")
+        ax.grid(True, alpha=0.3)
+
+        env_tag = env_id.replace("/", "-")
+        out = plots_root / f"{env_tag}__overlay_{metric}.png"
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        fmt = out.suffix.lstrip(".") or "png"
+        fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
+        atomic_replace(tmp, out)
+        plt.close(fig)
+        typer.echo(f"[suite] Saved overlay plot: {out}")
 
 
 @app.command("train")
@@ -489,7 +454,8 @@ def cli_train(
         None,
         "--device",
         "-d",
-        help='Override device for training (e.g. "cpu" or "cuda:0"). "Defaults to config.',
+        help='Override device for training (e.g. "cpu" or "cuda:0"). '
+        "Defaults to each config's device field.",
     ),
     resume: bool = typer.Option(
         True,
@@ -572,11 +538,11 @@ def cli_plots(
         "-o",
         help="Directory where plots/ will be created.",
     ),
-    metric: List[str] = typer.Option(
-        ["reward_mean", "reward_total_mean"],
+    metric: str = typer.Option(
+        "reward_total_mean",
         "--metric",
         "-m",
-        help="Scalar metric(s) to plot. Can be repeated. Defaults to extrinsic and total returns.",
+        help="Scalar metric name from scalars.csv to plot.",
     ),
     smooth: int = typer.Option(
         5,
@@ -594,7 +560,7 @@ def cli_plots(
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        metrics=metric,
+        metric=metric,
         smooth=smooth,
         shade=shade,
     )
@@ -616,7 +582,7 @@ def cli_full(
         [],
         "--include",
         "-i",
-        help="Glob(s) relative to configs_dir to select configs. "
+        help="Glob(s) relative to configs_dir to select configs (e.g. 'mountaincar_*.yaml'). "
         "If omitted, all *.yaml/ *.yml files are used.",
     ),
     exclude: List[str] = typer.Option(
@@ -647,7 +613,8 @@ def cli_full(
         None,
         "--device",
         "-d",
-        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0").',
+        help='Override device for training/evaluation (e.g. "cpu" or "cuda:0"). '
+        "Defaults to each config's device field for training, and 'cpu' for eval if unset.",
     ),
     episodes: int = typer.Option(
         5,
@@ -661,11 +628,11 @@ def cli_full(
         "-o",
         help="Directory to write summaries and plots.",
     ),
-    metric: List[str] = typer.Option(
-        ["reward_mean", "reward_total_mean"],
+    metric: str = typer.Option(
+        "reward_total_mean",
         "--metric",
         "-m",
-        help="Scalar metric name(s) to plot.",
+        help="Scalar metric name from scalars.csv to plot.",
     ),
     smooth: int = typer.Option(
         5,
@@ -717,7 +684,7 @@ def cli_full(
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        metrics=metric,
+        metric=metric,
         smooth=smooth,
         shade=shade,
     )
