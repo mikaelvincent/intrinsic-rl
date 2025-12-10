@@ -4,6 +4,7 @@ Includes commands for:
 - Learning curves with optional smoothing and shaded standard deviation across seeds.
 - Overlays of multiple method groups (each group may include many runs).
 - Bar charts from aggregated sweep results (``results/summary.csv``).
+- Trajectory heatmaps showing exploration and gating in state space.
 
 Typical usage
 -------------
@@ -331,6 +332,77 @@ def plot_normalized_summary(
     
     fig.tight_layout()
     
+    _ensure_parent(out_path)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    atomic_replace(tmp, out_path)
+    plt.close(fig)
+
+
+def plot_trajectory_heatmap(
+    npz_path: Path,
+    out_path: Path,
+    max_points: int = 20000,
+) -> None:
+    """Generate 2D trajectory scatter plot colored by Gate State or Intrinsic Value.
+
+    Loads observations from a .npz file (saved by evaluator with save_traj=True).
+    Projects to the first two observation dimensions.
+    """
+    if not npz_path.exists():
+        return
+
+    try:
+        data = np.load(npz_path)
+        obs = data["obs"]
+        gates = data["gates"]
+        # intrinsic = data["intrinsic"]  # currently unused, but available for color
+    except Exception:
+        return
+
+    # Subsample if too large to keep plotting fast and file size small
+    N = obs.shape[0]
+    if N > max_points:
+        idx = np.linspace(0, N - 1, max_points, dtype=int)
+        obs = obs[idx]
+        gates = gates[idx]
+
+    # Heuristic projection: Dim 0 vs Dim 1 (Works for MountainCar, Ant position-like dims)
+    if obs.shape[1] < 2:
+        return  # Cannot plot 2D
+
+    x = obs[:, 0]
+    y = obs[:, 1]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot Gated points (0) as background, Active points (1) as foreground highlight
+    # Masking
+    mask_active = (gates == 1)
+    mask_gated = (gates == 0)
+
+    # Plot Gated (Background, Grey/Muted)
+    if mask_gated.any():
+        ax.scatter(
+            x[mask_gated], y[mask_gated],
+            c='lightgray', s=10, alpha=0.5, label="Gated (Mastered/Noise)",
+            edgecolor='none'
+        )
+
+    # Plot Active (Foreground, Red/Hot)
+    if mask_active.any():
+        ax.scatter(
+            x[mask_active], y[mask_active],
+            c='tab:red', s=15, alpha=0.8, label="Active (Learning)",
+            edgecolor='none'
+        )
+
+    ax.set_xlabel("State Dim 0")
+    ax.set_ylabel("State Dim 1")
+    ax.set_title("Exploration Heatmap: Active vs Gated Regions")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+
     _ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
