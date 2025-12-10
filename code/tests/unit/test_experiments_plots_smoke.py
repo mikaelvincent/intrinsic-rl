@@ -41,7 +41,7 @@ def test_run_plots_suite_with_synthetic_scalars(tmp_path: Path) -> None:
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        metrics=["reward_total_mean"],
+        metric="reward_total_mean",
         smooth=1,
         shade=True,
     )
