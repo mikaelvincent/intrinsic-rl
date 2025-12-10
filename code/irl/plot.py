@@ -39,7 +39,7 @@ import glob
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Set
 
 # Use a non-interactive backend for headless environments
 import matplotlib
@@ -151,7 +151,9 @@ def _aggregate_runs(
     Smoothing is applied per-run first.
     """
     if not run_dirs:
-        raise ValueError("No run directories to aggregate.")
+        return AggregateResult(
+            np.array([]), np.array([]), np.array([]), 0, None, None
+        )
 
     method_cand: set[str] = set()
     env_cand: set[str] = set()
@@ -164,7 +166,11 @@ def _aggregate_runs(
         if "env" in info:
             env_cand.add(info["env"])
 
-        df = _read_scalars(rd)
+        try:
+            df = _read_scalars(rd)
+        except Exception:
+            continue
+
         if metric not in df.columns:
             # Soft fallback: prefer reward_total_mean, then reward_mean
             fallback = None
@@ -172,11 +178,10 @@ def _aggregate_runs(
                 fallback = "reward_total_mean"
             elif metric != "reward_mean" and "reward_mean" in df.columns:
                 fallback = "reward_mean"
+            
             if fallback is None:
-                raise ValueError(
-                    f"Metric '{metric}' not found in {rd}/logs/scalars.csv; "
-                    "no suitable fallback available."
-                )
+                # Metric missing in this run; skip it
+                continue
             metric_local = fallback
         else:
             metric_local = metric
@@ -186,6 +191,11 @@ def _aggregate_runs(
         s = pd.Series(y.values, index=x.values).dropna()
         s = _smooth_series(s, smooth)
         series_per_run.append(s)
+
+    if not series_per_run:
+        return AggregateResult(
+            np.array([]), np.array([]), np.array([]), 0, None, None
+        )
 
     # Union all steps and compute mean/std at each step over available runs
     all_steps = sorted(set().union(*[set(s.index) for s in series_per_run]))
@@ -266,6 +276,9 @@ def cli_curves(
         raise typer.BadParameter("No matching run directories found for --runs.")
 
     agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+    if agg.n_runs == 0:
+        typer.echo("[warn] No valid data found for metric in specified runs.")
+        return
 
     fig, ax = plt.subplots(figsize=(8, 5))
     lbl = label or f"{(agg.method_hint or '').strip()} {(agg.env_hint or '').strip()}".strip()
@@ -353,9 +366,13 @@ def cli_overlay(
         patterns = [p.strip() for p in spec.split(",") if p.strip()]
         run_dirs = _expand_run_dirs(patterns)
         if not run_dirs:
-            raise typer.BadParameter(f"No runs found for group {i+1} spec: {spec!r}")
+            typer.echo(f"[warn] No runs found for group {i+1} spec: {spec!r}, skipping.")
+            continue
 
         agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+        if agg.n_runs == 0:
+            continue
+
         lbl = (
             (labels[i] if labels and i < len(labels) else None) or agg.method_hint or f"group-{i+1}"
         )
@@ -464,7 +481,7 @@ def cli_bars(
             env_name = str(d["env_id"].iloc[0]) if not d.empty else ""
             ax.set_title(f"{env_name} — Mean Return (± std)")
             ax.set_ylabel("Mean return")
-            ax.grid(True, axis="y", alpha=0.3)
+            ax.set_grid(True, axis="y", alpha=0.3)
             ax.tick_params(axis="x", labelrotation=30)
         axes[-1, 0].set_xlabel("Method")
         fig.tight_layout()
