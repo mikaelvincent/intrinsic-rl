@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from irl.plot import _aggregate_runs
+from irl.plot import aggregate_runs
 
 
 def test_plot_aggregate_runs(tmp_path):
@@ -12,7 +12,7 @@ def test_plot_aggregate_runs(tmp_path):
     csv_path = logs / "scalars.csv"
     csv_path.write_text("step,reward_total_mean\n0,0.0\n1000,1.5\n", encoding="utf-8")
 
-    agg = _aggregate_runs([run_dir], metric="reward_total_mean", smooth=1)
+    agg = aggregate_runs([run_dir], metric="reward_total_mean", smooth=1)
 
     assert agg.n_runs == 1
     assert agg.steps.shape[0] == 2
