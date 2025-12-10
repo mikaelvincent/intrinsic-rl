@@ -321,7 +321,7 @@ def run_eval_suite(
             )
             results.append(res)
         except Exception as exc:
-            typer.echo(f"[suite]        ! evaluation failed: {exc}")
+            typer.echo(f"[suite]         ! evaluation failed: {exc}")
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
@@ -377,22 +377,24 @@ def _generate_comparison_plot(
                 continue
 
             # Visual Emphasis Logic:
-            # - Proposed method gets higher z-order, thicker line, and full alpha.
-            # - Baselines are slightly more transparent and thinner to reduce clutter.
+            # - Proposed method gets higher z-order, thicker line, full alpha, and explicit red color.
+            # - Baselines are slightly more transparent, thinner, and rely on cycle colors.
             is_main_proposed = method.lower() == "proposed"
             
             lw = 2.5 if is_main_proposed else 1.5
-            alpha = 1.0 if is_main_proposed else 0.75
+            alpha = 1.0 if is_main_proposed else 0.6
             zorder = 10 if is_main_proposed else 2
+            color = "#d62728" if is_main_proposed else None  # tab:red for proposed
             
             label = f"{method} (n={agg.n_runs})"
-            ax.plot(agg.steps, agg.mean, label=label, linewidth=lw, alpha=alpha, zorder=zorder)
+            ax.plot(agg.steps, agg.mean, label=label, linewidth=lw, alpha=alpha, zorder=zorder, color=color)
             any_plotted = True
 
             if shade and agg.n_runs >= 2 and agg.std.size > 0:
                 lo = agg.mean - agg.std
                 hi = agg.mean + agg.std
-                ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0, zorder=zorder-1)
+                # Pass color so shading matches line, but with low alpha
+                ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0, zorder=zorder-1, color=color)
 
         if not any_plotted:
             plt.close(fig)
@@ -598,7 +600,7 @@ def _generate_trajectory_plots(
     plots_root: Path,
 ) -> None:
     """Generate heatmaps for all saved trajectories in results_dir/plots/trajectories.
-    
+     
     Looks for .npz files saved by the evaluation step.
     """
     traj_dir = results_dir / "plots" / "trajectories"
@@ -693,9 +695,9 @@ def run_plots_suite(
     # overlay the baselines for maximum visibility.
     baselines = ["vanilla", "icm", "rnd", "ride", "proposed"]
     
-    # Similarly for ablations, the full method should be the reference point on top.
+    # Ablations: Strictly use the components requested by the design plan.
+    # Order: Weakest first -> Strongest (Proposed) last.
     ablations = [
-        "proposed_global_rms",
         "proposed_lp_only",
         "proposed_impact_only",
         "proposed_nogate",
