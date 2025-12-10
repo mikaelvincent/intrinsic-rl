@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+import numpy as np
+import pytest
+import pandas as pd
+
+from irl.experiments import run_video_suite
+import irl.video
+
+
+def test_render_video_frame_composition(tmp_path, monkeypatch):
+    """Test that render_side_by_side correctly stitches frames from two envs."""
+    
+    # Mock dependencies to avoid real env/policy overhead
+    mock_pol = MagicMock()
+    mock_pol.act.return_value = (np.array([0]), np.array([0.0])) # dummy action
+    
+    # Mock _load_policy_for_eval to return our mock policy and a dummy config
+    def mock_load(path, device):
+        return mock_pol, {"env": {"frame_skip": 1, "discrete_actions": True}}
+    
+    monkeypatch.setattr(irl.video, "_load_policy_for_eval", mock_load)
+    
+    # Mock EnvManager to return a dummy env that produces predictable frames
+    class MockEnv:
+        def __init__(self, *args, **kwargs):
+            self.action_space = MagicMock()
+            self.action_space.shape = () # discrete
+        def reset(self, **kwargs):
+            return np.zeros(2), {}
+        def step(self, action):
+            return np.zeros(2), 1.0, False, False, {}
+        def render(self):
+            # Return a 10x10 white square
+            return np.full((10, 10, 3), 255, dtype=np.uint8)
+        def close(self): pass
+
+    mock_manager = MagicMock()
+    mock_manager.make.return_value = MockEnv()
+    
+    # Patch the EnvManager constructor in irl.video to return our mock manager
+    monkeypatch.setattr(irl.video, "EnvManager", MagicMock(return_value=mock_manager))
+    
+    # Mock imageio to intercept save
+    mock_mimsave = MagicMock()
+    monkeypatch.setattr(irl.video.imageio, "mimsave", mock_mimsave)
+
+    out_path = tmp_path / "test_video.mp4"
+    
+    # Run
+    irl.video.render_side_by_side(
+        env_id="Dummy-v0",
+        ckpt_left=Path("dummy_left.pt"),
+        ckpt_right=Path("dummy_right.pt"),
+        out_path=out_path,
+        max_steps=5,
+        device="cpu"
+    )
+    
+    # Verify
+    assert mock_mimsave.called
+    args, _ = mock_mimsave.call_args
+    path_arg, frames_arg = args
+    assert str(path_arg) == str(out_path)
+    assert len(frames_arg) > 0
+    # Check dimensions: 2 images of 10 width side-by-side -> width 20 approx
+    # (PIL text overlay might resize, but basic stitching structure should hold)
+    frame = frames_arg[0]
+    assert frame.shape[2] == 3 # RGB
+    assert frame.shape[1] >= 20 # Width at least 10+10
+
+
+def test_video_suite_selection_logic(tmp_path, monkeypatch):
+    """Test that run_video_suite picks the best checkpoint from summary.csv."""
+    runs_root = tmp_path / "runs"
+    results_dir = tmp_path / "results"
+    
+    # Setup directories
+    runs_root.mkdir()
+    results_dir.mkdir()
+    
+    # Create fake run dirs
+    (runs_root / "vanilla__Env-v0__seed1__A").mkdir(parents=True)
+    (runs_root / "proposed__Env-v0__seed2__B").mkdir(parents=True)
+    
+    # Create fake checkpoints
+    (runs_root / "vanilla__Env-v0__seed1__A" / "checkpoints").mkdir()
+    (runs_root / "vanilla__Env-v0__seed1__A" / "checkpoints" / "ckpt_latest.pt").touch()
+    
+    (runs_root / "proposed__Env-v0__seed2__B" / "checkpoints").mkdir()
+    (runs_root / "proposed__Env-v0__seed2__B" / "checkpoints" / "ckpt_latest.pt").touch()
+
+    # Create summary_raw.csv showing seed2 is better for Proposed
+    # We'll rely on fallback for Vanilla if not in summary, or just put both.
+    df = pd.DataFrame([
+        {
+            "env_id": "Env-v0", "method": "vanilla", "seed": 1, 
+            "mean_return": 10.0, "ckpt_path": str(runs_root / "vanilla__Env-v0__seed1__A" / "checkpoints" / "ckpt_latest.pt")
+        },
+        {
+            "env_id": "Env-v0", "method": "proposed", "seed": 2, 
+            "mean_return": 100.0, "ckpt_path": str(runs_root / "proposed__Env-v0__seed2__B" / "checkpoints" / "ckpt_latest.pt")
+        }
+    ])
+    df.to_csv(results_dir / "summary_raw.csv", index=False)
+
+    # Mock render_side_by_side to verifying it gets called with correct paths
+    mock_render = MagicMock()
+    monkeypatch.setattr("irl.experiments.render_side_by_side", mock_render)
+
+    run_video_suite(
+        runs_root=runs_root,
+        results_dir=results_dir,
+        device="cpu",
+        baseline="vanilla",
+        method="proposed"
+    )
+
+    assert mock_render.called
+    _, kwargs = mock_render.call_args
+    assert kwargs["env_id"] == "Env-v0"
+    # It should pick the specific checkpoints listed in best_runs derived from CSV
+    assert "vanilla__Env-v0__seed1__A" in str(kwargs["ckpt_left"])
+    assert "proposed__Env-v0__seed2__B" in str(kwargs["ckpt_right"])
