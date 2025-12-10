@@ -16,7 +16,7 @@ def test_render_video_frame_composition(tmp_path, monkeypatch):
     
     # Mock dependencies to avoid real env/policy overhead
     mock_pol = MagicMock()
-    mock_pol.act.return_value = (torch.tensor([0]), torch.tensor([0.0])) # dummy action
+    mock_pol.act.return_value = (torch.tensor([0]), torch.tensor([0.0]))  # dummy action
     
     # Mock _load_policy_for_eval to return our mock policy and a dummy config
     def mock_load(path, device):
@@ -28,7 +28,7 @@ def test_render_video_frame_composition(tmp_path, monkeypatch):
     class MockEnv:
         def __init__(self, *args, **kwargs):
             self.action_space = MagicMock()
-            self.action_space.shape = () # discrete
+            self.action_space.shape = ()  # discrete
         def reset(self, **kwargs):
             return np.zeros(2), {}
         def step(self, action):
@@ -36,7 +36,8 @@ def test_render_video_frame_composition(tmp_path, monkeypatch):
         def render(self):
             # Return a 10x10 white square
             return np.full((10, 10, 3), 255, dtype=np.uint8)
-        def close(self): pass
+        def close(self): 
+            pass
 
     mock_manager = MagicMock()
     mock_manager.make.return_value = MockEnv()
@@ -69,8 +70,8 @@ def test_render_video_frame_composition(tmp_path, monkeypatch):
     # Check dimensions: 2 images of 10 width side-by-side -> width 20 approx
     # (PIL text overlay might resize, but basic stitching structure should hold)
     frame = frames_arg[0]
-    assert frame.shape[2] == 3 # RGB
-    assert frame.shape[1] >= 20 # Width at least 10+10
+    assert frame.shape[2] == 3  # RGB
+    assert frame.shape[1] >= 20  # Width at least 10+10
 
 
 def test_video_suite_selection_logic(tmp_path, monkeypatch):
@@ -94,7 +95,6 @@ def test_video_suite_selection_logic(tmp_path, monkeypatch):
     (runs_root / "proposed__Env-v0__seed2__B" / "checkpoints" / "ckpt_latest.pt").touch()
 
     # Create summary_raw.csv showing seed2 is better for Proposed
-    # We'll rely on fallback for Vanilla if not in summary, or just put both.
     df = pd.DataFrame([
         {
             "env_id": "Env-v0", "method": "vanilla", "seed": 1, 
@@ -105,11 +105,12 @@ def test_video_suite_selection_logic(tmp_path, monkeypatch):
             "mean_return": 100.0, "ckpt_path": str(runs_root / "proposed__Env-v0__seed2__B" / "checkpoints" / "ckpt_latest.pt")
         }
     ])
+    (results_dir / "summary_raw.csv").parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(results_dir / "summary_raw.csv", index=False)
 
     # Mock render_side_by_side to verifying it gets called with correct paths
     mock_render = MagicMock()
-    monkeypatch.setattr("irl.experiments.render_side_by_side", mock_render)
+    monkeypatch.setattr("irl.experiments.videos.render_side_by_side", mock_render)
 
     run_video_suite(
         runs_root=runs_root,
