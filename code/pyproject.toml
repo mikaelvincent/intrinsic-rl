@@ -11,7 +11,6 @@ authors = [{ name = "Intrinsic RL Team" }]
 keywords = ["reinforcement-learning", "intrinsic-motivation", "ppo", "research"]
 
 # Core runtime deps kept intentionally lean.
-# Environment-specific heavy deps (Box2D, MuJoCo) are provided as optional extras below.
 dependencies = [
   "torch>=2.1",
   "gymnasium>=1.2",
@@ -20,6 +19,8 @@ dependencies = [
   "matplotlib>=3.7",
   "typer>=0.9",
   "pyyaml>=6.0",
+  "imageio>=2.30",  # Video generation
+  "pillow>=10.0",   # Image manipulation/text overlay
 ]
 
 [project.optional-dependencies]
@@ -61,10 +62,10 @@ sb3 = [
 [project.scripts]
 # Stub CLIs (lightweight entry points; see irl.__main__.py for routing)
 intrinsic-rl = "irl.__main__:main"
-irl-train     = "irl.train:main"
-irl-eval      = "irl.eval:main"
-irl-plot      = "irl.plot:main"
-irl-sweep     = "irl.sweep:main"
+irl-train      = "irl.train:main"
+irl-eval       = "irl.eval:main"
+irl-plot       = "irl.plot:main"
+irl-sweep      = "irl.sweep:main"
 
 [tool.setuptools.packages.find]
 # Only package the library code (exclude tests from the wheel)
