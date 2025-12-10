@@ -26,7 +26,7 @@ python -m irl.plot overlay \
   --shade \
   --out results/walker_overlay.png
 
-# 3) Bar chart from aggregated sweep results
+# 3) Bar chart from sweep aggregation
 python -m irl.plot bars \
   --summary results/summary.csv \
   --env BipedalWalker-v3 \
@@ -69,7 +69,7 @@ def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
-def expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
+def _expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
     """Expand glob patterns to run directories that contain logs/scalars.csv.
 
     Accepts patterns that point either to the run directory itself or directly to the CSV file. Returns unique parent
@@ -87,7 +87,7 @@ def expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
     return _dedup_paths(dirs)
 
 
-def parse_run_name(run_dir: Path) -> dict[str, str]:
+def _parse_run_name(run_dir: Path) -> dict[str, str]:
     """Best-effort parser for run directory names produced by default_run_dir().
 
     Format: <method>__<env>__seed<NUM>__<YYYYmmdd-HHMMSS>
@@ -107,7 +107,7 @@ def parse_run_name(run_dir: Path) -> dict[str, str]:
     return info
 
 
-def read_scalars(run_dir: Path) -> pd.DataFrame:
+def _read_scalars(run_dir: Path) -> pd.DataFrame:
     """Load the scalars CSV for a run; raises if not found."""
     path = run_dir / "logs" / "scalars.csv"
     if not path.exists():
@@ -140,7 +140,7 @@ class AggregateResult:
     env_hint: Optional[str]  # from directory name, if consistent
 
 
-def aggregate_runs(
+def _aggregate_runs(
     run_dirs: Sequence[Path],
     metric: str,
     smooth: int = 1,
@@ -158,13 +158,13 @@ def aggregate_runs(
 
     series_per_run: list[pd.Series] = []
     for rd in run_dirs:
-        info = parse_run_name(rd)
+        info = _parse_run_name(rd)
         if "method" in info:
             method_cand.add(info["method"])
         if "env" in info:
             env_cand.add(info["env"])
 
-        df = read_scalars(rd)
+        df = _read_scalars(rd)
         if metric not in df.columns:
             # Soft fallback: prefer reward_total_mean, then reward_mean
             fallback = None
@@ -261,11 +261,11 @@ def cli_curves(
     ),
 ) -> None:
     """Plot an aggregate learning curve (mean ± std) for one method/group."""
-    run_dirs = expand_run_dirs(runs)
+    run_dirs = _expand_run_dirs(runs)
     if not run_dirs:
         raise typer.BadParameter("No matching run directories found for --runs.")
 
-    agg = aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+    agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     lbl = label or f"{(agg.method_hint or '').strip()} {(agg.env_hint or '').strip()}".strip()
@@ -351,11 +351,11 @@ def cli_overlay(
 
     for i, spec in enumerate(group):
         patterns = [p.strip() for p in spec.split(",") if p.strip()]
-        run_dirs = expand_run_dirs(patterns)
+        run_dirs = _expand_run_dirs(patterns)
         if not run_dirs:
             raise typer.BadParameter(f"No runs found for group {i+1} spec: {spec!r}")
 
-        agg = aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+        agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
         lbl = (
             (labels[i] if labels and i < len(labels) else None) or agg.method_hint or f"group-{i+1}"
         )
@@ -464,7 +464,7 @@ def cli_bars(
             env_name = str(d["env_id"].iloc[0]) if not d.empty else ""
             ax.set_title(f"{env_name} — Mean Return (± std)")
             ax.set_ylabel("Mean return")
-            ax.set_grid(True, axis="y", alpha=0.3)
+            ax.grid(True, axis="y", alpha=0.3)
             ax.tick_params(axis="x", labelrotation=30)
         axes[-1, 0].set_xlabel("Method")
         fig.tight_layout()
