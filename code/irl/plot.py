@@ -26,11 +26,10 @@ python -m irl.plot overlay \
   --shade \
   --out results/walker_overlay.png
 
-# 3) Bar chart from sweep aggregation
-python -m irl.plot bars \
+# 3) Normalized Bar chart from sweep aggregation
+python -m irl.plot bars-normalized \
   --summary results/summary.csv \
-  --env BipedalWalker-v3 \
-  --out results/bars_walker.png
+  --out results/normalized_scores.png
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ import glob
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set
+from typing import Iterable, List, Optional, Sequence, Set, Dict
 
 # Use a non-interactive backend for headless environments
 import matplotlib
@@ -128,6 +127,10 @@ def _smooth_series(s: pd.Series, window: int) -> pd.Series:
     if w == 1:
         return s
     return s.rolling(window=w, min_periods=1).mean()
+
+
+def _ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -226,8 +229,113 @@ def _aggregate_runs(
     )
 
 
-def _ensure_parent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+# ----------------------------- Plotting Functions ------------------------
+
+
+def plot_normalized_summary(
+    summary_path: Path,
+    out_path: Path,
+    highlight_method: str = "proposed",
+) -> None:
+    """Generate a normalized grouped bar chart (Min-Max scaled per Env).
+
+    This visualization isolates relative performance by scaling the scores
+    in each environment to [0, 1], where 0 is the worst method's score and
+    1 is the best. This effectively highlights the "Proposed" method's
+    dominance (assuming it performs well) while abstracting away raw scale
+    differences between environments.
+    """
+    if not summary_path.exists():
+        return
+
+    df = pd.read_csv(summary_path)
+    required = {"method", "env_id", "mean_return_mean"}
+    if not required.issubset(df.columns):
+        return
+
+    # Pivot to [Env, Method] -> Score matrix
+    # If multiple entries exist per (env, method), take the mean (robustness)
+    pivoted = df.pivot_table(
+        index="env_id", columns="method", values="mean_return_mean", aggfunc="mean"
+    )
+
+    # Min-Max Normalization per environment (row-wise)
+    # (x - min) / (max - min)
+    # This forces the range to [0, 1] for every environment.
+    mins = pivoted.min(axis=1)
+    maxs = pivoted.max(axis=1)
+    ranges = maxs - mins
+    # Avoid division by zero if all methods have identical scores
+    ranges[ranges == 0] = 1.0
+    
+    normalized = pivoted.sub(mins, axis=0).div(ranges, axis=0)
+
+    # Ordering: Put highlight_method last (right-most bar) for visual emphasis
+    methods = sorted(list(normalized.columns))
+    if highlight_method in methods:
+        methods.remove(highlight_method)
+        methods.append(highlight_method)
+    
+    normalized = normalized[methods]
+
+    # Plotting
+    n_envs = len(normalized.index)
+    n_methods = len(methods)
+    
+    if n_envs == 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(max(8, n_envs * 2), 6))
+    
+    x = np.arange(n_envs)
+    width = 0.8 / n_methods
+    
+    # Define colors: Highlight proposed with a distinct color, others muted
+    # Using Tab10 colors generally, but forcing specific ones
+    cmap = plt.get_cmap("tab10")
+    colors = []
+    for m in methods:
+        if m.lower() == highlight_method.lower():
+            colors.append("#d62728")  # tab:red (distinct/bold)
+        else:
+            # Assign other colors cyclically but skip red to avoid confusion
+            # Start from blue (0)
+            idx = methods.index(m)
+            colors.append(cmap(idx % 10))
+
+    # Draw bars
+    for i, method in enumerate(methods):
+        vals = normalized[method].values
+        # Replace NaN (missing data) with 0 for plotting
+        vals = np.nan_to_num(vals)
+        
+        offset = (i - n_methods / 2) * width + width / 2
+        ax.bar(
+            x + offset, 
+            vals, 
+            width, 
+            label=method, 
+            color=colors[i],
+            edgecolor="white",
+            linewidth=0.5,
+            alpha=0.9 if method.lower() == highlight_method.lower() else 0.7
+        )
+
+    ax.set_ylabel("Normalized Score (Min-Max Scaled)")
+    ax.set_title("Performance Profile: Normalized Extrinsic Return per Environment")
+    ax.set_xticks(x)
+    ax.set_xticklabels(normalized.index, rotation=30, ha="right")
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1), title="Method")
+    
+    fig.tight_layout()
+    
+    _ensure_parent(out_path)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    fig.savefig(str(tmp), dpi=150, bbox_inches="tight")
+    atomic_replace(tmp, out_path)
+    plt.close(fig)
 
 
 # ----------------------------- Commands ----------------------------------
@@ -493,6 +601,38 @@ def cli_bars(
     atomic_replace(tmp, out)
     plt.close("all")
     typer.echo(f"[green]Saved[/green] {out}")
+
+
+@app.command("bars-normalized")
+def cli_bars_normalized(
+    summary: Path = typer.Option(
+        Path("results/summary.csv"),
+        "--summary",
+        "-s",
+        help="Path to aggregated summary CSV produced by `irl.sweep eval-many`.",
+        exists=True,
+        dir_okay=False,
+    ),
+    out: Path = typer.Option(
+        Path("results/normalized_scores.png"),
+        "--out",
+        "-o",
+        help="Output image path (PNG).",
+        dir_okay=False,
+    ),
+    highlight: str = typer.Option(
+        "proposed",
+        "--highlight",
+        help="Method name to highlight with a distinct color.",
+    ),
+) -> None:
+    """Create a grouped bar chart with Min-Max normalized scores per environment.
+
+    Visualizes relative performance where 0.0 is the worst method and 1.0 is the best method
+    for each environment.
+    """
+    plot_normalized_summary(summary, out, highlight_method=highlight)
+    typer.echo(f"[green]Saved normalized bars[/green] to {out}")
 
 
 def main(argv: Optional[List[str]] = None) -> None:  # pragma: no cover - CLI entry
