@@ -32,8 +32,12 @@ def test_trainer_seeds_python_random(tmp_path: Path, monkeypatch: pytest.MonkeyP
         samples["seed"] = seed
         samples["draws"] = [random.random() for _ in range(3)]
 
-    # Patch the alias used inside the trainer loop (irl.trainer.loop.train).
-    monkeypatch.setattr("irl.trainer.loop.seed_everything", fake_seed_everything, raising=True)
+    # Patch the alias used inside the trainer setup (irl.trainer.training_setup.build_training_session).
+    monkeypatch.setattr(
+        "irl.trainer.training_setup.seed_everything",
+        fake_seed_everything,
+        raising=True,
+    )
 
     # Build a tiny config for a short MountainCar run.
     cfg = Config()
