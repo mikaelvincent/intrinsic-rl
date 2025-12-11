@@ -50,45 +50,18 @@ from irl.utils.checkpoint import compute_cfg_hash
 # Unified seeding helper (Python, NumPy, and PyTorch)
 from irl.utils.determinism import seed_everything
 
-
-def _is_image_space(space) -> bool:
-    return hasattr(space, "shape") and len(space.shape) >= 2
+# Small trainer runtime helpers factored out of this module
+from .runtime_utils import (
+    _is_image_space,
+    _move_optimizer_state_to_device,
+    _ensure_time_major_np,
+)
 
 
 # Ensure we have a module-level logger for this trainer.
 _LOG = get_logger(__name__)
 # How often (in PPO updates) to emit a console progress line.
 _LOG_TRAIN_EVERY_UPDATES = 10
-
-
-def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
-    """Move all optimizer state tensors in ``opt`` onto ``device``."""
-    for state in opt.state.values():
-        for k, v in list(state.items()):
-            if torch.is_tensor(v):
-                state[k] = v.to(device)
-
-
-# Helper: enforce (T, B, ...) time-major layout for NumPy arrays.
-
-
-def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarray:
-    """Return array with leading dims (T,B,...) from (T,B,...) or (B,T,...).
-
-    Raises ValueError with a clear message if shapes are inconsistent.
-    """
-    if x.ndim < 2:
-        raise ValueError(f"{name}: expected at least 2 dims (T,B,...), got shape={x.shape}")
-    t0, b0 = int(x.shape[0]), int(x.shape[1])
-    if t0 == T and b0 == B:
-        return x
-    if t0 == B and b0 == T:
-        # auto-fix common mistake: batch-major provided instead of time-major
-        return np.swapaxes(x, 0, 1)
-    raise ValueError(
-        f"{name}: inconsistent leading dims. Expected (T,B)=({T},{B}); got {tuple(x.shape[:2])}. "
-        "Ensure time is the first axis and batch is second."
-    )
 
 
 def train(
