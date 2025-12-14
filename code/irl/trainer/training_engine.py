@@ -23,6 +23,7 @@ from irl.intrinsic import (  # type: ignore
     compute_intrinsic_batch,
     update_module,
 )
+from irl.models import PolicyNetwork
 
 from .runtime_utils import _apply_final_observation, _ensure_time_major_np
 from .training_setup import TrainingSession
@@ -115,12 +116,45 @@ def run_training_loop(
     global_step = int(session.global_step)
     update_idx = int(session.update_idx)
 
+    # ---------------------------------------------------------------------
+    # CPU actor policy (rollout collection) + GPU learner (PPO update)
+    #
+    # When training on a GPU, sampling actions on the GPU and transferring
+    # them back to CPU for every env.step() introduces a hard sync point at
+    # every time step. This usually crushes throughput and yields low GPU/CPU
+    # utilization. We instead:
+    #   - keep the learner (policy/value + PPO update) on `device`
+    #   - create a CPU-only "actor" policy for env stepping
+    #   - sync actor weights from learner once per PPO update (before rollout)
+    # ---------------------------------------------------------------------
+    actor_policy: Optional[PolicyNetwork] = None
+    if device.type != "cpu":
+        actor_policy = PolicyNetwork(obs_space, act_space).to(torch.device("cpu"))
+        actor_policy.eval()
+        for p in actor_policy.parameters():
+            p.requires_grad = False
+        logger.info(
+            "Using CPU actor policy for env stepping; syncing weights each PPO update."
+        )
+
+    def _sync_actor_from_learner() -> None:
+        """Copy learner policy weights to CPU actor (once per PPO update)."""
+        if actor_policy is None:
+            return
+        with torch.no_grad():
+            sd = policy.state_dict()
+            cpu_sd = {k: v.detach().to("cpu") for k, v in sd.items()}
+            actor_policy.load_state_dict(cpu_sd, strict=True)
+
     # Wall-clock tracking for SPS and periodic console logging
     start_wall = time.time()
     last_log_time = start_wall
     last_log_step = global_step
 
     while global_step < int(total_steps):
+        # Sync CPU actor weights once per PPO update (before rollout collection).
+        _sync_actor_from_learner()
+
         # Steps per update (per-env), capped by remaining
         per_env_steps = min(
             int(cfg.ppo.steps_per_update),
@@ -171,14 +205,21 @@ def run_training_loop(
                 # which can silently corrupt rollouts if we store references.
                 obs_seq_list.append(np.array(obs_b_norm, copy=True))
 
+            # ------------------ Action selection ------------------
+            # If a CPU actor exists, use it to avoid per-step GPU sync.
             with torch.no_grad():
-                if is_image:
-                    # Pass raw images; the policy will preprocess (layout + scaling)
-                    a_tensor, _ = policy.act(obs_b_norm)
+                if actor_policy is not None:
+                    a_tensor, _ = actor_policy.act(obs_b_norm)
+                    a_np = a_tensor.detach().numpy()
                 else:
-                    obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
-                    a_tensor, _ = policy.act(obs_tensor)
-            a_np = a_tensor.detach().cpu().numpy()
+                    if is_image:
+                        # Pass raw images; the policy will preprocess (layout + scaling)
+                        a_tensor, _ = policy.act(obs_b_norm)
+                    else:
+                        obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
+                        a_tensor, _ = policy.act(obs_tensor)
+                    a_np = a_tensor.detach().cpu().numpy()
+
             if is_discrete:
                 a_np = a_np.astype(np.int64).reshape(B)
             else:
