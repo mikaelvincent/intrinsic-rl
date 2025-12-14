@@ -24,7 +24,7 @@ from irl.intrinsic import (  # type: ignore
     update_module,
 )
 
-from .runtime_utils import _ensure_time_major_np
+from .runtime_utils import _apply_final_observation, _ensure_time_major_np
 from .training_setup import TrainingSession
 
 
@@ -181,10 +181,19 @@ def run_training_loop(
             else:
                 a_np = a_np.reshape(B, -1).astype(np.float32)
 
-            next_obs, rewards, terms, truncs, _ = env.step(a_np if B > 1 else a_np[0])
-            done_flags = np.asarray(terms, dtype=bool) | np.asarray(truncs, dtype=bool)
+            # Step the env (vector envs may auto-reset; terminal obs can be in infos["final_observation"])
+            next_obs_env, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
 
-            next_obs_b = next_obs if B > 1 else next_obs[None, ...]
+            # Normalize masks to (B,) arrays
+            terms_b = np.asarray(terms, dtype=bool).reshape(B)
+            truncs_b = np.asarray(truncs, dtype=bool).reshape(B)
+            done_flags = terms_b | truncs_b
+
+            # For rollouts (GAE bootstrapping + intrinsic), use terminal observations when provided.
+            # Keep stepping with the environment-provided next_obs (which may already be reset).
+            next_obs_rollout = _apply_final_observation(next_obs_env, done_flags, infos)
+
+            next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
             if not is_image:
                 obs_norm.update(next_obs_b)  # type: ignore[union-attr]
                 next_obs_b_norm = obs_norm.normalize(next_obs_b)  # type: ignore[union-attr]
@@ -195,8 +204,8 @@ def run_training_loop(
             rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
             done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
             # store terminals and truncations separately for timeout-aware GAE
-            terms_seq[t] = np.asarray(terms, dtype=np.float32).reshape(B)
-            truncs_seq[t] = np.asarray(truncs, dtype=np.float32).reshape(B)
+            terms_seq[t] = terms_b.astype(np.float32, copy=False)
+            truncs_seq[t] = truncs_b.astype(np.float32, copy=False)
 
             if not is_image:
                 next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
@@ -210,9 +219,13 @@ def run_training_loop(
                     dones=done_flags,
                     reduction="none",
                 )
-                r_int_raw_seq[t] = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
+                r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
+                # Recommended safety: do not grant intrinsic reward on done transitions.
+                r_step_np[done_flags] = 0.0
+                r_int_raw_seq[t] = r_step_np
 
-            obs = next_obs
+            # Continue stepping with the env-returned observation (may be an auto-reset obs).
+            obs = next_obs_env
             global_step += B
 
         # Build obs arrays
@@ -254,6 +267,11 @@ def run_training_loop(
                     acts_flat,
                 )
                 r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
+
+            # Recommended safety: no intrinsic reward on done transitions (terminated OR truncated).
+            done_mask_flat = (done_seq.reshape(T * B) > 0.0)
+            r_int_raw_flat = np.asarray(r_int_raw_flat, dtype=np.float32)
+            r_int_raw_flat[done_mask_flat] = 0.0
 
             r_clip = float(cfg.intrinsic.r_clip)
             outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
