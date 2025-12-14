@@ -28,11 +28,15 @@ def cli_train(
         dir_okay=False,
         readable=True,
     ),
-    total_steps: int = typer.Option(
-        10_000,
+    total_steps: Optional[int] = typer.Option(
+        None,
         "--total-steps",
         "-n",
-        help="Total environment steps to run (across all envs).",
+        help=(
+            "Total environment steps to run (across all envs). "
+            "If omitted, uses exp.total_steps from the config when provided; "
+            "otherwise defaults to 10,000."
+        ),
     ),
     run_dir: Optional[Path] = typer.Option(
         None,
@@ -73,18 +77,19 @@ def cli_train(
         Optional path to a YAML configuration file. When omitted, a
         default :class:`irl.cfg.Config` instance is constructed.
     total_steps :
-        Total environment steps to run across all vector environments.
+        Optional total environment steps to run across all vector environments.
+        When omitted, the trainer honors ``cfg.exp.total_steps`` when present.
     run_dir :
         Directory for logs and checkpoints. If omitted, a timestamped
         directory is created based on the configuration.
     method :
         Optional override for the configured learning method
-        (for example, ``\"vanilla\"``, ``\"icm\"``, or ``\"proposed\"``).
+        (for example, ``"vanilla"``, ``"icm"``, or ``"proposed"``).
     env :
         Optional override for the Gymnasium environment id.
     device :
         Optional override for the torch device string, such as
-        ``\"cpu\"`` or ``\"cuda:0\"``.
+        ``"cpu"`` or ``"cuda:0"``.
     resume :
         When ``True``, resume from the latest checkpoint in ``run_dir``
         if available and the configuration hash matches.
