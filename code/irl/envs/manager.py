@@ -101,9 +101,11 @@ class EnvManager:
         # Vectorized path
         if self.async_vector:
             # Try async first; fall back to sync if construction fails for any reason.
+            # IMPORTANT: prefer copy=True (when supported) to avoid shared-buffer reuse
+            # that can silently corrupt stored rollouts (especially for image observations).
             try:
                 try:
-                    return AsyncVectorEnv(thunks, copy=False)  # type: ignore[call-arg]
+                    return AsyncVectorEnv(thunks, copy=True)  # type: ignore[call-arg]
                 except TypeError:
                     return AsyncVectorEnv(thunks)  # older gymnasium versions
             except Exception as exc:
@@ -115,7 +117,7 @@ class EnvManager:
 
         # Sync vector (default or fallback)
         try:
-            return SyncVectorEnv(thunks, copy=False)  # type: ignore[call-arg]
+            return SyncVectorEnv(thunks, copy=True)  # type: ignore[call-arg]
         except TypeError:
             return SyncVectorEnv(thunks)
 
