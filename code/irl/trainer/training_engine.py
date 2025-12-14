@@ -152,6 +152,29 @@ def run_training_loop(
     last_log_step = global_step
 
     while global_step < int(total_steps):
+        # -----------------------------------------------------------------
+        # Profiling accumulators (seconds). These are intentionally simple
+        # wall-clock timers so we can spot where time is spent per PPO update.
+        # -----------------------------------------------------------------
+        t_update_start = time.perf_counter()
+
+        # Rollout (collection) breakdown
+        t_rollout_total = 0.0
+        t_rollout_policy = 0.0
+        t_rollout_env_step = 0.0
+        t_rollout_intrinsic_step = 0.0
+        t_rollout_other = 0.0
+
+        # Post-rollout compute breakdown
+        t_intrinsic_compute = 0.0
+        t_intrinsic_update = 0.0
+        t_gae = 0.0
+        t_ppo = 0.0
+
+        # Logging overhead (entropy diagnostics + logger I/O)
+        t_logging_compute = 0.0
+        t_ml_log = 0.0
+
         # Sync CPU actor weights once per PPO update (before rollout collection).
         _sync_actor_from_learner()
 
@@ -188,6 +211,8 @@ def run_training_loop(
             else None
         )
 
+        t_rollout_start = time.perf_counter()
+
         for t in range(T):
             obs_b = obs if B > 1 else obs[None, ...]
             if not is_image:
@@ -207,6 +232,7 @@ def run_training_loop(
 
             # ------------------ Action selection ------------------
             # If a CPU actor exists, use it to avoid per-step GPU sync.
+            pi_t0 = time.perf_counter()
             with torch.no_grad():
                 if actor_policy is not None:
                     a_tensor, _ = actor_policy.act(obs_b_norm)
@@ -219,6 +245,7 @@ def run_training_loop(
                         obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
                         a_tensor, _ = policy.act(obs_tensor)
                     a_np = a_tensor.detach().cpu().numpy()
+            t_rollout_policy += time.perf_counter() - pi_t0
 
             if is_discrete:
                 a_np = a_np.astype(np.int64).reshape(B)
@@ -226,7 +253,9 @@ def run_training_loop(
                 a_np = a_np.reshape(B, -1).astype(np.float32)
 
             # Step the env (vector envs may auto-reset; terminal obs can be in infos["final_observation"])
+            env_t0 = time.perf_counter()
             next_obs_env, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
+            t_rollout_env_step += time.perf_counter() - env_t0
 
             # Normalize masks to (B,) arrays
             terms_b = np.asarray(terms, dtype=bool).reshape(B)
@@ -258,6 +287,8 @@ def run_training_loop(
                 next_obs_seq_list.append(np.array(next_obs_b_norm, copy=True))
 
             if r_int_raw_seq is not None:
+                # For RIDE, intrinsic is computed during rollout collection.
+                int_step_t0 = time.perf_counter()
                 r_step = intrinsic_module.compute_impact_binned(  # type: ignore[union-attr]
                     obs_b_norm,
                     next_obs_b_norm,
@@ -268,6 +299,7 @@ def run_training_loop(
                 # Recommended safety: do not grant intrinsic reward on done transitions.
                 r_step_np[done_flags] = 0.0
                 r_int_raw_seq[t] = r_step_np
+                t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
             # Continue stepping with the env-returned observation (may be an auto-reset obs).
             obs = next_obs_env
@@ -316,17 +348,37 @@ def run_training_loop(
         if r_int_raw_seq is not None:
             r_int_raw_seq = _ensure_time_major_np(r_int_raw_seq, T, B, "r_int_raw")
 
+        # Finalize rollout timers
+        t_rollout_total = time.perf_counter() - t_rollout_start
+        t_rollout_other = max(
+            0.0,
+            t_rollout_total - (t_rollout_policy + t_rollout_env_step + t_rollout_intrinsic_step),
+        )
+
         # --- Intrinsic compute/update (optional) ---
         r_int_raw_flat = None
         r_int_scaled_flat = None
         mod_metrics = {}
+
         if intrinsic_module is not None and use_intrinsic:
+            # Intrinsic compute (post-rollout for non-RIDE; for RIDE, step-time was already accounted above)
+            intrinsic_compute_t0 = time.perf_counter()
+
             if method_l == "ride":
+                # Raw intrinsic already computed during rollout collection.
                 r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)  # type: ignore[union-attr]
             else:
+                # Ensure accurate GPU timing for compute-heavy intrinsic modules.
+                if device.type != "cpu":
+                    try:
+                        torch.cuda.synchronize()
+                    except Exception:
+                        pass
+
                 obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
                 next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
                 acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+
                 r_int_raw_t = compute_intrinsic_batch(
                     intrinsic_module,
                     method_l,
@@ -352,11 +404,27 @@ def run_training_loop(
                 r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                 r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
 
+            if device.type != "cpu":
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+            t_intrinsic_compute = time.perf_counter() - intrinsic_compute_t0
+
+            # Intrinsic update (module training)
+            intrinsic_update_t0 = time.perf_counter()
             try:
                 if method_l == "ride":
                     obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
                     next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
                     acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
+
+                if device.type != "cpu":
+                    try:
+                        torch.cuda.synchronize()
+                    except Exception:
+                        pass
+
                 mod_metrics = update_module(
                     intrinsic_module,
                     method_l,
@@ -364,8 +432,15 @@ def run_training_loop(
                     next_obs_flat,
                     acts_flat,
                 )
+
+                if device.type != "cpu":
+                    try:
+                        torch.cuda.synchronize()
+                    except Exception:
+                        pass
             except Exception:
                 mod_metrics = {}
+            t_intrinsic_update = time.perf_counter() - intrinsic_update_t0
 
         # --- Rewards & GAE ---
         if r_int_scaled_flat is not None:
@@ -381,6 +456,12 @@ def run_training_loop(
             "terminals": terms_seq,
             "truncations": truncs_seq,
         }
+        gae_t0 = time.perf_counter()
+        if device.type != "cpu":
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
         adv, v_targets = compute_gae(
             gae_batch,
             value,
@@ -388,6 +469,12 @@ def run_training_loop(
             lam=float(cfg.ppo.gae_lambda),
             bootstrap_on_timeouts=True,
         )
+        if device.type != "cpu":
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        t_gae = time.perf_counter() - gae_t0
 
         obs_flat_for_ppo = (
             obs_seq_final.reshape(T * B, -1)
@@ -401,7 +488,14 @@ def run_training_loop(
             "rewards": rew_total_seq.reshape(T * B),
             "dones": done_seq.reshape(T * B),
         }
+
         # pass persistent optimizers; capture optional stats for logging
+        ppo_t0 = time.perf_counter()
+        if device.type != "cpu":
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
         ppo_stats = ppo_update(
             policy,
             value,
@@ -412,9 +506,17 @@ def run_training_loop(
             optimizers=(pol_opt, val_opt),
             return_stats=True,
         )
+        if device.type != "cpu":
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        t_ppo = time.perf_counter() - ppo_t0
+
         update_idx += 1
 
         # --- Logging ---
+        log_compute_t0 = time.perf_counter()
         with torch.no_grad():
             # Last-step entropy (fast to compute).
             last_obs = obs_seq_final[-1]  # [B,...]
@@ -534,7 +636,30 @@ def run_training_loop(
             except Exception:
                 pass
 
+        # Always log timing scalars so the CSV header includes them from the first row.
+        # These are "per PPO update" wall-clock seconds.
+        log_payload.update(
+            {
+                "time_rollout_s": float(t_rollout_total),
+                "time_rollout_policy_s": float(t_rollout_policy),
+                "time_rollout_env_step_s": float(t_rollout_env_step),
+                "time_rollout_intrinsic_step_s": float(t_rollout_intrinsic_step),
+                "time_rollout_other_s": float(t_rollout_other),
+                "time_intrinsic_compute_s": float(t_intrinsic_compute),
+                "time_intrinsic_update_s": float(t_intrinsic_update),
+                "time_gae_s": float(t_gae),
+                "time_ppo_s": float(t_ppo),
+            }
+        )
+
+        t_logging_compute = time.perf_counter() - log_compute_t0
+
+        ml_t0 = time.perf_counter()
         ml.log(step=int(global_step), **log_payload)
+        t_ml_log = time.perf_counter() - ml_t0
+
+        # Total per-update time (includes ml.log I/O).
+        t_update_total = time.perf_counter() - t_update_start
 
         # --- Periodic console progress log ---
         if update_idx % int(log_every_updates) == 0 or global_step >= int(total_steps):
@@ -562,6 +687,31 @@ def run_training_loop(
                 approx_kl,
                 clip_frac,
             )
+
+            # Full timing breakdown (print *all* tracked segments).
+            intrinsic_total = float(t_rollout_intrinsic_step + t_intrinsic_compute + t_intrinsic_update)
+            logging_total = float(t_logging_compute + t_ml_log)
+            logger.info(
+                "Timings (s) update=%d: total=%.3f | rollout=%.3f (policy=%.3f, env_step=%.3f, "
+                "intr_step=%.3f, other=%.3f) | intrinsic_total=%.3f (batch_compute=%.3f, update=%.3f) | "
+                "gae=%.3f | ppo=%.3f | logging=%.3f (compute=%.3f, io=%.3f)",
+                int(update_idx),
+                float(t_update_total),
+                float(t_rollout_total),
+                float(t_rollout_policy),
+                float(t_rollout_env_step),
+                float(t_rollout_intrinsic_step),
+                float(t_rollout_other),
+                intrinsic_total,
+                float(t_intrinsic_compute),
+                float(t_intrinsic_update),
+                float(t_gae),
+                float(t_ppo),
+                logging_total,
+                float(t_logging_compute),
+                float(t_ml_log),
+            )
+
             last_log_time = now
             last_log_step = global_step
 
