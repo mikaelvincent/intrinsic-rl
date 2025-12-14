@@ -166,7 +166,10 @@ def run_training_loop(
             if not is_image:
                 obs_seq[t] = obs_b_norm.astype(np.float32)
             else:
-                obs_seq_list.append(obs_b_norm)
+                # IMPORTANT: explicitly copy image observations before buffering.
+                # Some VectorEnv implementations may reuse internal buffers (especially when copy=False),
+                # which can silently corrupt rollouts if we store references.
+                obs_seq_list.append(np.array(obs_b_norm, copy=True))
 
             with torch.no_grad():
                 if is_image:
@@ -210,7 +213,8 @@ def run_training_loop(
             if not is_image:
                 next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
             else:
-                next_obs_seq_list.append(next_obs_b_norm.astype(next_obs_b_norm.dtype, copy=False))
+                # IMPORTANT: explicitly copy next observations before buffering for the same reason.
+                next_obs_seq_list.append(np.array(next_obs_b_norm, copy=True))
 
             if r_int_raw_seq is not None:
                 r_step = intrinsic_module.compute_impact_binned(  # type: ignore[union-attr]
@@ -237,6 +241,29 @@ def run_training_loop(
             obs_seq_final = np.stack(obs_seq_list, axis=0)
             next_obs_seq_final = np.stack(next_obs_seq_list, axis=0)
             obs_shape = tuple(int(s) for s in obs_space.shape)
+
+        # --- Image rollout integrity check (best-effort, warning only) ---
+        if is_image:
+            try:
+                if T >= 2:
+                    # Sample a small number of consecutive pairs for env 0 to keep cost bounded.
+                    sample_pairs = int(min(16, T - 1))
+                    idxs = np.linspace(0, T - 2, sample_pairs, dtype=np.int64)
+                    b0 = 0
+                    same = 0
+                    for ti in idxs:
+                        if np.array_equal(obs_seq_final[ti, b0], obs_seq_final[ti + 1, b0]):
+                            same += 1
+                    frac_same = float(same) / float(sample_pairs)
+                    if frac_same > 0.9:
+                        logger.warning(
+                            "Image rollout sanity check: %.0f%% of sampled consecutive frames are identical. "
+                            "If unexpected, check VectorEnv copy semantics and rollout buffering.",
+                            100.0 * frac_same,
+                        )
+            except Exception:
+                # Never fail training due to a diagnostic-only check.
+                pass
 
         # enforce time-major (T,B,...) everywhere
         obs_seq_final = _ensure_time_major_np(obs_seq_final, T, B, "obs_seq")
