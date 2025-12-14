@@ -10,7 +10,7 @@ their original implementations.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -74,3 +74,91 @@ def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarra
         f"{name}: inconsistent leading dims. Expected (T,B)=({T},{B}); got {tuple(x.shape[:2])}. "
         "Ensure time is the first axis and batch is second."
     )
+
+
+def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray:
+    """Replace auto-reset observations with terminal observations when available.
+
+    Gymnasium VectorEnv implementations can auto-reset individual environments
+    when they terminate or truncate. In that mode, the observation returned by
+    ``env.step()`` for a done environment may be the *reset* observation, while
+    the true terminal observation is provided separately via:
+
+        infos["final_observation"]  (and sometimes infos["final_info"])
+
+    This helper returns a NumPy array where entries corresponding to ``done=True``
+    are substituted with the terminal observations when available.
+
+    Parameters
+    ----------
+    next_obs:
+        Observation returned by ``env.step()`` (possibly already reset for done envs).
+    done:
+        Boolean done mask (terminations OR truncations).
+    infos:
+        Info payload returned by ``env.step()``. Commonly a dict for VectorEnv;
+        sometimes a list of per-env dicts.
+
+    Returns
+    -------
+    numpy.ndarray
+        Next observations suitable for rollout storage / bootstrapping.
+        Returns the original array view when no substitution is possible.
+    """
+    obs = np.asarray(next_obs)
+    done_mask = np.asarray(done, dtype=bool).reshape(-1)
+
+    # Fast path: nothing is done => no substitution needed.
+    if not done_mask.any():
+        return obs
+
+    # Try to locate final observations in the info payload.
+    final = None
+    if isinstance(infos, dict):
+        final = infos.get("final_observation", None)
+        if final is None:
+            # Defensive: tolerate pluralized variants if a backend uses them.
+            final = infos.get("final_observations", None)
+    elif isinstance(infos, (list, tuple)):
+        # Some wrappers return a list of per-env info dicts.
+        finals: list[Any] = []
+        for inf in infos:
+            if isinstance(inf, dict):
+                finals.append(inf.get("final_observation", None))
+            else:
+                finals.append(None)
+        final = finals if finals else None
+
+    if final is None:
+        return obs
+
+    # Make a writable copy only when we actually attempt substitution.
+    fixed = np.array(obs, copy=True)
+
+    # Standard vector-env case: final is list/array with leading env axis.
+    try:
+        if isinstance(final, np.ndarray) and final.shape[:1] == (done_mask.shape[0],):
+            for i in np.flatnonzero(done_mask):
+                fo_i = final[i]
+                if fo_i is not None:
+                    fixed[i] = np.asarray(fo_i)
+            return fixed
+
+        if isinstance(final, (list, tuple)) and len(final) == done_mask.shape[0]:
+            for i in np.flatnonzero(done_mask):
+                fo_i = final[i]
+                if fo_i is not None:
+                    fixed[i] = np.asarray(fo_i)
+            return fixed
+    except Exception:
+        # Fall back to scalar assignment below.
+        pass
+
+    # Single-env case: treat final as a single observation payload.
+    if done_mask.shape[0] == 1:
+        try:
+            fixed[0] = np.asarray(final)
+        except Exception:
+            pass
+
+    return fixed
