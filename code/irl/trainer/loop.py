@@ -26,7 +26,7 @@ _LOG_TRAIN_EVERY_UPDATES = 10
 def train(
     cfg: Config,
     *,
-    total_steps: int = 10_000,
+    total_steps: Optional[int] = None,
     run_dir: Optional[Path] = None,
     resume: bool = False,
 ) -> Path:
@@ -37,8 +37,10 @@ def train(
     cfg:
         Validated Config object.
     total_steps:
-        Absolute target environment steps for this run. If resuming from a checkpoint with
-        step=S, training continues until step reaches `total_steps` (no extra offset).
+        Absolute target environment steps for this run (across all envs).
+
+        If ``None`` (default), this function honors ``cfg.exp.total_steps`` when
+        provided; otherwise it falls back to ``10_000``.
     run_dir:
         Directory for logs/checkpoints. If omitted, a fresh timestamped directory is created.
     resume:
@@ -57,6 +59,37 @@ def train(
     validate_config(cfg)
     device = ensure_device(cfg.device)
 
+    # Resolve the effective step budget (argument > cfg.exp.total_steps > fallback).
+    cfg_steps = None
+    try:
+        cfg_steps = getattr(getattr(cfg, "exp", None), "total_steps", None)
+    except Exception:
+        cfg_steps = None
+
+    if total_steps is None:
+        if cfg_steps is not None:
+            effective_total_steps = int(cfg_steps)
+            _LOG.info(
+                "Training total_steps=%d (from cfg.exp.total_steps).",
+                effective_total_steps,
+            )
+        else:
+            effective_total_steps = 10_000
+            _LOG.info(
+                "Training total_steps=%d (default; cfg.exp.total_steps is unset).",
+                effective_total_steps,
+            )
+    else:
+        effective_total_steps = int(total_steps)
+        if cfg_steps is not None and int(cfg_steps) != effective_total_steps:
+            _LOG.info(
+                "Training total_steps=%d (override; cfg.exp.total_steps=%d).",
+                effective_total_steps,
+                int(cfg_steps),
+            )
+        else:
+            _LOG.info("Training total_steps=%d.", effective_total_steps)
+
     session = build_training_session(
         cfg,
         device=device,
@@ -69,7 +102,7 @@ def train(
         run_training_loop(
             cfg,
             session,
-            total_steps=int(total_steps),
+            total_steps=int(effective_total_steps),
             logger=_LOG,
             log_every_updates=int(_LOG_TRAIN_EVERY_UPDATES),
         )
