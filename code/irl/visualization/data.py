@@ -68,7 +68,15 @@ def _parse_run_name(run_dir: Path) -> dict[str, str]:
 
 
 def _read_scalars(run_dir: Path) -> pd.DataFrame:
-    """Load the scalars CSV for a run; raises if not found."""
+    """Load the scalars CSV for a run; raises if not found.
+
+    Notes
+    -----
+    Resumed runs can append new rows whose `step` overlaps an existing value
+    (for example writing another row at the resume checkpoint step). Plotting
+    assumes per-run step indices are unique; we therefore de-duplicate by
+    `step`, keeping the last occurrence.
+    """
     path = run_dir / "logs" / "scalars.csv"
     if not path.exists():
         raise FileNotFoundError(f"Missing scalars.csv in {run_dir}")
@@ -76,9 +84,18 @@ def _read_scalars(run_dir: Path) -> pd.DataFrame:
     # Ensure required 'step' column exists and is numeric
     if "step" not in df.columns:
         raise ValueError(f"'step' column not found in {path}")
+
     df["step"] = pd.to_numeric(df["step"], errors="coerce")
-    df = df.dropna(subset=["step"])
+    df = df.dropna(subset=["step"]).copy()
     df["step"] = df["step"].astype(int)
+
+    # De-duplicate step rows (common after resume). Keep the last occurrence as
+    # it reflects the most recent logged values for that step.
+    if df["step"].duplicated().any():
+        df = df.drop_duplicates(subset=["step"], keep="last")
+
+    # Keep deterministic ordering for smoothing/aggregation.
+    df = df.sort_values("step").reset_index(drop=True)
     return df
 
 
@@ -155,7 +172,14 @@ def _aggregate_runs(
 
         y = pd.to_numeric(df[metric_local], errors="coerce")
         x = df["step"]
+
         s = pd.Series(y.values, index=x.values).dropna()
+
+        # Extra safety: ensure unique, sorted step index even if an older CSV slips through.
+        if s.index.has_duplicates:
+            s = s[~s.index.duplicated(keep="last")]
+        s = s.sort_index()
+
         s = _smooth_series(s, smooth)
         series_per_run.append(s)
 
