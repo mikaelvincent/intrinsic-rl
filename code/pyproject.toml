@@ -28,10 +28,6 @@ dependencies = [
 # Developer tools & test stack
 dev = [
   "pytest>=7.4",
-  "black>=24.0",
-  "ruff>=0.5",
-  "mypy>=1.8",
-  "types-PyYAML>=6.0",
 ]
 
 # TensorBoard logging is optional; the code gracefully disables TB when not installed.
@@ -74,16 +70,6 @@ include = ["irl", "irl.*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "irl._version.__version__" }
-
-# ---- Tooling configs (kept lightweight for rapid iteration) ----
-[tool.black]
-target-version = ["py310"]
-line-length = 100
-
-[tool.ruff]
-target-version = "py310"
-line-length = 100
-lint.select = ["E", "F", "I", "UP", "B", "ANN"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
