@@ -12,7 +12,7 @@ from irl.multiseed.evaluation import (
     main as _impl_main,
 )
 
-__all__ = [
+__all__ = (
     "RunResult",
     "_aggregate",
     "_find_latest_ckpt",
@@ -22,7 +22,7 @@ __all__ = [
     "cli_eval_many",
     "cli_stats",
     "main",
-]
+)
 
 
 def main(argv: list[str] | None = None) -> None:
