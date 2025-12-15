@@ -1,5 +1,5 @@
-import numpy as np
 import gymnasium as gym
+import numpy as np
 import torch
 
 from irl.intrinsic.rnd import RND, RNDConfig
@@ -11,16 +11,15 @@ def _rand_images(B=6, H=32, W=32, C=3, seed=0):
 
 
 def test_rnd_supports_image_observations():
-    # Image Box obs; arbitrary CarRacing-like shape
     obs_space = gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8)
-    cfg = RNDConfig(feature_dim=32, hidden=(64, 64))  # hidden unused for images
+    cfg = RNDConfig(feature_dim=32, hidden=(64, 64))
 
     rnd = RND(obs_space, device="cpu", cfg=cfg)
 
     obs = _rand_images(B=5, H=32, W=32, C=3, seed=1)
     next_obs = _rand_images(B=5, H=32, W=32, C=3, seed=2)
 
-    r1 = rnd.compute_batch(obs)  # uses obs if next_obs None
+    r1 = rnd.compute_batch(obs)
     r2 = rnd.compute_batch(obs, next_obs)
 
     assert r1.shape == (5,)
