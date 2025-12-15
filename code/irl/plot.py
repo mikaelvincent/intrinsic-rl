@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from irl.visualization.plotting import (
     AggregateResult,
     _aggregate_runs,
