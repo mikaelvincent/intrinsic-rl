@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from irl.multiseed.evaluation import (
     RunResult,
     _aggregate,
