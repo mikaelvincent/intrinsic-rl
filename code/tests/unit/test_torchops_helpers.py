@@ -1,6 +1,4 @@
-import numpy as np
 import torch
-import pytest
 
 from irl.utils.torchops import as_tensor, ensure_2d, one_hot
 
@@ -12,7 +10,7 @@ def test_as_tensor_device_and_dtype():
 
     y = torch.tensor([1.0, 2.0], dtype=torch.float64)
     y2 = as_tensor(y, dev)
-    assert y2.dtype == y.dtype  # preserves dtype when tensor is given
+    assert y2.dtype == y.dtype
 
 
 def test_ensure_2d_shapes():
