@@ -56,7 +56,7 @@ def cli_curves(
     shade: bool = typer.Option(
         False,
         "--shade/--no-shade",
-        help="Fill ±std as a translucent band (enabled only if ≥2 runs).",
+        help="Ignored (std shading disabled).",
     ),
     label: Optional[str] = typer.Option(
         None, "--label", "-l", help="Legend label (defaults to method/env hint if available)."
@@ -69,7 +69,9 @@ def cli_curves(
         dir_okay=False,
     ),
 ) -> None:
-    """Plot an aggregate learning curve (mean ± std) for one method/group."""
+    """Plot an aggregate learning curve (mean) for one method/group."""
+    _ = shade  # std shading intentionally disabled (keep flag for CLI compatibility)
+
     run_dirs = _expand_run_dirs(runs)
     if not run_dirs:
         raise typer.BadParameter("No matching run directories found for --runs.")
@@ -84,10 +86,6 @@ def cli_curves(
     if not lbl:
         lbl = f"{metric} (n={agg.n_runs})"
     ax.plot(agg.steps, agg.mean, label=lbl)
-    if shade and agg.n_runs >= 2 and agg.std.size > 0:
-        lo = agg.mean - agg.std
-        hi = agg.mean + agg.std
-        ax.fill_between(agg.steps, lo, hi, alpha=0.2, linewidth=0)
 
     ax.set_xlabel("Environment steps")
     ax.set_ylabel(metric.replace("_", " "))
@@ -143,7 +141,7 @@ def cli_overlay(
     shade: bool = typer.Option(
         False,
         "--shade/--no-shade",
-        help="Fill ±std for each group (may look busy; only if ≥2 runs in group).",
+        help="Ignored (std shading disabled).",
     ),
     out: Path = typer.Option(
         Path("results/overlay.png"),
@@ -154,6 +152,8 @@ def cli_overlay(
     ),
 ) -> None:
     """Overlay multiple aggregated learning curves (one line per group)."""
+    _ = shade  # std shading intentionally disabled (keep flag for CLI compatibility)
+
     if not group:
         raise typer.BadParameter("Provide at least one --group.")
 
@@ -175,14 +175,10 @@ def cli_overlay(
 
         lbl = (labels[i] if labels and i < len(labels) else None) or agg.method_hint or f"group-{i+1}"
         ax.plot(agg.steps, agg.mean, label=f"{lbl} (n={agg.n_runs})")
-        if shade and agg.n_runs >= 2 and agg.std.size > 0:
-            lo = agg.mean - agg.std
-            hi = agg.mean + agg.std
-            ax.fill_between(agg.steps, lo, hi, alpha=0.15, linewidth=0)
 
     ax.set_xlabel("Environment steps")
     ax.set_ylabel(metric.replace("_", " "))
-    ax.set_title("Learning Curves (mean ± std per group)")
+    ax.set_title("Learning Curves (mean per group)")
     ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
 
@@ -231,7 +227,6 @@ def cli_bars(
         "method",
         "env_id",
         "mean_return_mean",
-        "mean_return_std",
     }
     missing = required - set(df.columns)
     if missing:
@@ -246,12 +241,10 @@ def cli_bars(
         ax.bar(
             d["method"],
             d["mean_return_mean"],
-            yerr=d["mean_return_std"],
-            capsize=3,
         )
         ax.set_ylabel("Mean return")
         ax.set_xlabel("Method")
-        ax.set_title(f"{env} — Mean Return (± std across seeds)")
+        ax.set_title(f"{env} — Mean Return")
         ax.grid(True, axis="y", alpha=0.3)
         plt.xticks(rotation=30, ha="right")
     else:
@@ -270,11 +263,9 @@ def cli_bars(
             ax.bar(
                 d["method"],
                 d["mean_return_mean"],
-                yerr=d["mean_return_std"],
-                capsize=3,
             )
             env_name = str(d["env_id"].iloc[0]) if not d.empty else ""
-            ax.set_title(f"{env_name} — Mean Return (± std)")
+            ax.set_title(f"{env_name} — Mean Return")
             ax.set_ylabel("Mean return")
             ax.grid(True, axis="y", alpha=0.3)
             ax.tick_params(axis="x", labelrotation=30)
