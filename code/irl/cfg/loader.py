@@ -179,13 +179,34 @@ def validate_config(cfg: Config) -> None:
     # Method-specific knobs: enforce only when the selected method uses them.
     method = str(cfg.method).lower()
 
+    # Treat Proposed ablation variants as part of the Proposed family for validation.
+    method_base = "proposed" if method.startswith("proposed_") else method
+
+    # Proposed ablation variants are distinct experiment categories; enforce invariants
+    # so configs are self-consistent (and do not silently collapse under "proposed").
+    if method == "proposed_lp_only":
+        if cfg.intrinsic.alpha_impact != 0.0:
+            raise ConfigError("intrinsic.alpha_impact must be 0 for method 'proposed_lp_only'")
+        if cfg.intrinsic.alpha_lp <= 0.0:
+            raise ConfigError("intrinsic.alpha_lp must be > 0 for method 'proposed_lp_only'")
+
+    if method == "proposed_impact_only":
+        if cfg.intrinsic.alpha_lp != 0.0:
+            raise ConfigError("intrinsic.alpha_lp must be 0 for method 'proposed_impact_only'")
+        if cfg.intrinsic.alpha_impact <= 0.0:
+            raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'proposed_impact_only'")
+
+    if method == "proposed_nogate":
+        if bool(cfg.intrinsic.gate.enabled):
+            raise ConfigError("intrinsic.gate.enabled must be False for method 'proposed_nogate'")
+
     # alpha_impact rules:
     # - 'ride' requires a strictly positive impact weight
-    # - 'proposed' allows a true LP-only ablation (alpha_impact >= 0)
-    if method == "ride":
+    # - 'proposed' (and proposed_* variants) allow LP-only settings (alpha_impact >= 0)
+    if method_base == "ride":
         if cfg.intrinsic.alpha_impact <= 0.0:
             raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'ride'")
-    elif method == "proposed":
+    elif method_base == "proposed":
         if cfg.intrinsic.alpha_impact < 0.0:
             raise ConfigError("intrinsic.alpha_impact must be >= 0 for method 'proposed'")
     else:
@@ -196,7 +217,7 @@ def validate_config(cfg: Config) -> None:
             )
 
     # Proposed-only flags: normalize_inside and gate.enabled
-    if method != "proposed":
+    if method_base != "proposed":
         try:
             if hasattr(cfg.intrinsic, "normalize_inside") and not cfg.intrinsic.normalize_inside:
                 warnings.warn(
@@ -218,7 +239,7 @@ def validate_config(cfg: Config) -> None:
             pass
 
     # bin_size controls episodic binning used only by RIDE
-    if method == "ride":
+    if method_base == "ride":
         if cfg.intrinsic.bin_size <= 0.0:
             raise ConfigError("intrinsic.bin_size must be > 0 for method 'ride'")
     else:
@@ -228,14 +249,19 @@ def validate_config(cfg: Config) -> None:
                 UserWarning,
             )
 
-    # Gating sanity checks only when Proposed is selected
-    if method == "proposed":
+    # Gating sanity checks only when Proposed (or proposed_* variants) is selected
+    if method_base == "proposed":
         # If gating is explicitly disabled, accept thresholds as provided but do not enforce them.
         gate_enabled = True
         try:
             gate_enabled = bool(cfg.intrinsic.gate.enabled)
         except Exception:
             gate_enabled = True
+
+        # proposed_nogate is an explicit category; do not warn, just skip gating checks.
+        if method == "proposed_nogate":
+            gate_enabled = False
+
         if gate_enabled:
             if cfg.intrinsic.gate.min_consec_to_gate <= 0:
                 raise ConfigError(
@@ -247,10 +273,11 @@ def validate_config(cfg: Config) -> None:
                 )
         else:
             # Optional hint to users that gating is off for this run
-            warnings.warn(
-                "Proposed gating disabled via intrinsic.gate.enabled=False; gating thresholds will be ignored.",
-                UserWarning,
-            )
+            if method != "proposed_nogate":
+                warnings.warn(
+                    "Proposed gating disabled via intrinsic.gate.enabled=False; gating thresholds will be ignored.",
+                    UserWarning,
+                )
 
     # Minibatch divisibility: accept either interpretation of steps_per_update.
     # This check is relative to the nominal rollout size only; the trainer may
