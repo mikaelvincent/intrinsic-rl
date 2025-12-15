@@ -1,41 +1,14 @@
-"""Experiment suite runner for intrinsic-rl.
-
-This package provides a Typer-based CLI and helpers to:
-
-  * Train all eligible configuration files under a configs/ tree.
-  * Evaluate the latest checkpoint for each run directory.
-  * Generate simple per-environment overlay plots.
-  * Generate split-screen comparison videos.
-
-Typical usage from the repo's `code/` directory:
-
-    # One-shot: train all configs, then eval + plots + videos
-    python -m irl.experiments full
-
-Or individual stages:
-
-    python -m irl.experiments train
-    python -m irl.experiments eval
-    python -m irl.experiments plots
-    python -m irl.experiments videos
-"""
-
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import List, Optional
 
-import typer  # noqa: E402
-import torch  # noqa: E402
+import torch
+import typer
 
-from irl.cfg import load_config
-from irl.cfg.schema import Config
-from irl.trainer import train as run_train  # re-exported only for tests/monkeypatching
-
-from .training import run_training_suite
 from .evaluation import run_eval_suite
 from .plotting import run_plots_suite
+from .training import run_training_suite
 from .videos import run_video_suite
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -347,10 +320,7 @@ def cli_full(
         auto_async=auto_async,
     )
 
-    if device is None:
-        eval_device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    else:
-        eval_device = device
+    eval_device = "cuda:0" if device is None and torch.cuda.is_available() else (device or "cpu")
 
     run_eval_suite(
         runs_root=runs_root,
