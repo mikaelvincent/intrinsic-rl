@@ -4,16 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from irl.experiments import (
-    run_training_suite,
-    run_eval_suite,
-    run_plots_suite,
-)
+from irl.experiments import run_eval_suite, run_plots_suite, run_training_suite
 from irl.utils.checkpoint import load_checkpoint
 
 
 def _write_mountaincar_config(configs_dir: Path, filename: str = "mc_basic.yaml") -> Path:
-    """Create a tiny MountainCar config suitable for fast suite tests."""
     configs_dir.mkdir(parents=True, exist_ok=True)
     cfg_text = """
 seed: 1
@@ -102,12 +97,10 @@ exp:
 
 
 def test_suite_train_creates_run_and_checkpoint(tmp_path: Path) -> None:
-    """Training suite should create a run dir, checkpoint, and scalars CSV."""
     configs_dir = tmp_path / "configs"
     _write_mountaincar_config(configs_dir)
 
     runs_root = tmp_path / "runs_suite"
-
     run_training_suite(
         configs_dir=configs_dir,
         include=[],
@@ -120,30 +113,27 @@ def test_suite_train_creates_run_and_checkpoint(tmp_path: Path) -> None:
     )
 
     run_dir = _single_run_dir(runs_root)
-
     ckpt_latest = run_dir / "checkpoints" / "ckpt_latest.pt"
     assert ckpt_latest.exists()
 
-    payload = load_checkpoint(ckpt_latest, map_location="cpu")
-    step = int(payload.get("step", 0))
+    step = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
     assert step >= 32
 
     csv_path = run_dir / "logs" / "scalars.csv"
     assert csv_path.exists()
     contents = csv_path.read_text(encoding="utf-8").strip().splitlines()
-    # At least header + one row
     assert len(contents) >= 2
     assert contents[0].startswith("step,")
 
 
-def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When resume=True and steps >= target, train suite should not call run_train again."""
+def test_suite_train_skips_when_up_to_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configs_dir = tmp_path / "configs"
     _write_mountaincar_config(configs_dir)
     runs_root = tmp_path / "runs_suite"
     total_steps = 16
 
-    # First run: use real trainer to create a checkpoint at total_steps.
     run_training_suite(
         configs_dir=configs_dir,
         include=[],
@@ -160,14 +150,13 @@ def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.M
     assert ckpt_latest.exists()
     step_before = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
 
-    # Second run: patch run_train so the test fails if it is called.
     import irl.experiments.training as training_module
 
     called = {"count": 0}
 
-    def fake_run_train(*args, **kwargs):  # pragma: no cover - should not be called
+    def fake_run_train(*args, **kwargs):
         called["count"] += 1
-        raise AssertionError("run_train should not be invoked when run is already up to date")
+        raise AssertionError("run_train should not be invoked when up to date")
 
     monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
@@ -184,12 +173,12 @@ def test_suite_train_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.M
 
     assert called["count"] == 0
     step_after = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
-    # Checkpoint should be unchanged by the skipped run.
     assert step_after == step_before
 
 
-def test_suite_respects_async_vector_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default behavior should keep env.async_vector as provided by the config."""
+def test_suite_respects_async_vector_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configs_dir = tmp_path / "configs"
     _write_vec_config(configs_dir, async_vector=False)
 
@@ -216,8 +205,9 @@ def test_suite_respects_async_vector_by_default(tmp_path: Path, monkeypatch: pyt
     assert captured["cfg"].env.async_vector is False
 
 
-def test_suite_can_auto_enable_async_vector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """auto_async flag should enable async_vector when vec_envs > 1 and config left it disabled."""
+def test_suite_can_auto_enable_async_vector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configs_dir = tmp_path / "configs"
     _write_vec_config(configs_dir, async_vector=False)
 
@@ -246,14 +236,12 @@ def test_suite_can_auto_enable_async_vector(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
-    """End-to-end smoke: train → eval → plots for a single config."""
     configs_dir = tmp_path / "configs"
     _write_mountaincar_config(configs_dir)
 
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
 
-    # Train a tiny run on CPU for speed.
     run_training_suite(
         configs_dir=configs_dir,
         include=[],
@@ -265,13 +253,7 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
         resume=False,
     )
 
-    # Evaluate and produce summary CSVs.
-    run_eval_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        episodes=2,
-        device="cpu",
-    )
+    run_eval_suite(runs_root=runs_root, results_dir=results_dir, episodes=2, device="cpu")
 
     raw_path = results_dir / "summary_raw.csv"
     summary_path = results_dir / "summary.csv"
@@ -281,7 +263,6 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
     assert "mean_return" in raw_text
     assert "env_id" in raw_text
 
-    # Generate overlay plots from logged scalars.
     run_plots_suite(
         runs_root=runs_root,
         results_dir=results_dir,
@@ -292,7 +273,5 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
 
     plots_dir = results_dir / "plots"
     assert plots_dir.exists()
-
-    # MountainCar-v0 env tag should appear in the overlay file name.
     overlay_files = list(plots_dir.glob("MountainCar-v0__overlay_reward_total_mean.png"))
-    assert overlay_files, "Expected an overlay plot for MountainCar-v0"
+    assert overlay_files
