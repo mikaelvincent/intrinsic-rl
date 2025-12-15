@@ -7,7 +7,6 @@ from irl.utils.checkpoint import load_checkpoint
 
 
 def _write_cfg_with_total_steps(configs_dir: Path, filename: str, total_steps: int) -> Path:
-    """Create a minimal MountainCar config that sets exp.total_steps."""
     configs_dir.mkdir(parents=True, exist_ok=True)
     cfg_text = f"""
 seed: 7
@@ -49,30 +48,25 @@ exp:
 
 
 def test_suite_respects_config_total_steps_over_cli_default(tmp_path: Path) -> None:
-    """run_training_suite should prefer cfg.exp.total_steps when present."""
     configs_dir = tmp_path / "configs"
     _write_cfg_with_total_steps(configs_dir, "mc_steps.yaml", total_steps=24)
 
     runs_root = tmp_path / "runs_suite"
-
-    # Pass a larger CLI default; suite must pick 24 from the config instead.
     run_training_suite(
         configs_dir=configs_dir,
         include=[],
         exclude=[],
-        total_steps=100,  # should be ignored in favour of cfg.exp.total_steps
+        total_steps=100,
         runs_root=runs_root,
         seeds=[1],
         device="cpu",
         resume=False,
     )
 
-    # Verify checkpoint step equals config-defined total_steps (vec_envs=1 → exact).
     run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
     assert len(run_dirs) == 1
     ckpt_latest = run_dirs[0] / "checkpoints" / "ckpt_latest.pt"
     assert ckpt_latest.exists()
 
     payload = load_checkpoint(ckpt_latest, map_location="cpu")
-    step = int(payload.get("step", -1))
-    assert step == 24, f"expected step=24 from config, got {step}"
+    assert int(payload.get("step", -1)) == 24
