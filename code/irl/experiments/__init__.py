@@ -186,7 +186,7 @@ def cli_plots(
     shade: bool = typer.Option(
         True,
         "--shade/--no-shade",
-        help="Shade ±1 std band on overlay plots when ≥2 runs are available.",
+        help="Ignored (std shading disabled).",
     ),
 ) -> None:
     """Generate per-environment overlay plots from suite runs."""
@@ -321,7 +321,7 @@ def cli_full(
     shade: bool = typer.Option(
         True,
         "--shade/--no-shade",
-        help="Shade ±std band on overlay plots when ≥2 runs are available.",
+        help="Ignored (std shading disabled).",
     ),
     resume: bool = typer.Option(
         True,
