@@ -2,7 +2,6 @@ from irl.utils.checkpoint import compute_cfg_hash
 
 
 def test_config_hash_is_order_invariant_and_changes_on_diff():
-    # Same logical config, different key order
     a = {
         "method": "vanilla",
         "seed": 7,
@@ -18,15 +17,14 @@ def test_config_hash_is_order_invariant_and_changes_on_diff():
 
     h_a = compute_cfg_hash(a)
     h_b = compute_cfg_hash(b)
-    assert isinstance(h_a, str) and isinstance(h_b, str)
-    assert h_a == h_b, "Hashes should match for identical content regardless of order"
+    assert isinstance(h_a, str)
+    assert isinstance(h_b, str)
+    assert h_a == h_b
 
-    # Small semantic change -> hash must change
     c = {
         "method": "vanilla",
         "seed": 7,
         "env": {"id": "MountainCar-v0", "vec_envs": 8},
-        "ppo": {"minibatches": 64, "steps_per_update": 128},  # changed minibatches
+        "ppo": {"minibatches": 64, "steps_per_update": 128},
     }
-    h_c = compute_cfg_hash(c)
-    assert h_c != h_a
+    assert compute_cfg_hash(c) != h_a
