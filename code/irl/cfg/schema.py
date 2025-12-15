@@ -161,12 +161,30 @@ class ExperimentConfig:
 
 # ----- Root Schema -----------------------------------------------------------
 
-MethodLiteral = Literal["vanilla", "icm", "rnd", "ride", "riac", "proposed"]
+MethodLiteral = Literal[
+    "vanilla",
+    "icm",
+    "rnd",
+    "ride",
+    "riac",
+    # Proposed family (full method + named ablations).
+    "proposed",
+    "proposed_lp_only",
+    "proposed_impact_only",
+    "proposed_nogate",
+]
 
 
 @dataclass(frozen=True)
 class Config:
-    """Top-level configuration shared by all CLI entry points."""
+    """Top-level configuration shared by all CLI entry points.
+
+    Notes
+    -----
+    Proposed ablations are represented as distinct ``method`` values (for
+    example ``"proposed_lp_only"``), so that plots, summaries, and run
+    directories treat them as separate experiment categories.
+    """
 
     seed: int = 1
     device: str = "cpu"  # or "cuda:0"
