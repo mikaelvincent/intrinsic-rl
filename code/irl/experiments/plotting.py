@@ -256,11 +256,16 @@ def run_plots_suite(
     else:
         # --- Paper Mode: Generate specific figures ---
 
-        # Prefer a stable "known baseline" order, but include everything we found so
-        # valid runs never silently disappear from plots.
+        # Prefer a stable "known baseline" order.
+        # IMPORTANT: keep Proposed ablations out of baseline comparison plots;
+        # they are plotted in the ablation figures instead.
         preferred = ["vanilla", "icm", "rnd", "ride", "riac"]
         baselines: list[str] = [m for m in preferred if m in all_methods]
-        extras = [m for m in all_methods if m not in baselines and m != "proposed"]
+        extras = [
+            m
+            for m in all_methods
+            if m not in baselines and m != "proposed" and not m.startswith("proposed_")
+        ]
         baselines.extend(extras)
         if "proposed" in all_methods:
             baselines.append("proposed")  # always draw proposed on top (last)
@@ -268,7 +273,9 @@ def run_plots_suite(
         # Proposed ablations (best-effort): include any method starting with proposed_
         ablation_priority = ["proposed_lp_only", "proposed_impact_only", "proposed_nogate"]
         ablations: list[str] = [m for m in ablation_priority if m in all_methods]
-        other_abls = sorted([m for m in all_methods if m.startswith("proposed_") and m not in ablations])
+        other_abls = sorted(
+            [m for m in all_methods if m.startswith("proposed_") and m not in ablations]
+        )
         ablations.extend(other_abls)
         if "proposed" in all_methods:
             ablations.append("proposed")
