@@ -146,6 +146,32 @@ def run_training_loop(
             cpu_sd = {k: v.detach().to("cpu") for k, v in sd.items()}
             actor_policy.load_state_dict(cpu_sd, strict=True)
 
+    # ---------------------------------------------------------------------
+    # Baseline checkpoint: step 0
+    #
+    # For new runs, write an explicit step-0 checkpoint to make it easy to
+    # compare against the untrained policy and to anchor the warmup checkpoint
+    # schedule (10 evenly spaced checkpoints before the first configured
+    # checkpoint interval).
+    # ---------------------------------------------------------------------
+    if int(global_step) == 0 and int(update_idx) == 0 and not ckpt.latest_path.exists():
+        payload0 = _build_checkpoint_payload(
+            cfg,
+            global_step=0,
+            update_idx=0,
+            policy=policy,
+            value=value,
+            is_image=is_image,
+            obs_norm=obs_norm,
+            int_rms=int_rms,
+            pol_opt=pol_opt,
+            val_opt=val_opt,
+            intrinsic_module=intrinsic_module,
+            method_l=method_l,
+        )
+        ckpt_path0 = ckpt.save(step=0, payload=payload0)
+        logger.info("Saved baseline checkpoint at step=0 to %s", ckpt_path0)
+
     # Wall-clock tracking for SPS and periodic console logging
     start_wall = time.time()
     last_log_time = start_wall
@@ -567,7 +593,9 @@ def run_training_loop(
                     {
                         "approx_kl": float(ppo_stats.get("approx_kl", float("nan"))),
                         "clip_frac": clip_frac,
-                        "clip_frac_pct": (100.0 * clip_frac) if np.isfinite(clip_frac) else float("nan"),
+                        "clip_frac_pct": (100.0 * clip_frac)
+                        if np.isfinite(clip_frac)
+                        else float("nan"),
                         # Return update-wide means for losses (not just last minibatch)
                         "entropy_minibatch_mean": float(ppo_stats.get("entropy", float("nan"))),
                         "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
@@ -581,7 +609,11 @@ def run_training_loop(
                 pass
 
         if r_int_raw_flat is not None and r_int_scaled_flat is not None:
-            outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False)) if intrinsic_module else False
+            outputs_norm = (
+                bool(getattr(intrinsic_module, "outputs_normalized", False))
+                if intrinsic_module
+                else False
+            )
 
             # Prefer module-provided RMS diagnostics to avoid double-normalization ambiguity.
             r_int_rms_val = float(int_rms.rms)
@@ -673,7 +705,9 @@ def run_training_loop(
             approx_kl = float(log_payload.get("approx_kl", float("nan")))
             clip_frac = float(log_payload.get("clip_frac", float("nan")))
             r_total = float(log_payload.get("reward_total_mean", float("nan")))
-            r_int_mean = float(log_payload.get("r_int_mean", 0.0)) if "r_int_mean" in log_payload else 0.0
+            r_int_mean = (
+                float(log_payload.get("r_int_mean", 0.0)) if "r_int_mean" in log_payload else 0.0
+            )
 
             logger.info(
                 "Train progress: step=%d update=%d avg_sps=%.1f recent_sps=%.1f "
@@ -689,7 +723,9 @@ def run_training_loop(
             )
 
             # Full timing breakdown (print *all* tracked segments).
-            intrinsic_total = float(t_rollout_intrinsic_step + t_intrinsic_compute + t_intrinsic_update)
+            intrinsic_total = float(
+                t_rollout_intrinsic_step + t_intrinsic_compute + t_intrinsic_update
+            )
             logging_total = float(t_logging_compute + t_ml_log)
             logger.info(
                 "Timings (s) update=%d: total=%.3f | rollout=%.3f (policy=%.3f, env_step=%.3f, "
