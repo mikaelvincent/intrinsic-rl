@@ -21,8 +21,8 @@ def cli_eval(
     for i, (ret, length) in enumerate(zip(summary["returns"], summary["lengths"]), start=1):
         typer.echo(f"Episode {i}/{summary['episodes']}: return = {ret:.2f}, length = {length}")
     typer.echo(
-        f"\n[green]Eval complete[/green] — mean return {summary['mean_return']:.2f} "
-        f"± {summary['std_return']:.2f} over {summary['episodes']} episodes"
+        f"\n[green]Eval complete[/green] — mean return {summary['mean_return']:.2f} ± {summary['std_return']:.2f} "
+        f"over {summary['episodes']} episodes"
     )
     if out is not None:
         atomic_write_text(out, json.dumps(summary, indent=2))
