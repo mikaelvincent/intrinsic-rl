@@ -2,6 +2,18 @@
 
 This module centralises construction, batch computation, and updates for
 intrinsic reward modules (ICM, RND, RIDE, RIAC, Proposed).
+
+Proposed ablation variants
+--------------------------
+Proposed ablations are represented as distinct method strings:
+
+- ``proposed_lp_only``      → Proposed with ``alpha_impact = 0``
+- ``proposed_impact_only``  → Proposed with ``alpha_lp = 0``
+- ``proposed_nogate``       → Proposed with region gating disabled
+
+These variants are treated as *distinct experiment categories* for plots and
+summaries, but are dispatched to the same underlying :class:`Proposed`
+implementation.
 """
 
 from __future__ import annotations
@@ -17,12 +29,29 @@ from .ride import RIDE
 from .riac import RIAC
 from .proposed import Proposed
 
+# Canonical intrinsic methods (variants are mapped onto their base method).
 _SUPPORTED = {"icm", "rnd", "ride", "riac", "proposed"}
+
+_PROPOSED_VARIANTS = {"proposed_lp_only", "proposed_impact_only", "proposed_nogate"}
+
+
+def _canonical_method(method: str) -> str:
+    """Map experiment-category method names to a canonical implementation key."""
+    m = str(method).lower()
+    if m.startswith("proposed_"):
+        return "proposed"
+    return m
 
 
 def is_intrinsic_method(method: str) -> bool:
-    """Return True if the method string corresponds to a supported intrinsic module."""
-    return str(method).lower() in _SUPPORTED
+    """Return True if the method string corresponds to a supported intrinsic module.
+
+    Notes
+    -----
+    Proposed ablation variants (``proposed_*``) return True and are routed to the
+    Proposed implementation.
+    """
+    return _canonical_method(str(method)) in _SUPPORTED
 
 
 def create_intrinsic_module(
@@ -32,8 +61,15 @@ def create_intrinsic_module(
     device: str | torch.device = "cpu",
     **kwargs: Any,
 ):
-    """Instantiate the intrinsic module for the given method."""
-    m = str(method).lower()
+    """Instantiate the intrinsic module for the given method.
+
+    The ``method`` string is treated as an *experiment category* identifier.
+    For Proposed ablations (``proposed_*``), this helper returns a Proposed
+    module with the corresponding knobs applied.
+    """
+    m_raw = str(method).lower()
+    m = _canonical_method(m_raw)
+
     if m == "icm":
         if act_space is None:
             raise ValueError("ICM requires an action space.")
@@ -55,7 +91,9 @@ def create_intrinsic_module(
         riac_kwargs: dict[str, Any] = {}
         for k in ("alpha_lp", "region_capacity", "depth_max", "ema_beta_long", "ema_beta_short"):
             if k in kwargs and kwargs[k] is not None:
-                riac_kwargs[k] = float(kwargs[k]) if "alpha" in k or "beta" in k else int(kwargs[k])  # type: ignore[assignment]
+                riac_kwargs[k] = (
+                    float(kwargs[k]) if "alpha" in k or "beta" in k else int(kwargs[k])
+                )  # type: ignore[assignment]
         return RIAC(obs_space, act_space, device=device, **riac_kwargs)
     if m == "proposed":
         if act_space is None:
@@ -78,8 +116,10 @@ def create_intrinsic_module(
         ):
             if k in kwargs and kwargs[k] is not None:
                 prop_kwargs[k] = (
-                    float(kwargs[k]) if ("alpha" in k or "beta" in k or "tau" in k) else int(kwargs[k])  # type: ignore[assignment]
-                )
+                    float(kwargs[k])
+                    if ("alpha" in k or "beta" in k or "tau" in k)
+                    else int(kwargs[k])
+                )  # type: ignore[assignment]
 
         # Pass through normalization and gating-enable knobs when available.
         # Probe Proposed.__init__ to avoid passing unknown kwargs until the module supports them.
@@ -98,6 +138,15 @@ def create_intrinsic_module(
                 gating_enabled_val = bool(kwargs["gate"].get("enabled"))
             except Exception:
                 pass
+
+        # Apply explicit Proposed ablation semantics from the experiment-category method name.
+        if m_raw == "proposed_lp_only":
+            prop_kwargs["alpha_impact"] = 0.0
+        elif m_raw == "proposed_impact_only":
+            prop_kwargs["alpha_lp"] = 0.0
+        elif m_raw == "proposed_nogate":
+            gating_enabled_val = False
+            prop_kwargs["gating_enabled"] = False
 
         # Introspect Proposed signature to conditionally include constructor kwargs
         try:
@@ -140,7 +189,7 @@ def compute_intrinsic_batch(
 
     Returns a 1-D tensor of shape ``[N]``.
     """
-    m = str(method).lower()
+    m = _canonical_method(str(method))
     if m == "icm":
         if actions is None or next_obs is None:
             raise ValueError("ICM.compute_batch requires next_obs and actions.")
@@ -176,7 +225,7 @@ def update_module(
     The same batch is reused for ``steps`` updates. A dictionary of scalar
     metrics is returned.
     """
-    m = str(method).lower()
+    m = _canonical_method(str(method))
     if m == "icm":
         if actions is None or next_obs is None:
             raise ValueError("ICM.update requires next_obs and actions.")
