@@ -1,5 +1,5 @@
-import numpy as np
 import gymnasium as gym
+import numpy as np
 import torch
 
 from irl.models.networks import PolicyNetwork, ValueNetwork
@@ -7,7 +7,6 @@ from irl.models.networks import PolicyNetwork, ValueNetwork
 
 def _rand_images(B=4, H=64, W=64, C=3, seed=0):
     rng = np.random.default_rng(seed)
-    # use uint8 to exercise auto-scaling to [0,1]
     return rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
 
 
@@ -19,20 +18,18 @@ def test_policy_value_support_images_discrete():
     value = ValueNetwork(obs_space)
 
     batch = _rand_images(B=6, H=64, W=64, C=3, seed=1)
+    n = batch.shape[0]
     with torch.no_grad():
-        # distribution and sampling should work
         dist = policy.distribution(batch)
         a = dist.sample()
         lp = dist.log_prob(a)
         ent = dist.entropy()
-
-        # value should return [B]
         v = value(batch)
 
-    assert a.shape[0] == batch.shape[0]
-    assert lp.shape[0] == batch.shape[0]
-    assert ent.shape[0] == batch.shape[0]
-    assert v.shape[0] == batch.shape[0]
+    assert a.shape[0] == n
+    assert lp.shape == (n,)
+    assert ent.shape == (n,)
+    assert v.shape == (n,)
     assert torch.isfinite(v).all()
 
 
@@ -44,6 +41,7 @@ def test_policy_value_support_images_continuous():
     value = ValueNetwork(obs_space)
 
     batch = _rand_images(B=5, H=32, W=32, C=3, seed=2)
+    n = batch.shape[0]
     with torch.no_grad():
         dist = policy.distribution(batch)
         a = dist.sample()
@@ -51,8 +49,8 @@ def test_policy_value_support_images_continuous():
         ent = dist.entropy()
         v = value(batch)
 
-    assert a.shape[0] == batch.shape[0]
-    assert lp.shape[0] == batch.shape[0]
-    assert ent.shape[0] == batch.shape[0]
-    assert v.shape[0] == batch.shape[0]
+    assert a.shape[0] == n
+    assert lp.shape == (n,)
+    assert ent.shape == (n,)
+    assert v.shape == (n,)
     assert torch.isfinite(v).all()
