@@ -1,9 +1,9 @@
-import numpy as np
 import gymnasium as gym
+import numpy as np
 import torch
 
-from irl.intrinsic.icm import ICM, ICMConfig
 from irl.intrinsic import IntrinsicOutput
+from irl.intrinsic.icm import ICM, ICMConfig
 
 
 def _rand_batch(obs_dim, act_space, B=8, seed=0):
@@ -27,14 +27,12 @@ def test_icm_discrete_shapes_and_update():
     icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
     obs, next_obs, acts = _rand_batch(4, act_space, B=16, seed=1)
 
-    # Forward compute_batch
-    r = icm.compute_batch(obs, next_obs, acts)  # [B]
+    r = icm.compute_batch(obs, next_obs, acts)
     assert r.shape == (16,)
     assert torch.isfinite(r).all()
 
-    # Loss/Update
     losses = icm.loss(obs, next_obs, acts)
-    for k in ["total", "forward", "inverse", "intrinsic_mean"]:
+    for k in ("total", "forward", "inverse", "intrinsic_mean"):
         assert k in losses
         assert torch.isfinite(losses[k])
 
@@ -42,7 +40,6 @@ def test_icm_discrete_shapes_and_update():
     for v in metrics.values():
         assert np.isfinite(v)
 
-    # Single-transition compute()
     tr = type("T", (), {"s": obs[0], "a": int(acts[0]), "r_ext": 0.0, "s_next": next_obs[0]})
     out = icm.compute(tr)
     assert isinstance(out, IntrinsicOutput)
@@ -56,12 +53,12 @@ def test_icm_continuous_shapes_and_update():
     icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
     obs, next_obs, acts = _rand_batch(5, act_space, B=12, seed=2)
 
-    r = icm.compute_batch(obs, next_obs, acts)  # [B]
+    r = icm.compute_batch(obs, next_obs, acts)
     assert r.shape == (12,)
     assert torch.isfinite(r).all()
 
     losses = icm.loss(obs, next_obs, acts)
-    for k in ["total", "forward", "inverse", "intrinsic_mean"]:
+    for k in ("total", "forward", "inverse", "intrinsic_mean"):
         assert k in losses
         assert torch.isfinite(losses[k])
 
@@ -69,7 +66,6 @@ def test_icm_continuous_shapes_and_update():
     for v in metrics.values():
         assert np.isfinite(v)
 
-    # Single compute
     tr = type("T", (), {"s": obs[0], "a": acts[0], "r_ext": 0.0, "s_next": next_obs[0]})
     out = icm.compute(tr)
     assert np.isfinite(out.r_int)
