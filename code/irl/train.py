@@ -11,7 +11,9 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="
 
 @app.command("train")
 def cli_train(
-    config: Path | None = typer.Option(None, "--config", "-c", exists=True, dir_okay=False, readable=True),
+    config: Path | None = typer.Option(
+        None, "--config", "-c", exists=True, dir_okay=False, readable=True
+    ),
     total_steps: int | None = typer.Option(None, "--total-steps", "-n"),
     run_dir: Path | None = typer.Option(None, "--run-dir"),
     method: str | None = typer.Option(None, "--method"),
