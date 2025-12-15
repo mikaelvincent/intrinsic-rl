@@ -1,13 +1,6 @@
-"""Generalized Advantage Estimation with layout normalization and timeout-aware masking.
-
-Common batch aliases are accepted, observations are reshaped to time-major
-layouts, and rewards/dones are normalized to (T, B). Optional masks separate
-true terminals from truncations, with configurable bootstrapping behavior.
-"""
-
 from __future__ import annotations
 
-from typing import Any, Mapping, Tuple, Optional
+from typing import Any, Mapping, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -21,12 +14,9 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    """Convert to a tensor on `device`, preserving dtype unless explicitly requested.
+    """Convert to a tensor on `device`, preserving dtype unless explicitly set.
 
-    Note
-    ----
-    We do not force float32 by default to avoid breaking image pipelines that rely on
-    integer inputs (uint8) to trigger scaling in preprocessors.
+    Avoid forcing float32 so uint8 image inputs can trigger downstream scaling.
     """
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
@@ -41,43 +31,28 @@ def _ensure_time_batch_layout(
     rew_t: Tensor,
     done_t: Tensor,
 ) -> tuple[Tensor, Tensor | None, Tensor, Tensor, int, int]:
-    """Return tensors with rewards/dones in (T, B) and obs/next_obs time-major.
-
-    Rules
-    -----
-    - If rewards/dones are 2-D, we trust those dims to define (T, B) (order checked).
-    - If rewards/dones are 1-D, we infer (T, B) from ``obs``' first two dims if present;
-      otherwise ``B = 1``.
-    - If obs are (B, T, ...) while (T, B) is required, automatically swap the first two axes.
-    """
-    # Normalize rewards/dones shapes to 1-D or 2-D tensors on same device/dtype
+    """Normalize to time-major obs and (T,B) rewards/dones."""
     dev = obs_t.device
     rew_t = rew_t.to(dev, dtype=torch.float32)
     done_t = done_t.to(dev, dtype=torch.float32)
 
-    # Determine (T,B) from rewards/dones when 2-D, or infer from obs otherwise
     if rew_t.dim() == 2 and done_t.dim() == 2:
         rT, rB = int(rew_t.size(0)), int(rew_t.size(1))
-        # Try to align obs' leading dims with (T,B) (or (B,T) -> swap)
         if obs_t.dim() >= 2:
             o0, o1 = int(obs_t.size(0)), int(obs_t.size(1))
             if o0 == rB and o1 == rT:
-                # Batch-major provided; swap to time-major.
                 obs_t = obs_t.transpose(0, 1)
                 if next_obs_t is not None:
                     next_obs_t = next_obs_t.transpose(0, 1)
             elif o0 != rT or (obs_t.dim() >= 2 and o1 != rB):
-                # If obs has only one leading (T) dim (e.g., B==1), tolerate o1 mismatch.
                 if not (o0 == rT and (obs_t.dim() == 1 or rB == 1)):
                     raise ValueError(
                         "compute_gae: inconsistent shapes — expected obs leading dims to match "
                         f"(T,B)=({rT},{rB}) (allowing B==1), got obs[0:2]={tuple(obs_t.shape[:2])} "
                         f"and rewards shape={tuple(rew_t.shape)}."
                     )
-        # Ensure rewards/dones are exactly (T,B)
         T, B = rT, rB
     else:
-        # Flatten rewards/dones to 1-D then infer (T,B).
         N = int(rew_t.numel())
         if N != int(done_t.numel()):
             raise ValueError(
@@ -90,7 +65,6 @@ def _ensure_time_batch_layout(
             if o0 * o1 == N:
                 T, B = o0, o1
             else:
-                # Ambiguous; fall back to B=1 if compatible.
                 if o0 == N:
                     T, B = o0, 1
                 else:
@@ -99,7 +73,6 @@ def _ensure_time_batch_layout(
                         f"Got N={N}, obs leading dims={tuple(obs_t.shape[:2])}."
                     )
         else:
-            # Only a time axis available → treat as a single environment (B=1).
             o0 = int(obs_t.size(0))
             if o0 != N:
                 raise ValueError(
@@ -107,17 +80,14 @@ def _ensure_time_batch_layout(
                     f"N={N}, T(obs)={o0}."
                 )
             T, B = o0, 1
-        # Reshape rewards/dones to (T,B)
         rew_t = rew_t.reshape(T, B)
         done_t = done_t.reshape(T, B)
 
-    # If obs are batch-major (B,T,...), swap to time-major.
     if obs_t.dim() >= 2 and (int(obs_t.size(0)) == B and int(obs_t.size(1)) == T):
         obs_t = obs_t.transpose(0, 1)
         if next_obs_t is not None:
             next_obs_t = next_obs_t.transpose(0, 1)
 
-    # Final sanity: first two dims must be (T,B) if present.
     if obs_t.dim() >= 2:
         if not (int(obs_t.size(0)) == T and (B == 1 or int(obs_t.size(1)) == B)):
             raise ValueError(
@@ -129,10 +99,7 @@ def _ensure_time_batch_layout(
 
 
 def _coerce_mask_to_TB(mask: Tensor, T: int, B: int, like_done: Tensor) -> Tensor:
-    """Best-effort reshape/transpose of a mask to (T, B) float32.
-
-    The returned tensor lives on the same device as ``like_done``.
-    """
+    """Coerce a 1D/2D mask into (T,B) float32 on the done device."""
     dev = like_done.device
     m = mask.to(dev, dtype=torch.float32)
     if m.dim() == 2:
@@ -166,70 +133,16 @@ def compute_gae(
     *,
     bootstrap_on_timeouts: bool = False,
 ) -> Tuple[Tensor, Tensor]:
-    """Compute generalized advantage estimates (GAE) for a rollout batch.
-
-    Parameters
-    ----------
-    batch : Mapping or dict-like
-        Mini-batch containing observations, rewards, and done flags. Accepts
-        common aliases such as ``"obs"``/``"observations"`` for observations and
-        ``"dones"``/``"done"`` for termination flags. Optional keys
-        ``"terminals"``/``"truncations"`` can be provided to distinguish true
-        terminals from time-limit truncations.
-    value_fn : torch.nn.Module or callable
-        Value function used to predict ``V(s)``. It must accept a batch of
-        observations and return a tensor of shape ``(T * B,)`` or ``(T, B)``.
-    gamma : float
-        Discount factor :math:`γ` in (0, 1].
-    lam : float
-        GAE parameter :math:`λ` in [0, 1].
-    bootstrap_on_timeouts : bool, optional
-        If ``True``, time-limit truncations are *not* treated as terminal when
-        computing GAE (that is, they bootstrap from the value function). When
-        ``False`` (default), truncations contribute to the effective ``done``
-        mask in the same way as terminals.
-
-    Returns
-    -------
-    advantages : torch.Tensor
-        Flattened advantages with shape ``(T * B,)``.
-    value_targets : torch.Tensor
-        Flattened bootstrapped value targets with shape ``(T * B,)``.
-
-    Notes
-    -----
-    ``batch`` may use aliases like ``"obs"``/``"observations"``,
-    ``"dones"``/``"done"``, and so on. Shapes are normalised internally:
-
-    * Observations: ``(T, B, ...)`` or ``(B, T, ...)`` — automatically
-      converted to time-major ``(T, B, ...)``; ``B`` can be 1.
-    * Rewards / dones: ``(T, B)`` or 1-D of length ``N = T * B`` — reshaped
-      to ``(T, B)`` internally.
-
-    Timeout-aware handling is controlled via separate masks:
-
-    * Terminals: keys ``"terminals"``, ``"terminal"``, ``"terms"``.
-    * Truncations / timeouts: keys ``"truncations"``, ``"timeouts"``,
-      ``"truncated"``, ``"time_limits"``.
-
-    The effective done mask used in GAE is ::
-
-        done_eff = terminals OR ((not bootstrap_on_timeouts) AND truncations)
-
-    When no explicit terminals/truncations masks are supplied, the function
-    falls back to the coarse ``"dones"`` mask, which preserves the historical
-    behaviour of treating truncations as terminals.
-    """
+    """Compute GAE advantages and value targets (flat, shape T*B)."""
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
-    device = next(value_fn.parameters()).device  # type: ignore[attr-defined]
+    device = next(value_fn.parameters()).device
 
     obs = _pick(batch, "obs", "observations")
     next_obs = _pick(batch, "next_obs", "next_observations")
     rewards = _pick(batch, "rewards", "r_total", "r")
-    # Primary 'dones' fallback; terminals/truncations may refine it.
-    dones_any = _pick(batch, "dones", "done", "terminals")  # keep "terminals" as a loose alias
+    dones_any = _pick(batch, "dones", "done", "terminals")
     terminals_raw = _pick(batch, "terminals", "terminal", "terms")
     trunc_raw = _pick(batch, "truncations", "timeouts", "truncated", "time_limits")
 
@@ -238,22 +151,18 @@ def compute_gae(
     if dones_any is None and terminals_raw is None and trunc_raw is None:
         raise KeyError("batch must contain 'dones' or separate 'terminals'/'truncations' masks.")
 
-    # Convert to tensors on correct device.
     obs_t = _to_tensor(obs, device)
     next_obs_t = None if next_obs is None else _to_tensor(next_obs, device)
     rew_t = _to_tensor(rewards, device, dtype=torch.float32)
 
-    # If a coarse 'dones' is provided, use it to infer layout; refine later if separate masks exist.
     done_base = torch.zeros_like(rew_t, dtype=torch.float32)
     if dones_any is not None:
         done_base = _to_tensor(dones_any, device, dtype=torch.float32)
 
-    # Canonicalise shapes/layout to time-major (T,B,...) and (T,B).
     obs_t, next_obs_t, rew_t, done_t, T, B = _ensure_time_batch_layout(
         obs_t, next_obs_t, rew_t, done_base
     )
 
-    # Prepare effective done mask (terminals vs timeouts).
     term_t: Optional[Tensor] = None
     trunc_t: Optional[Tensor] = None
 
@@ -263,31 +172,28 @@ def compute_gae(
         trunc_t = _coerce_mask_to_TB(_to_tensor(trunc_raw, device), T, B, done_t)
 
     if term_t is None and trunc_t is None:
-        done_eff = done_t  # fall back to whatever caller provided
+        done_eff = done_t
     else:
         term = term_t if term_t is not None else torch.zeros_like(done_t)
         if trunc_t is None:
             done_eff = term
         else:
             if bootstrap_on_timeouts:
-                done_eff = term  # ignore truncations in 'done'
+                done_eff = term
             else:
                 done_eff = torch.clamp(term + trunc_t, max=1.0)
 
-    # Values for s_t and s_{t+1}.
     with torch.no_grad():
-        v_t = value_fn(obs_t).view(T, B)  # type: ignore[misc]
+        v_t = value_fn(obs_t).view(T, B)
 
         if next_obs_t is not None:
-            v_tp1 = value_fn(next_obs_t).view(T, B)  # type: ignore[misc]
+            v_tp1 = value_fn(next_obs_t).view(T, B)
         else:
-            # Shift v_t forward by one step; bootstrap last with zeros (safe if last is terminal).
             v_tp1 = torch.zeros_like(v_t)
             if T > 1:
                 v_tp1[:-1] = v_t[1:]
             v_tp1[-1] = 0.0
 
-        # Backward GAE using the *effective* done mask.
         adv = torch.zeros_like(v_t)
         last_adv = torch.zeros(B, device=device)
         for t in reversed(range(T)):
@@ -297,7 +203,6 @@ def compute_gae(
 
         v_targets = adv + v_t
 
-    # Flatten to 1-D for PPO update.
     adv = adv.reshape(-1)
     v_targets = v_targets.reshape(-1)
     return adv, v_targets
