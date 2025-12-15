@@ -1,30 +1,3 @@
-"""Checkpoint manager with atomic writes and optional retention.
-
-This module provides the concrete implementation of:
-
-* A :class:`CheckpointManager` that periodically writes torch
-  checkpoints, maintains a ``ckpt_latest.pt`` alias, and prunes older
-  step-numbered checkpoints.
-* A compatibility layer for torch.load across versions.
-* A convenience ``load_checkpoint`` wrapper.
-
-Warmup checkpointing
---------------------
-To improve debuggability early in training, the manager automatically requests
-more frequent checkpoints during the first configured checkpoint interval.
-
-If the user configures a checkpoint interval of ``N`` steps, the manager will
-request up to 10 evenly spaced checkpoints for steps in ``[0, N)``:
-
-    0, N/10, 2N/10, ..., 9N/10
-
-(using integer rounding down). After step ``N`` is reached, the manager reverts
-to the regular cadence of requesting checkpoints every ``N`` steps.
-
-Note: the trainer is responsible for creating the explicit step-0 baseline
-checkpoint on new runs (so that the warmup schedule starts at index 0).
-"""
-
 from __future__ import annotations
 
 import re
@@ -37,17 +10,10 @@ import torch
 from .atomic_files import atomic_replace
 
 _CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
-
-# Number of evenly spaced checkpoints requested during the first interval.
 _WARMUP_CHECKPOINTS = 10
 
 
 def _safe_torch_save(obj: Any, path: Path) -> None:
-    """Write a torch payload via a temporary file, then replace.
-
-    This reduces the risk of visible partial files if the process is
-    interrupted mid-write.
-    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -56,52 +22,15 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
 
 
 def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Load a checkpoint in a way that is compatible across torch versions.
-
-    Parameters
-    ----------
-    path :
-        Path to the checkpoint file.
-    map_location :
-        Argument forwarded to :func:`torch.load`.
-
-    Returns
-    -------
-    dict
-        Deserialised checkpoint payload.
-
-    Notes
-    -----
-    Torch 2.6 adds a ``weights_only`` argument to :func:`torch.load`.
-    This helper always opts out of that flag so a single call site
-    works for both older and newer versions.
-    """
+    # Torch 2.6 adds weights_only; opt out for full payload compatibility.
     try:
-        # torch >= 2.6
         return torch.load(path, map_location=map_location, weights_only=False)
     except TypeError:
-        # torch < 2.6 (no weights_only kwarg)
         return torch.load(path, map_location=map_location)
 
 
 @dataclass
 class CheckpointManager:
-    """Manage periodic saves, pruning, and a ``ckpt_latest.pt`` alias.
-
-    Parameters
-    ----------
-    run_dir :
-        Root directory for a single training or evaluation run.
-    interval_steps :
-        Save cadence expressed in environment steps.
-    max_to_keep :
-        Maximum number of step-numbered checkpoints to retain. The
-        ``ckpt_latest.pt`` alias is always preserved. The step-0
-        checkpoint (when present) is also preserved.
-    subdir :
-        Subdirectory under ``run_dir`` where checkpoints are stored.
-    """
-
     run_dir: Path
     interval_steps: int
     max_to_keep: Optional[int] = 5
@@ -111,52 +40,19 @@ class CheckpointManager:
         self.run_dir = Path(self.run_dir)
         self.ckpt_dir = self.run_dir / self.subdir
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-        # Track the most recent checkpoint step so duplicate saves are not requested.
-        # This is initialised from disk when possible.
         self._last_saved_step: Optional[int] = self._discover_last_saved_step()
-
-        # Warmup/regular cadence trackers.
-        #
-        # - Warmup is active only for steps < interval_steps and is tracked as an
-        #   index into the evenly spaced warmup checkpoints (0.._WARMUP_CHECKPOINTS-1).
-        # - Regular cadence is tracked as the last *regular* checkpoint step,
-        #   independent of any warmup saves, so that warmup checkpoints do not
-        #   delay the first "interval_steps" checkpoint.
         self._warmup_last_idx: int = -1
         self._regular_last_step: int = 0
-
         self._init_cadence_state_from_disk()
-
-    # ------------- Paths -------------
 
     @property
     def latest_path(self) -> Path:
-        """Return the path to the ``ckpt_latest.pt`` alias."""
         return self.ckpt_dir / "ckpt_latest.pt"
 
     def path_for_step(self, step: int) -> Path:
-        """Return the canonical checkpoint path for a given step."""
         return self.ckpt_dir / f"ckpt_step_{int(step)}.pt"
 
-    # ------------- Save/Load -------------
-
     def save(self, step: int, payload: Dict[str, Any]) -> Path:
-        """Save a checkpoint payload and update the ``latest`` alias.
-
-        Parameters
-        ----------
-        step :
-            Global step associated with the checkpoint.
-        payload :
-            Mapping to serialise with :func:`torch.save`. A ``"step"``
-            key is added or overwritten to match ``step``.
-
-        Returns
-        -------
-        pathlib.Path
-            The path of the step-numbered checkpoint.
-        """
         step_int = int(step)
         if "step" not in payload:
             payload = dict(payload)
@@ -164,129 +60,70 @@ class CheckpointManager:
 
         path = self.path_for_step(step_int)
         _safe_torch_save(payload, path)
-
-        # Update latest alias.
         _safe_torch_save(payload, self.latest_path)
 
-        # Update in-memory trackers so subsequent calls to ``should_save`` use this
-        # checkpoint as a boundary reference.
         self._last_saved_step = step_int
         self._update_cadence_after_save(step_int)
-
-        # Prune old checkpoints (except 'latest' and the step-0 baseline).
         self._prune_old()
         return path
 
     def should_save(self, step: int) -> bool:
-        """Return ``True`` when a new checkpoint should be written.
-
-        Cadence policy
-        --------------
-        Let ``N = interval_steps`` (as configured by the user).
-
-        * Warmup phase (steps < N): request up to 10 evenly spaced checkpoints
-          at steps ``floor(i * N / 10)`` for ``i = 0..9``.
-        * Regular phase (steps >= N): request a checkpoint whenever the current
-          step is at least ``N`` beyond the most recent *regular* checkpoint.
-
-        This design ensures warmup checkpoints do not delay the first
-        regular ``N``-step checkpoint.
-        """
         if self.interval_steps <= 0:
             return False
 
         s = int(step)
         last_any = int(self._last_saved_step) if self._last_saved_step is not None else -1
-
-        # Never request a save twice for the same (or a smaller) step.
         if s <= last_any:
             return False
 
         N = int(self.interval_steps)
 
-        # Warmup schedule (strictly before the first full interval).
+        # Warmup: up to 10 evenly spaced checkpoints for steps in [0, N).
         if s < N:
-            next_idx = int(self._warmup_last_idx) + 1
-            if next_idx < int(_WARMUP_CHECKPOINTS):
-                target = self._warmup_target_step(next_idx)
-                return s >= target
+            next_idx = self._warmup_last_idx + 1
+            if next_idx < _WARMUP_CHECKPOINTS:
+                return s >= self._warmup_target_step(next_idx)
             return False
 
-        # Regular cadence (independent from warmup saves).
-        last_reg = int(self._regular_last_step)
-        return (s - last_reg) >= N
+        # Regular cadence is independent of warmup saves.
+        return (s - int(self._regular_last_step)) >= N
 
     def load_latest(self, map_location: str | torch.device = "cpu") -> Tuple[Dict[str, Any], int]:
-        """Load the latest checkpoint payload and its associated step.
-
-        Parameters
-        ----------
-        map_location :
-            Argument forwarded to :func:`torch.load`.
-
-        Returns
-        -------
-        tuple
-            ``(payload, step)`` where ``payload`` is the deserialised
-            dict and ``step`` is the integer training step inferred from
-            the payload or filename.
-
-        Raises
-        ------
-        FileNotFoundError
-            If no ``ckpt_latest.pt`` file is present.
-        """
         if not self.latest_path.exists():
             raise FileNotFoundError(f"No latest checkpoint at {self.latest_path}")
         payload = _torch_load_compat(self.latest_path, map_location=map_location)
-        step = int(
-            payload.get(
-                "step",
-                self._infer_step_from_name(self.latest_path.name) or -1,
-            )
-        )
+        step = int(payload.get("step", self._infer_step_from_name(self.latest_path.name) or -1))
         return payload, step
 
-    # ------------- Warmup helpers -------------
-
     def _warmup_target_step(self, idx: int) -> int:
-        """Return the warmup target step for warmup index ``idx`` (0-based)."""
         N = int(self.interval_steps)
         if N <= 0:
             return 0
         i = int(max(0, min(idx, _WARMUP_CHECKPOINTS - 1)))
-        return (i * N) // int(_WARMUP_CHECKPOINTS)
+        return (i * N) // _WARMUP_CHECKPOINTS
 
     def _warmup_idx_for_step(self, step: int) -> int:
-        """Return the warmup index (0..9) for a step within the first interval."""
         N = int(self.interval_steps)
         if N <= 0:
             return 0
         s = int(max(0, min(step, N - 1)))
-        # floor(s / N * 10)
-        idx = (s * int(_WARMUP_CHECKPOINTS)) // N
+        idx = (s * _WARMUP_CHECKPOINTS) // N
         return int(max(0, min(idx, _WARMUP_CHECKPOINTS - 1)))
 
     def _update_cadence_after_save(self, step: int) -> None:
-        """Update warmup/regular cadence trackers after saving a checkpoint."""
         N = int(self.interval_steps)
         s = int(step)
-
         if N <= 0:
             return
 
         if s < N:
-            # Warmup save: advance warmup index to the bucket containing `s`.
             self._warmup_last_idx = max(self._warmup_last_idx, self._warmup_idx_for_step(s))
-            # Do NOT update regular cadence here; warmup checkpoints should not delay it.
             return
 
-        # Regular save: advance regular step and mark warmup as complete.
         self._regular_last_step = s
         self._warmup_last_idx = _WARMUP_CHECKPOINTS - 1
 
     def _init_cadence_state_from_disk(self) -> None:
-        """Initialize cadence trackers from an on-disk last checkpoint (if any)."""
         N = int(self.interval_steps)
         last = self._last_saved_step
 
@@ -296,52 +133,36 @@ class CheckpointManager:
             return
 
         s = int(last)
-
         if s < N:
-            # Resuming inside the first interval: warmup continues; regular cadence is still anchored at 0.
             self._regular_last_step = 0
             self._warmup_last_idx = self._warmup_idx_for_step(s)
             return
 
-        # Resuming after the first interval: warmup is complete; regular cadence continues from last.
         self._regular_last_step = s
         self._warmup_last_idx = _WARMUP_CHECKPOINTS - 1
 
-    # ------------- Helpers -------------
-
     def _prune_old(self) -> None:
-        """Remove older step-numbered checkpoints beyond ``max_to_keep``.
-
-        Notes
-        -----
-        The step-0 baseline checkpoint is never pruned when present.
-        """
         if self.max_to_keep is None or self.max_to_keep <= 0:
             return
 
         ckpts: list[tuple[int, Path]] = []
         for p in self.ckpt_dir.iterdir():
-            if p.is_file() and _CKPT_RE.match(p.name):
-                step = self._infer_step_from_name(p.name)
-                if step is None:
-                    continue
-                # Preserve the step-0 baseline checkpoint.
-                if int(step) == 0:
-                    continue
-                ckpts.append((int(step), p))
+            if not (p.is_file() and _CKPT_RE.match(p.name)):
+                continue
+            step = self._infer_step_from_name(p.name)
+            if step is None or int(step) == 0:
+                continue
+            ckpts.append((int(step), p))
 
         ckpts.sort(key=lambda t: t[0], reverse=True)
-
         for _, path in ckpts[int(self.max_to_keep) :]:
             try:
                 path.unlink()
             except Exception:
-                # Best-effort pruning: ignore deletion failures.
                 pass
 
     @staticmethod
     def _infer_step_from_name(name: str) -> Optional[int]:
-        """Extract the integer step from a ``ckpt_step_*.pt`` filename."""
         m = _CKPT_RE.match(name)
         if not m:
             return None
@@ -351,14 +172,6 @@ class CheckpointManager:
             return None
 
     def _discover_last_saved_step(self) -> Optional[int]:
-        """Best-effort detection of the last checkpoint step on disk.
-
-        Preference is given to ``ckpt_latest.pt`` when present; if it
-        cannot be loaded, the method falls back to scanning step-numbered
-        checkpoint filenames. Returns ``None`` when no checkpoints are
-        found.
-        """
-        # Prefer the latest alias: it should contain a 'step' entry.
         if self.latest_path.exists():
             try:
                 payload = _torch_load_compat(self.latest_path, map_location="cpu")
@@ -366,7 +179,6 @@ class CheckpointManager:
                 if isinstance(step, (int, float)):
                     return int(step)
             except Exception:
-                # Ignore and fall back to filename-based discovery.
                 pass
 
         max_step: Optional[int] = None
@@ -383,5 +195,4 @@ class CheckpointManager:
 
 
 def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    """Convenience wrapper for loading a single checkpoint file."""
     return _torch_load_compat(Path(path), map_location=map_location)
