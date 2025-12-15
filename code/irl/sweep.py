@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import List, Optional
-
 from irl.multiseed.evaluation import (
     RunResult,
     _aggregate,
@@ -27,5 +25,5 @@ __all__ = [
 ]
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     _impl_main()
