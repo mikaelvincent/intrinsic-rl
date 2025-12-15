@@ -2,33 +2,20 @@ import csv
 from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
 import gymnasium as gym
+import numpy as np
 from gymnasium.envs.registration import register
 
 from irl.cfg import Config, validate_config
 from irl.trainer import train as run_train
 
 
-# ----- Tiny uint8 RGB image env (Discrete actions) -----
-
-
 class _DummyImageEnv(gym.Env):
-    """Small deterministic image env to exercise the image pipeline end-to-end.
-
-    - Observation: uint8 RGB image [H,W,C] in [0..255]
-    - Action: Discrete(3)
-    - Reward: +0.1 per step
-    - Episode terminates at t >= 5
-
-    Note: Default H,W=32 so the ConvEncoder (k=(8,4,3), s=(4,2,1)) has valid spatial sizes:
-          32 -> 7 -> 2 -> 2
-    """
-
     metadata = {"render_modes": []}
 
     def __init__(self, h: int = 32, w: int = 32, seed: int | None = None) -> None:
         super().__init__()
+        # 32x32 keeps ConvEncoder strides valid.
         self.H, self.W = int(h), int(w)
         self.observation_space = gym.spaces.Box(
             low=0, high=255, shape=(self.H, self.W, 3), dtype=np.uint8
@@ -50,15 +37,12 @@ class _DummyImageEnv(gym.Env):
         reward = 0.1
         terminated = self._t >= 5
         truncated = False
-        info = {}
-        return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, {}
 
 
-# Register once (idempotent across test runs)
 try:
     register(id="DummyImage-v0", entry_point=_DummyImageEnv)
 except Exception:
-    # Already registered in this process
     pass
 
 
@@ -70,7 +54,6 @@ def _make_cfg(
     epochs: int = 1,
     eta: float = 0.0,
 ) -> Config:
-    """Build a small Config that uses the dummy image env."""
     base = Config()
     env_cfg = replace(
         base.env,
@@ -89,9 +72,8 @@ def _make_cfg(
     )
     intrinsic_cfg = replace(base.intrinsic, eta=eta)
     log_cfg = replace(base.logging, tb=False, csv_interval=1, checkpoint_interval=10_000)
-    eval_cfg = replace(base.evaluation, interval_steps=10_000, episodes=1)  # effectively disabled
+    eval_cfg = replace(base.evaluation, interval_steps=10_000, episodes=1)
     adapt_cfg = replace(base.adaptation, enabled=False)
-
     cfg = replace(
         base,
         device="cpu",
@@ -116,38 +98,31 @@ def _read_csv_header_rows(csv_path: Path) -> tuple[list[str], list[list[str]]]:
 
 
 def test_trainer_image_pipeline_vanilla_smoke(tmp_path: Path):
-    """End-to-end smoke: trainer → compute_gae → ppo_update on uint8 images (vanilla)."""
     run_dir = tmp_path / "run_vanilla_img"
     cfg = _make_cfg(method="vanilla", eta=0.0, total_steps_per_update=8, minibatches=2, epochs=1)
     out = run_train(cfg, total_steps=16, run_dir=run_dir, resume=False)
 
-    # Scalars CSV should exist and have expected basics
     csv_path = out / "logs" / "scalars.csv"
-    assert csv_path.exists(), "scalars.csv not written"
+    assert csv_path.exists()
     header, rows = _read_csv_header_rows(csv_path)
 
-    # Core metrics from the trainer loop
     assert "reward_mean" in header
     assert "reward_total_mean" in header
     assert "entropy_last" in header
     assert "entropy_update_mean" in header
-    assert len(rows) >= 1  # at least one logged step
+    assert len(rows) >= 1
 
 
 def test_trainer_image_pipeline_riac_intrinsic_smoke(tmp_path: Path):
-    """End-to-end smoke with an image intrinsic (RIAC) to exercise ICM/CNN path and intrinsic logging."""
     run_dir = tmp_path / "run_riac_img"
-    # Small steps; enable intrinsic via eta>0
     cfg = _make_cfg(method="riac", eta=0.1, total_steps_per_update=6, minibatches=1, epochs=1)
     out = run_train(cfg, total_steps=12, run_dir=run_dir, resume=False)
 
     csv_path = out / "logs" / "scalars.csv"
-    assert csv_path.exists(), "scalars.csv not written"
+    assert csv_path.exists()
     header, rows = _read_csv_header_rows(csv_path)
 
-    # Intrinsic logging present
-    assert "r_int_mean" in header, "expected intrinsic mean in logs"
-    # RIAC-specific update metrics should be namespaced
+    assert "r_int_mean" in header
     assert "riac_loss_total" in header
     assert "riac_loss_forward" in header
     assert "riac_loss_inverse" in header
