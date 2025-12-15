@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import List, Optional
-
 from irl.visualization.plotting import (
     AggregateResult,
     _aggregate_runs,
@@ -23,5 +21,5 @@ __all__ = [
 ]
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     _impl_main(argv)
