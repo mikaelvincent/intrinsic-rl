@@ -1,4 +1,3 @@
-# code/irl/experiments/plotting.py
 """Plotting helpers for the experiment suite.
 
 If ``metric`` is provided, generates one generic overlay plot per environment
@@ -168,6 +167,11 @@ def run_plots_suite(
       5. Intrinsic Component Evolution (Impact vs LP RMS).
       6. Normalized Performance Summary (Bar Chart).
       7. Trajectory Heatmaps (State Space).
+
+    Note
+    ----
+    Standard deviation indicators are disabled. The ``shade`` argument is kept
+    for compatibility but ignored by the plotting helpers.
 
     Additionally, emits a transparent discovery summary listing:
       * all directories under runs_root/results_dir, and
