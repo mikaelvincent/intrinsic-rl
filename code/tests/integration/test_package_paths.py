@@ -1,7 +1,7 @@
-def test_package_modules_present():
-    import importlib
+import importlib
 
-    # Modules that should be importable from the packaged library
+
+def test_package_modules_present():
     for mod in [
         "irl",
         "irl.cfg",
