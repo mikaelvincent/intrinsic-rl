@@ -10,7 +10,7 @@ from irl.visualization.plotting import (
     plot_trajectory_heatmap,
 )
 
-__all__ = [
+__all__ = (
     "AggregateResult",
     "_aggregate_runs",
     "_parse_run_name",
@@ -18,7 +18,7 @@ __all__ = [
     "plot_trajectory_heatmap",
     "app",
     "main",
-]
+)
 
 
 def main(argv: list[str] | None = None) -> None:
