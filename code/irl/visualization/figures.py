@@ -14,7 +14,7 @@ from .data import _ensure_parent
 
 
 def plot_normalized_summary(
-    summary_path: Path, out_path: Path, highlight_method: str = "proposed"
+    summary_path: Path, out_path: Path, highlight_method: str = "glpe"
 ) -> None:
     if not summary_path.exists():
         return
