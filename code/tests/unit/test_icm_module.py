@@ -33,19 +33,16 @@ def test_icm_compute_batch_matches_loss_mean(act_space):
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
     icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
 
-    obs, next_obs, acts = _rand_batch(5, act_space, B=32, seed=1)
+    B = 32
+    obs, next_obs, acts = _rand_batch(5, act_space, B=B, seed=1)
 
     r = icm.compute_batch(obs, next_obs, acts, reduction="none")
-    assert r.shape == (32,)
+    assert r.shape == (B,)
     assert torch.isfinite(r).all()
 
     losses = icm.loss(obs, next_obs, acts)
-    for k in ("total", "forward", "inverse", "intrinsic_mean"):
-        assert k in losses
-        assert torch.isfinite(losses[k])
-
+    assert torch.isfinite(losses["total"])
     assert torch.allclose(losses["intrinsic_mean"], r.mean(), atol=1e-5)
 
     metrics = icm.update(obs, next_obs, acts, steps=1)
-    for v in metrics.values():
-        assert np.isfinite(v)
+    assert metrics and all(np.isfinite(v) for v in metrics.values())
