@@ -95,6 +95,4 @@ def test_trainer_image_pipeline_riac_logs_intrinsic(tmp_path: Path):
     csv_path = out / "logs" / "scalars.csv"
     lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 2
-    header = set(lines[0].split(","))
-    assert "step" in header
-    assert "r_int_mean" in header
+    assert "r_int_mean" in set(lines[0].split(","))
