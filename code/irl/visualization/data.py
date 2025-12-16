@@ -127,7 +127,13 @@ def _resolve_metric_for_run(
     return None
 
 
-def _aggregate_runs(run_dirs: Sequence[Path], metric: str, smooth: int = 1) -> AggregateResult:
+def _aggregate_runs(
+    run_dirs: Sequence[Path],
+    metric: str,
+    smooth: int = 1,
+    *,
+    align: str = "interpolate",
+) -> AggregateResult:
     if not run_dirs:
         return AggregateResult(np.array([]), np.array([]), np.array([]), 0, None, None)
 
@@ -169,28 +175,77 @@ def _aggregate_runs(run_dirs: Sequence[Path], metric: str, smooth: int = 1) -> A
     if not series_per_run:
         return AggregateResult(np.array([]), np.array([]), np.array([]), 0, None, None)
 
-    all_steps = sorted(set().union(*[set(s.index) for s in series_per_run]))
-    means: list[float] = []
-    stds: list[float] = []
-
-    for st in all_steps:
-        vals = [float(s[st]) for s in series_per_run if st in s.index]
-        if not vals:
-            continue
-        means.append(float(np.mean(vals)))
-        stds.append(float(np.std(vals, ddof=0)) if len(vals) > 1 else 0.0)
-
-    steps_arr = np.asarray(all_steps, dtype=np.int64)
-    mean_arr = np.asarray(means, dtype=np.float64)
-    std_arr = np.asarray(stds, dtype=np.float64)
-
     method_hint = list(method_cand)[0] if len(method_cand) == 1 else None
     env_hint = list(env_cand)[0] if len(env_cand) == 1 else None
 
+    mode = str(align).strip().lower()
+    if mode not in {"union", "intersection", "interpolate"}:
+        raise ValueError("align must be one of: union, intersection, interpolate")
+
+    if mode == "union":
+        all_steps = sorted(set().union(*[set(s.index) for s in series_per_run]))
+        means = np.empty((len(all_steps),), dtype=np.float64)
+        stds = np.empty((len(all_steps),), dtype=np.float64)
+        for i, st in enumerate(all_steps):
+            vals = [float(s.loc[st]) for s in series_per_run if st in s.index]
+            means[i] = float(np.mean(vals)) if vals else float("nan")
+            stds[i] = float(np.std(vals, ddof=0)) if len(vals) > 1 else 0.0
+        return AggregateResult(
+            steps=np.asarray(all_steps, dtype=np.int64),
+            mean=means,
+            std=stds,
+            n_runs=len(series_per_run),
+            method_hint=method_hint,
+            env_hint=env_hint,
+        )
+
+    if mode == "intersection":
+        common = set(series_per_run[0].index)
+        for s in series_per_run[1:]:
+            common &= set(s.index)
+        if not common:
+            return AggregateResult(np.array([]), np.array([]), np.array([]), 0, method_hint, env_hint)
+
+        steps = np.asarray(sorted(common), dtype=np.int64)
+        vals = np.empty((len(series_per_run), steps.size), dtype=np.float64)
+        for r_i, s in enumerate(series_per_run):
+            vals[r_i, :] = np.asarray([float(s.loc[int(st)]) for st in steps], dtype=np.float64)
+
+        return AggregateResult(
+            steps=steps,
+            mean=vals.mean(axis=0),
+            std=vals.std(axis=0, ddof=0),
+            n_runs=len(series_per_run),
+            method_hint=method_hint,
+            env_hint=env_hint,
+        )
+
+    start = max(int(s.index.min()) for s in series_per_run)
+    end = min(int(s.index.max()) for s in series_per_run)
+    if start > end:
+        return AggregateResult(np.array([]), np.array([]), np.array([]), 0, method_hint, env_hint)
+
+    grid_set: set[int] = set()
+    for s in series_per_run:
+        grid_set |= set(int(v) for v in s.index.values.tolist())
+    grid_set.add(int(start))
+    grid_set.add(int(end))
+
+    steps = np.asarray(sorted(v for v in grid_set if int(start) <= int(v) <= int(end)), dtype=np.int64)
+    if steps.size == 0:
+        return AggregateResult(np.array([]), np.array([]), np.array([]), 0, method_hint, env_hint)
+
+    xq = steps.astype(np.float64, copy=False)
+    vals = np.empty((len(series_per_run), steps.size), dtype=np.float64)
+    for r_i, s in enumerate(series_per_run):
+        xs = s.index.to_numpy(dtype=np.float64, copy=False)
+        ys = s.to_numpy(dtype=np.float64, copy=False)
+        vals[r_i, :] = np.interp(xq, xs, ys)
+
     return AggregateResult(
-        steps=steps_arr,
-        mean=mean_arr,
-        std=std_arr,
+        steps=steps,
+        mean=vals.mean(axis=0),
+        std=vals.std(axis=0, ddof=0),
         n_runs=len(series_per_run),
         method_hint=method_hint,
         env_hint=env_hint,
