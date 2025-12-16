@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Iterable, Optional, Tuple, Union
 
 import gymnasium as gym
@@ -78,6 +79,57 @@ class GLPE(nn.Module):
         self.outputs_normalized = bool(self._normalize_inside)
 
         self.to(self.device)
+
+    def get_extra_state(self) -> dict:
+        return {
+            "store": self.store.state_dict(include_points=True),
+            "stats": {int(k): asdict(v) for k, v in self._stats.items()},
+            "rms": self._rms.state_dict(),
+        }
+
+    def set_extra_state(self, state: object) -> None:
+        if not isinstance(state, dict):
+            return
+
+        try:
+            store_state = state.get("store")
+            if isinstance(store_state, dict):
+                self.store = KDTreeRegionStore.from_state_dict(store_state)
+        except Exception:
+            pass
+
+        try:
+            stats_state = state.get("stats")
+            if isinstance(stats_state, dict):
+                restored: dict[int, _RegionStats] = {}
+                for k, v in stats_state.items():
+                    try:
+                        rid = int(k)
+                    except Exception:
+                        continue
+                    if not isinstance(v, dict):
+                        continue
+                    try:
+                        restored[rid] = _RegionStats(**v)
+                    except Exception:
+                        st = _RegionStats()
+                        for fk, fv in v.items():
+                            if hasattr(st, fk):
+                                try:
+                                    setattr(st, fk, fv)
+                                except Exception:
+                                    pass
+                        restored[rid] = st
+                self._stats = restored
+        except Exception:
+            pass
+
+        try:
+            rms_state = state.get("rms")
+            if isinstance(rms_state, dict):
+                self._rms.load_state_dict(rms_state)
+        except Exception:
+            pass
 
     @torch.no_grad()
     def _impact_per_sample(self, obs: Any, next_obs: Any) -> Tensor:
