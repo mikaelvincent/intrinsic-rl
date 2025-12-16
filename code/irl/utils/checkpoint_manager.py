@@ -22,7 +22,7 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
 
 
 def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    # Torch 2.6 adds weights_only; opt out for full payload compatibility.
+    # Torch >=2.6 defaults to weights_only; keep full payload.
     try:
         return torch.load(path, map_location=map_location, weights_only=False)
     except TypeError:
@@ -78,14 +78,12 @@ class CheckpointManager:
 
         N = int(self.interval_steps)
 
-        # Warmup: up to 10 evenly spaced checkpoints for steps in [0, N).
         if s < N:
             next_idx = self._warmup_last_idx + 1
             if next_idx < _WARMUP_CHECKPOINTS:
                 return s >= self._warmup_target_step(next_idx)
             return False
 
-        # Regular cadence is independent of warmup saves.
         return (s - int(self._regular_last_step)) >= N
 
     def load_latest(self, map_location: str | torch.device = "cpu") -> Tuple[Dict[str, Any], int]:
