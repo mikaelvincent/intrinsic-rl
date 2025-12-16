@@ -35,15 +35,13 @@ class EnvManager:
 
     def make(self):
         thunks = [self._make_env_thunk(rank) for rank in range(self.num_envs)]
-
         if self.num_envs == 1:
-            return thunks[0]()  # type: ignore[misc]
+            return thunks[0]()
 
         if self.async_vector:
             try:
-                # Prefer copy=True when available to avoid shared-buffer reuse.
                 try:
-                    return AsyncVectorEnv(thunks, copy=True)  # type: ignore[call-arg]
+                    return AsyncVectorEnv(thunks, copy=True)
                 except TypeError:
                     return AsyncVectorEnv(thunks)
             except Exception as exc:
@@ -54,7 +52,7 @@ class EnvManager:
                 )
 
         try:
-            return SyncVectorEnv(thunks, copy=True)  # type: ignore[call-arg]
+            return SyncVectorEnv(thunks, copy=True)
         except TypeError:
             return SyncVectorEnv(thunks)
 
