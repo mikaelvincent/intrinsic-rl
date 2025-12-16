@@ -1,16 +1,9 @@
-"""PPO training engine (rollouts, updates, logging, checkpointing).
-
-This module hosts the main training loop that was previously implemented
-inline in ``irl.trainer.loop``. The implementation is logic-identical;
-only the project structure has changed.
-"""
-
 from __future__ import annotations
 
 import time
 from math import ceil
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -18,12 +11,9 @@ import torch
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
 from irl.cfg import Config, to_dict
-from irl.utils.checkpoint import compute_cfg_hash
-from irl.intrinsic import (  # type: ignore
-    compute_intrinsic_batch,
-    update_module,
-)
+from irl.intrinsic import compute_intrinsic_batch, update_module
 from irl.models import PolicyNetwork
+from irl.utils.checkpoint import compute_cfg_hash
 
 from .runtime_utils import _apply_final_observation, _ensure_time_major_np
 from .training_setup import TrainingSession
@@ -44,14 +34,12 @@ def _build_checkpoint_payload(
     intrinsic_module: Optional[Any],
     method_l: str,
 ) -> dict:
-    """Create a checkpoint payload matching the original trainer."""
     payload = {
         "step": int(global_step),
         "policy": policy.state_dict(),
         "value": value.state_dict(),
         "cfg": to_dict(cfg),
-        "cfg_hash": compute_cfg_hash(to_dict(cfg)),  # store config hash
-        # Only persist obs_norm for vector observations
+        "cfg_hash": compute_cfg_hash(to_dict(cfg)),
         "obs_norm": None
         if is_image
         else {
@@ -61,7 +49,6 @@ def _build_checkpoint_payload(
         },
         "intrinsic_norm": int_rms.state_dict(),
         "meta": {"updates": int(update_idx)},
-        # persist PPO optimizers
         "optimizers": {
             "policy": pol_opt.state_dict(),
             "value": val_opt.state_dict(),
@@ -86,7 +73,6 @@ def run_training_loop(
     logger,
     log_every_updates: int = 10,
 ) -> None:
-    """Run PPO updates until `total_steps` is reached (in env steps)."""
     run_dir = session.run_dir
     env = session.env
     obs_space = session.obs_space
@@ -116,29 +102,15 @@ def run_training_loop(
     global_step = int(session.global_step)
     update_idx = int(session.update_idx)
 
-    # ---------------------------------------------------------------------
-    # CPU actor policy (rollout collection) + GPU learner (PPO update)
-    #
-    # When training on a GPU, sampling actions on the GPU and transferring
-    # them back to CPU for every env.step() introduces a hard sync point at
-    # every time step. This usually crushes throughput and yields low GPU/CPU
-    # utilization. We instead:
-    #   - keep the learner (policy/value + PPO update) on `device`
-    #   - create a CPU-only "actor" policy for env stepping
-    #   - sync actor weights from learner once per PPO update (before rollout)
-    # ---------------------------------------------------------------------
     actor_policy: Optional[PolicyNetwork] = None
     if device.type != "cpu":
         actor_policy = PolicyNetwork(obs_space, act_space).to(torch.device("cpu"))
         actor_policy.eval()
         for p in actor_policy.parameters():
             p.requires_grad = False
-        logger.info(
-            "Using CPU actor policy for env stepping; syncing weights each PPO update."
-        )
+        logger.info("Using CPU actor policy for env stepping; syncing each PPO update.")
 
     def _sync_actor_from_learner() -> None:
-        """Copy learner policy weights to CPU actor (once per PPO update)."""
         if actor_policy is None:
             return
         with torch.no_grad():
@@ -146,14 +118,6 @@ def run_training_loop(
             cpu_sd = {k: v.detach().to("cpu") for k, v in sd.items()}
             actor_policy.load_state_dict(cpu_sd, strict=True)
 
-    # ---------------------------------------------------------------------
-    # Baseline checkpoint: step 0
-    #
-    # For new runs, write an explicit step-0 checkpoint to make it easy to
-    # compare against the untrained policy and to anchor the warmup checkpoint
-    # schedule (10 evenly spaced checkpoints before the first configured
-    # checkpoint interval).
-    # ---------------------------------------------------------------------
     if int(global_step) == 0 and int(update_idx) == 0 and not ckpt.latest_path.exists():
         payload0 = _build_checkpoint_payload(
             cfg,
@@ -172,46 +136,35 @@ def run_training_loop(
         ckpt_path0 = ckpt.save(step=0, payload=payload0)
         logger.info("Saved baseline checkpoint at step=0 to %s", ckpt_path0)
 
-    # Wall-clock tracking for SPS and periodic console logging
     start_wall = time.time()
     last_log_time = start_wall
     last_log_step = global_step
 
     while global_step < int(total_steps):
-        # -----------------------------------------------------------------
-        # Profiling accumulators (seconds). These are intentionally simple
-        # wall-clock timers so we can spot where time is spent per PPO update.
-        # -----------------------------------------------------------------
         t_update_start = time.perf_counter()
 
-        # Rollout (collection) breakdown
         t_rollout_total = 0.0
         t_rollout_policy = 0.0
         t_rollout_env_step = 0.0
         t_rollout_intrinsic_step = 0.0
         t_rollout_other = 0.0
 
-        # Post-rollout compute breakdown
         t_intrinsic_compute = 0.0
         t_intrinsic_update = 0.0
         t_gae = 0.0
         t_ppo = 0.0
 
-        # Logging overhead (entropy diagnostics + logger I/O)
         t_logging_compute = 0.0
         t_ml_log = 0.0
 
-        # Sync CPU actor weights once per PPO update (before rollout collection).
         _sync_actor_from_learner()
 
-        # Steps per update (per-env), capped by remaining
         per_env_steps = min(
             int(cfg.ppo.steps_per_update),
             max(1, ceil((int(total_steps) - int(global_step)) / B)),
         )
         T = per_env_steps
 
-        # Allocate storage depending on observation type
         if not is_image:
             obs_dim = int(obs_space.shape[0])
             obs_seq = np.zeros((T, B, obs_dim), dtype=np.float32)
@@ -228,7 +181,6 @@ def run_training_loop(
         )
         rew_ext_seq = np.zeros((T, B), dtype=np.float32)
         done_seq = np.zeros((T, B), dtype=np.float32)
-        # new: separate terminal and truncation masks for GAE
         terms_seq = np.zeros((T, B), dtype=np.float32)
         truncs_seq = np.zeros((T, B), dtype=np.float32)
         r_int_raw_seq = (
@@ -242,22 +194,16 @@ def run_training_loop(
         for t in range(T):
             obs_b = obs if B > 1 else obs[None, ...]
             if not is_image:
-                obs_norm.update(obs_b)  # type: ignore[union-attr]
-                obs_b_norm = obs_norm.normalize(obs_b)  # type: ignore[union-attr]
+                obs_norm.update(obs_b)
+                obs_b_norm = obs_norm.normalize(obs_b)
             else:
-                # images: keep raw dtype (e.g., uint8) for proper scaling downstream
                 obs_b_norm = obs_b
 
             if not is_image:
                 obs_seq[t] = obs_b_norm.astype(np.float32)
             else:
-                # IMPORTANT: explicitly copy image observations before buffering.
-                # Some VectorEnv implementations may reuse internal buffers (especially when copy=False),
-                # which can silently corrupt rollouts if we store references.
                 obs_seq_list.append(np.array(obs_b_norm, copy=True))
 
-            # ------------------ Action selection ------------------
-            # If a CPU actor exists, use it to avoid per-step GPU sync.
             pi_t0 = time.perf_counter()
             with torch.no_grad():
                 if actor_policy is not None:
@@ -265,7 +211,6 @@ def run_training_loop(
                     a_np = a_tensor.detach().numpy()
                 else:
                     if is_image:
-                        # Pass raw images; the policy will preprocess (layout + scaling)
                         a_tensor, _ = policy.act(obs_b_norm)
                     else:
                         obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
@@ -278,60 +223,50 @@ def run_training_loop(
             else:
                 a_np = a_np.reshape(B, -1).astype(np.float32)
 
-            # Step the env (vector envs may auto-reset; terminal obs can be in infos["final_observation"])
             env_t0 = time.perf_counter()
             next_obs_env, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
             t_rollout_env_step += time.perf_counter() - env_t0
 
-            # Normalize masks to (B,) arrays
             terms_b = np.asarray(terms, dtype=bool).reshape(B)
             truncs_b = np.asarray(truncs, dtype=bool).reshape(B)
             done_flags = terms_b | truncs_b
 
-            # For rollouts (GAE bootstrapping + intrinsic), use terminal observations when provided.
-            # Keep stepping with the environment-provided next_obs (which may already be reset).
             next_obs_rollout = _apply_final_observation(next_obs_env, done_flags, infos)
 
             next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
             if not is_image:
-                obs_norm.update(next_obs_b)  # type: ignore[union-attr]
-                next_obs_b_norm = obs_norm.normalize(next_obs_b)  # type: ignore[union-attr]
+                obs_norm.update(next_obs_b)
+                next_obs_b_norm = obs_norm.normalize(next_obs_b)
             else:
                 next_obs_b_norm = next_obs_b
 
             acts_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[0:1, :])
             rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
             done_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
-            # store terminals and truncations separately for timeout-aware GAE
             terms_seq[t] = terms_b.astype(np.float32, copy=False)
             truncs_seq[t] = truncs_b.astype(np.float32, copy=False)
 
             if not is_image:
                 next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
             else:
-                # IMPORTANT: explicitly copy next observations before buffering for the same reason.
                 next_obs_seq_list.append(np.array(next_obs_b_norm, copy=True))
 
             if r_int_raw_seq is not None:
-                # For RIDE, intrinsic is computed during rollout collection.
                 int_step_t0 = time.perf_counter()
-                r_step = intrinsic_module.compute_impact_binned(  # type: ignore[union-attr]
+                r_step = intrinsic_module.compute_impact_binned(
                     obs_b_norm,
                     next_obs_b_norm,
                     dones=done_flags,
                     reduction="none",
                 )
                 r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
-                # Recommended safety: do not grant intrinsic reward on done transitions.
                 r_step_np[done_flags] = 0.0
                 r_int_raw_seq[t] = r_step_np
                 t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
-            # Continue stepping with the env-returned observation (may be an auto-reset obs).
             obs = next_obs_env
             global_step += B
 
-        # Build obs arrays
         if not is_image:
             obs_seq_final = obs_seq
             next_obs_seq_final = next_obs_seq
@@ -341,11 +276,9 @@ def run_training_loop(
             next_obs_seq_final = np.stack(next_obs_seq_list, axis=0)
             obs_shape = tuple(int(s) for s in obs_space.shape)
 
-        # --- Image rollout integrity check (best-effort, warning only) ---
         if is_image:
             try:
                 if T >= 2:
-                    # Sample a small number of consecutive pairs for env 0 to keep cost bounded.
                     sample_pairs = int(min(16, T - 1))
                     idxs = np.linspace(0, T - 2, sample_pairs, dtype=np.int64)
                     b0 = 0
@@ -356,15 +289,12 @@ def run_training_loop(
                     frac_same = float(same) / float(sample_pairs)
                     if frac_same > 0.9:
                         logger.warning(
-                            "Image rollout sanity check: %.0f%% of sampled consecutive frames are identical. "
-                            "If unexpected, check VectorEnv copy semantics and rollout buffering.",
+                            "Image rollout check: %.0f%% sampled consecutive frames identical.",
                             100.0 * frac_same,
                         )
             except Exception:
-                # Never fail training due to a diagnostic-only check.
                 pass
 
-        # enforce time-major (T,B,...) everywhere
         obs_seq_final = _ensure_time_major_np(obs_seq_final, T, B, "obs_seq")
         next_obs_seq_final = _ensure_time_major_np(next_obs_seq_final, T, B, "next_obs_seq")
         rew_ext_seq = _ensure_time_major_np(rew_ext_seq, T, B, "rewards")
@@ -374,27 +304,22 @@ def run_training_loop(
         if r_int_raw_seq is not None:
             r_int_raw_seq = _ensure_time_major_np(r_int_raw_seq, T, B, "r_int_raw")
 
-        # Finalize rollout timers
         t_rollout_total = time.perf_counter() - t_rollout_start
         t_rollout_other = max(
             0.0,
             t_rollout_total - (t_rollout_policy + t_rollout_env_step + t_rollout_intrinsic_step),
         )
 
-        # --- Intrinsic compute/update (optional) ---
         r_int_raw_flat = None
         r_int_scaled_flat = None
         mod_metrics = {}
 
         if intrinsic_module is not None and use_intrinsic:
-            # Intrinsic compute (post-rollout for non-RIDE; for RIDE, step-time was already accounted above)
             intrinsic_compute_t0 = time.perf_counter()
 
             if method_l == "ride":
-                # Raw intrinsic already computed during rollout collection.
-                r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)  # type: ignore[union-attr]
+                r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)
             else:
-                # Ensure accurate GPU timing for compute-heavy intrinsic modules.
                 if device.type != "cpu":
                     try:
                         torch.cuda.synchronize()
@@ -414,7 +339,6 @@ def run_training_loop(
                 )
                 r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-            # Recommended safety: no intrinsic reward on done transitions (terminated OR truncated).
             done_mask_flat = (done_seq.reshape(T * B) > 0.0)
             r_int_raw_flat = np.asarray(r_int_raw_flat, dtype=np.float32)
             r_int_raw_flat[done_mask_flat] = 0.0
@@ -422,10 +346,8 @@ def run_training_loop(
             r_clip = float(cfg.intrinsic.r_clip)
             outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
             if outputs_norm:
-                # Module already normalized -> only clip + scale
                 r_int_scaled_flat = eta * np.clip(r_int_raw_flat, -r_clip, r_clip)
             else:
-                # Global RMS path
                 int_rms.update(r_int_raw_flat)
                 r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                 r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
@@ -437,7 +359,6 @@ def run_training_loop(
                     pass
             t_intrinsic_compute = time.perf_counter() - intrinsic_compute_t0
 
-            # Intrinsic update (module training)
             intrinsic_update_t0 = time.perf_counter()
             try:
                 if method_l == "ride":
@@ -454,7 +375,7 @@ def run_training_loop(
                 mod_metrics = update_module(
                     intrinsic_module,
                     method_l,
-                    obs_flat,  # type: ignore[arg-type]
+                    obs_flat,
                     next_obs_flat,
                     acts_flat,
                 )
@@ -468,13 +389,11 @@ def run_training_loop(
                 mod_metrics = {}
             t_intrinsic_update = time.perf_counter() - intrinsic_update_t0
 
-        # --- Rewards & GAE ---
         if r_int_scaled_flat is not None:
             rew_total_seq = rew_ext_seq + r_int_scaled_flat.reshape(T, B)
         else:
             rew_total_seq = rew_ext_seq
 
-        # Time-limit-aware GAE: separate terminals vs truncations and bootstrap on timeouts.
         gae_batch = {
             "obs": obs_seq_final,
             "next_observations": next_obs_seq_final,
@@ -515,7 +434,6 @@ def run_training_loop(
             "dones": done_seq.reshape(T * B),
         }
 
-        # pass persistent optimizers; capture optional stats for logging
         ppo_t0 = time.perf_counter()
         if device.type != "cpu":
             try:
@@ -541,18 +459,15 @@ def run_training_loop(
 
         update_idx += 1
 
-        # --- Logging ---
         log_compute_t0 = time.perf_counter()
         with torch.no_grad():
-            # Last-step entropy (fast to compute).
-            last_obs = obs_seq_final[-1]  # [B,...]
+            last_obs = obs_seq_final[-1]
             if is_image:
                 ent_last = float(policy.entropy(last_obs).mean().item())
             else:
                 last_obs_t = torch.as_tensor(last_obs, device=device, dtype=torch.float32)
                 ent_last = float(policy.entropy(last_obs_t).mean().item())
 
-            # Update-wide entropy: compute only if TB enabled or small batch; subsample large batches.
             ENTROPY_MAX_SAMPLES = 1024
             total_samples = int(T * B)
             want_update_entropy = (ml.tb is not None) or (total_samples <= ENTROPY_MAX_SAMPLES)
@@ -560,7 +475,6 @@ def run_training_loop(
             ent_mean_update = float("nan")
             if want_update_entropy:
                 if total_samples > ENTROPY_MAX_SAMPLES:
-                    # Evenly spaced deterministic subsample to bound cost
                     idx = np.linspace(0, total_samples - 1, ENTROPY_MAX_SAMPLES, dtype=np.int64)
                     obs_subset = obs_flat_for_ppo[idx]
                 else:
@@ -573,19 +487,15 @@ def run_training_loop(
                     ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
         log_payload = {
-            # Renamed for clarity: entropy on last obs vs mean over update
             "entropy_last": float(ent_last),
             "entropy_update_mean": float(ent_mean_update),
             "reward_mean": float(rew_ext_seq.mean()),
             "reward_total_mean": float(rew_total_seq.mean()),
+            "intrinsic_norm_mode": intrinsic_norm_mode,
         }
-
-        # Record intrinsic normalization mode in scalars/TB for downstream analysis.
-        log_payload["intrinsic_norm_mode"] = intrinsic_norm_mode
         if intrinsic_outputs_normalized_flag is not None:
             log_payload["intrinsic_outputs_normalized"] = bool(intrinsic_outputs_normalized_flag)
 
-        # add PPO monitor stats when available (+ percentage for clip_frac)
         if isinstance(ppo_stats, dict):
             try:
                 clip_frac = float(ppo_stats.get("clip_frac", float("nan")))
@@ -596,11 +506,9 @@ def run_training_loop(
                         "clip_frac_pct": (100.0 * clip_frac)
                         if np.isfinite(clip_frac)
                         else float("nan"),
-                        # Return update-wide means for losses (not just last minibatch)
                         "entropy_minibatch_mean": float(ppo_stats.get("entropy", float("nan"))),
                         "ppo_policy_loss": float(ppo_stats.get("policy_loss", float("nan"))),
                         "ppo_value_loss": float(ppo_stats.get("value_loss", float("nan"))),
-                        # KL early-stop + epochs ran
                         "ppo_early_stop": float(ppo_stats.get("early_stop", 0.0)),
                         "ppo_epochs_ran": float(ppo_stats.get("epochs_ran", float("nan"))),
                     }
@@ -615,27 +523,22 @@ def run_training_loop(
                 else False
             )
 
-            # Prefer module-provided RMS diagnostics to avoid double-normalization ambiguity.
             r_int_rms_val = float(int_rms.rms)
             if outputs_norm and intrinsic_module is not None:
-                # Single-RMS modules (e.g., RND with internal normalization)
                 if hasattr(intrinsic_module, "rms"):
                     try:
                         r_int_rms_val = float(getattr(intrinsic_module, "rms"))
                     except Exception:
                         pass
-                # Multi-component modules (Proposed): log both and average for r_int_rms
                 if hasattr(intrinsic_module, "impact_rms") and hasattr(intrinsic_module, "lp_rms"):
                     try:
                         imp_rms_val = float(getattr(intrinsic_module, "impact_rms"))
                         lp_rms_val = float(getattr(intrinsic_module, "lp_rms"))
-                        # Explicitly log both RMS tracks for Proposed
                         log_payload["impact_rms"] = imp_rms_val
                         log_payload["lp_rms"] = lp_rms_val
                         r_int_rms_val = 0.5 * (imp_rms_val + lp_rms_val)
                     except Exception:
                         pass
-                # Fallback: some modules expose only lp_rms (RIAC)
                 elif hasattr(intrinsic_module, "lp_rms"):
                     try:
                         r_int_rms_val = float(getattr(intrinsic_module, "lp_rms"))
@@ -668,8 +571,6 @@ def run_training_loop(
             except Exception:
                 pass
 
-        # Always log timing scalars so the CSV header includes them from the first row.
-        # These are "per PPO update" wall-clock seconds.
         log_payload.update(
             {
                 "time_rollout_s": float(t_rollout_total),
@@ -690,10 +591,8 @@ def run_training_loop(
         ml.log(step=int(global_step), **log_payload)
         t_ml_log = time.perf_counter() - ml_t0
 
-        # Total per-update time (includes ml.log I/O).
         t_update_total = time.perf_counter() - t_update_start
 
-        # --- Periodic console progress log ---
         if update_idx % int(log_every_updates) == 0 or global_step >= int(total_steps):
             now = time.time()
             elapsed = max(now - start_wall, 1e-6)
@@ -722,7 +621,6 @@ def run_training_loop(
                 clip_frac,
             )
 
-            # Full timing breakdown (print *all* tracked segments).
             intrinsic_total = float(
                 t_rollout_intrinsic_step + t_intrinsic_compute + t_intrinsic_update
             )
@@ -751,7 +649,6 @@ def run_training_loop(
             last_log_time = now
             last_log_step = global_step
 
-        # RIAC diagnostics cadence
         try:
             if (
                 intrinsic_module is not None
@@ -761,11 +658,10 @@ def run_training_loop(
                 and hasattr(intrinsic_module, "export_diagnostics")
             ):
                 diag_dir = run_dir / "diagnostics"
-                intrinsic_module.export_diagnostics(diag_dir, step=int(global_step))  # type: ignore[union-attr]
+                intrinsic_module.export_diagnostics(diag_dir, step=int(global_step))
         except Exception:
             pass
 
-        # --- Checkpoint cadence ---
         if ckpt.should_save(int(global_step)):
             payload = _build_checkpoint_payload(
                 cfg,
@@ -784,7 +680,6 @@ def run_training_loop(
             ckpt_path = ckpt.save(step=int(global_step), payload=payload)
             logger.info("Saved checkpoint at step=%d to %s", int(global_step), ckpt_path)
 
-    # Final checkpoint
     payload = _build_checkpoint_payload(
         cfg,
         global_step=int(global_step),
@@ -802,7 +697,6 @@ def run_training_loop(
     final_ckpt_path = ckpt.save(step=int(global_step), payload=payload)
     logger.info("Saved final checkpoint at step=%d to %s", int(global_step), final_ckpt_path)
 
-    # Persist updated counters/obs back into the session object.
     session.obs = obs
     session.global_step = int(global_step)
     session.update_idx = int(update_idx)
