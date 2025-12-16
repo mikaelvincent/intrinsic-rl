@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def atomic_replace(src: Path, dst: Path) -> None:
-    os.replace(Path(src), Path(dst))
+    os.replace(src, dst)
 
 
 def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
