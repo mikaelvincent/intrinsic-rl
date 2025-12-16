@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .loggers import CSVLogger, TBLogger, MetricLogger
+from .loggers import CSVLogger, MetricLogger
 from .checkpoint import (
     CheckpointManager,
     load_checkpoint,
@@ -13,7 +13,6 @@ from .determinism import seed_everything
 
 __all__ = [
     "CSVLogger",
-    "TBLogger",
     "MetricLogger",
     "CheckpointManager",
     "load_checkpoint",
