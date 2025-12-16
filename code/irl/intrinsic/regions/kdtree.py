@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -72,6 +72,107 @@ class RegionNode:
                 assert node.right is not None
                 node = node.right
         return node
+
+
+def _node_state(node: RegionNode, *, include_points: bool) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "depth": int(node.depth),
+        "region_id": None if node.region_id is None else int(node.region_id),
+        "is_leaf": bool(node.is_leaf),
+        "split_dim": None if node.split_dim is None else int(node.split_dim),
+        "split_val": None if node.split_val is None else float(node.split_val),
+    }
+
+    if node.is_leaf:
+        pts = node.points() if include_points else None
+        d.update(
+            {
+                "count": int(node.count),
+                "bbox_lo": None
+                if node.bbox_lo is None
+                else np.asarray(node.bbox_lo, dtype=np.float32).reshape(-1),
+                "bbox_hi": None
+                if node.bbox_hi is None
+                else np.asarray(node.bbox_hi, dtype=np.float32).reshape(-1),
+                "points": pts,
+            }
+        )
+    else:
+        d["left"] = _node_state(node.left, include_points=include_points) if node.left else None
+        d["right"] = _node_state(node.right, include_points=include_points) if node.right else None
+    return d
+
+
+def _node_from_state(
+    state: Mapping[str, Any],
+    *,
+    dim: int,
+    capacity: int,
+) -> RegionNode:
+    depth = int(state.get("depth", 0))
+    region_id_raw = state.get("region_id", None)
+    region_id = None if region_id_raw is None else int(region_id_raw)
+    is_leaf = bool(state.get("is_leaf", True))
+
+    node = RegionNode(
+        depth=depth,
+        dim=int(dim),
+        capacity=int(capacity),
+        region_id=region_id,
+        is_leaf=is_leaf,
+    )
+
+    if is_leaf:
+        pts_raw = state.get("points", None)
+        pts = None if pts_raw is None else np.asarray(pts_raw, dtype=np.float32)
+        if pts is None or pts.size == 0:
+            node._points = []
+            node.count = 0
+            node.bbox_lo = None
+            node.bbox_hi = None
+            return node
+
+        pts = pts.reshape(-1, int(dim)).astype(np.float32, copy=False)
+        node._points = [np.asarray(p, dtype=np.float32).reshape(-1) for p in pts]
+        node.count = int(pts.shape[0])
+        node.bbox_lo = pts.min(axis=0).astype(np.float32, copy=False)
+        node.bbox_hi = pts.max(axis=0).astype(np.float32, copy=False)
+        return node
+
+    split_dim_raw = state.get("split_dim", None)
+    split_val_raw = state.get("split_val", None)
+    node.split_dim = None if split_dim_raw is None else int(split_dim_raw)
+    node.split_val = None if split_val_raw is None else float(split_val_raw)
+
+    left_state = state.get("left", None)
+    right_state = state.get("right", None)
+    node.left = (
+        _node_from_state(left_state, dim=dim, capacity=capacity)
+        if isinstance(left_state, Mapping)
+        else None
+    )
+    node.right = (
+        _node_from_state(right_state, dim=dim, capacity=capacity)
+        if isinstance(right_state, Mapping)
+        else None
+    )
+    node._points = []
+    node.count = 0
+    node.bbox_lo = None
+    node.bbox_hi = None
+    return node
+
+
+def _collect_leaves(node: RegionNode, out: Dict[int, RegionNode]) -> None:
+    if node.is_leaf:
+        if node.region_id is None:
+            raise ValueError("Leaf node missing region_id.")
+        out[int(node.region_id)] = node
+        return
+    if node.left is not None:
+        _collect_leaves(node.left, out)
+    if node.right is not None:
+        _collect_leaves(node.right, out)
 
 
 class KDTreeRegionStore:
@@ -236,3 +337,50 @@ class KDTreeRegionStore:
             "depth_max": self.depth_max,
             "root": _node(self.root),
         }
+
+    def state_dict(self, *, include_points: bool = True) -> dict[str, Any]:
+        return {
+            "dim": int(self.dim),
+            "capacity": int(self.capacity),
+            "depth_max": int(self.depth_max),
+            "next_region_id": int(self._next_region_id),
+            "root": _node_state(self.root, include_points=bool(include_points)),
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: Mapping[str, Any]) -> "KDTreeRegionStore":
+        dim = int(state.get("dim", 0))
+        if dim <= 0:
+            raise ValueError("KDTreeRegionStore.from_state_dict: missing/invalid dim")
+        capacity = int(state.get("capacity", 200))
+        depth_max = int(state.get("depth_max", 12))
+        store = cls(dim=dim, capacity=capacity, depth_max=depth_max)
+        store.load_state_dict(state)
+        return store
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        dim = int(state.get("dim", self.dim))
+        capacity = int(state.get("capacity", self.capacity))
+        depth_max = int(state.get("depth_max", self.depth_max))
+
+        root_state = state.get("root", None)
+        if not isinstance(root_state, Mapping):
+            raise ValueError("KDTreeRegionStore.load_state_dict: missing root")
+
+        root = _node_from_state(root_state, dim=dim, capacity=capacity)
+
+        leaves: Dict[int, RegionNode] = {}
+        _collect_leaves(root, leaves)
+        if not leaves:
+            raise ValueError("KDTreeRegionStore.load_state_dict: no leaf regions found")
+
+        next_rid = state.get("next_region_id", None)
+        if next_rid is None:
+            next_rid = max(leaves.keys()) + 1
+
+        self.dim = dim
+        self.capacity = capacity
+        self.depth_max = depth_max
+        self.root = root
+        self.leaf_by_id = leaves
+        self._next_region_id = int(next_rid)
