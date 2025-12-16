@@ -1,34 +1,75 @@
-import gymnasium as gym
-
-from irl.intrinsic.icm import ICMConfig
-from irl.intrinsic.proposed import Proposed, _RegionStats
+from irl.intrinsic.proposed.gating import _RegionStats, update_region_gate
 
 
-def test_proposed_gating_off_then_hysteresis_reenable():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=float)
-    act_space = gym.spaces.Discrete(3)
-    mod = Proposed(
-        obs_space,
-        act_space,
-        device="cpu",
-        icm_cfg=ICMConfig(phi_dim=16, hidden=(32, 32)),
-        gate_tau_lp_mult=0.5,
-        gate_tau_s=0.5,
-        gate_min_consec_to_gate=3,
-        gate_hysteresis_up_mult=1.1,
-        gate_min_regions_for_gating=3,
-    )
-
-    mod._stats = {
-        0: _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1),
-        1: _RegionStats(ema_long=2.0, ema_short=1.0, count=10, gate=1),
-        2: _RegionStats(ema_long=2.0, ema_short=1.5, count=10, gate=1),
-    }
-
-    for _ in range(3):
-        assert mod._maybe_update_gate(0, lp_i=0.0) in (0, 1)
-    assert mod._stats[0].gate == 0
+def test_update_region_gate_gates_then_recovers():
+    st = _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1)
 
     for _ in range(2):
-        assert mod._maybe_update_gate(0, lp_i=1.0) in (0, 1)
-    assert mod._stats[0].gate == 1
+        g = update_region_gate(
+            st,
+            lp_i=0.0,
+            tau_lp=1.0,
+            tau_s=0.5,
+            median_error_global=1.0,
+            hysteresis_up_mult=1.1,
+            min_consec_to_gate=3,
+            sufficient_regions=True,
+        )
+        assert g == 1
+
+    g = update_region_gate(
+        st,
+        lp_i=0.0,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
+    assert g == 0
+    assert st.gate == 0
+
+    g = update_region_gate(
+        st,
+        lp_i=1.2,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
+    assert g == 0
+
+    g = update_region_gate(
+        st,
+        lp_i=1.2,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
+    assert g == 1
+    assert st.gate == 1
+
+
+def test_update_region_gate_resets_when_insufficient():
+    st = _RegionStats(ema_long=1.0, ema_short=10.0, count=10, gate=0, bad_consec=5, good_consec=1)
+
+    g = update_region_gate(
+        st,
+        lp_i=0.0,
+        tau_lp=1.0,
+        tau_s=2.0,
+        median_error_global=1.0,
+        hysteresis_up_mult=2.0,
+        min_consec_to_gate=3,
+        sufficient_regions=False,
+    )
+    assert g == 1
+    assert st.gate == 1
+    assert st.bad_consec == 0
+    assert st.good_consec == 0
