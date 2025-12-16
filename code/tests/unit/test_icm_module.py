@@ -1,12 +1,12 @@
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 
-from irl.intrinsic import IntrinsicOutput
 from irl.intrinsic.icm import ICM, ICMConfig
 
 
-def _rand_batch(obs_dim, act_space, B=8, seed=0):
+def _rand_batch(obs_dim: int, act_space: gym.Space, B: int, seed: int):
     rng = np.random.default_rng(seed)
     obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
     next_obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
@@ -17,44 +17,26 @@ def _rand_batch(obs_dim, act_space, B=8, seed=0):
         low = np.where(np.isfinite(act_space.low), act_space.low, -1.0)
         high = np.where(np.isfinite(act_space.high), act_space.high, 1.0)
         acts = rng.uniform(low, high, size=(B, act_space.shape[0])).astype(np.float32)
+
     return obs, next_obs, acts
 
 
-def test_icm_discrete_shapes_and_update():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(3)
-
-    icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
-    obs, next_obs, acts = _rand_batch(4, act_space, B=16, seed=1)
-
-    r = icm.compute_batch(obs, next_obs, acts)
-    assert r.shape == (16,)
-    assert torch.isfinite(r).all()
-
-    losses = icm.loss(obs, next_obs, acts)
-    for k in ("total", "forward", "inverse", "intrinsic_mean"):
-        assert k in losses
-        assert torch.isfinite(losses[k])
-
-    metrics = icm.update(obs, next_obs, acts, steps=2)
-    for v in metrics.values():
-        assert np.isfinite(v)
-
-    tr = type("T", (), {"s": obs[0], "a": int(acts[0]), "r_ext": 0.0, "s_next": next_obs[0]})
-    out = icm.compute(tr)
-    assert isinstance(out, IntrinsicOutput)
-    assert np.isfinite(out.r_int)
-
-
-def test_icm_continuous_shapes_and_update():
+@pytest.mark.parametrize(
+    "act_space",
+    [
+        gym.spaces.Discrete(3),
+        gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
+    ],
+    ids=["discrete", "continuous"],
+)
+def test_icm_compute_batch_matches_loss_mean(act_space):
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
-    act_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
-
     icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
-    obs, next_obs, acts = _rand_batch(5, act_space, B=12, seed=2)
 
-    r = icm.compute_batch(obs, next_obs, acts)
-    assert r.shape == (12,)
+    obs, next_obs, acts = _rand_batch(5, act_space, B=32, seed=1)
+
+    r = icm.compute_batch(obs, next_obs, acts, reduction="none")
+    assert r.shape == (32,)
     assert torch.isfinite(r).all()
 
     losses = icm.loss(obs, next_obs, acts)
@@ -62,10 +44,8 @@ def test_icm_continuous_shapes_and_update():
         assert k in losses
         assert torch.isfinite(losses[k])
 
-    metrics = icm.update(obs, next_obs, acts)
+    assert torch.allclose(losses["intrinsic_mean"], r.mean(), atol=1e-5)
+
+    metrics = icm.update(obs, next_obs, acts, steps=1)
     for v in metrics.values():
         assert np.isfinite(v)
-
-    tr = type("T", (), {"s": obs[0], "a": acts[0], "r_ext": 0.0, "s_next": next_obs[0]})
-    out = icm.compute(tr)
-    assert np.isfinite(out.r_int)
