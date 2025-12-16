@@ -1,3 +1,4 @@
+import csv
 from dataclasses import replace
 from pathlib import Path
 
@@ -93,6 +94,17 @@ def test_trainer_image_pipeline_riac_logs_intrinsic(tmp_path: Path):
     out = run_train(cfg, total_steps=12, run_dir=run_dir, resume=False)
 
     csv_path = out / "logs" / "scalars.csv"
-    lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) >= 2
-    assert "r_int_mean" in set(lines[0].split(","))
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        assert reader.fieldnames is not None
+        assert "r_int_mean" in set(reader.fieldnames)
+
+        vals: list[float] = []
+        for row in reader:
+            try:
+                vals.append(float(row["r_int_mean"]))
+            except Exception:
+                continue
+
+    assert vals
+    assert any(np.isfinite(v) for v in vals)
