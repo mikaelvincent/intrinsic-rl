@@ -251,59 +251,122 @@ def plot_normalized_summary(
     plt.close(fig)
 
 
-def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20000) -> None:
+def _as_str_scalar(x: object) -> str | None:
+    try:
+        arr = np.asarray(x)
+        if arr.size == 0:
+            return None
+        return str(arr.reshape(-1)[0])
+    except Exception:
+        return None
+
+
+def _trajectory_projection(
+    env_id: str | None,
+    obs: np.ndarray,
+) -> tuple[int, int, str, str] | None:
+    if obs.ndim != 2 or obs.shape[1] < 2:
+        return None
+
+    D = int(obs.shape[1])
+    e = (env_id or "").strip()
+
+    if e.startswith("MountainCar"):
+        return 0, 1, "position", "velocity"
+    if e.startswith("CartPole"):
+        return (0, 2, "cart_pos", "pole_angle") if D >= 3 else (0, 1, "obs[0]", "obs[1]")
+    if e.startswith("Pendulum"):
+        return 0, 1, "cos(theta)", "sin(theta)"
+    if e.startswith("Acrobot"):
+        return 0, 1, "cos(theta1)", "sin(theta1)"
+    if e.startswith("LunarLander"):
+        return 0, 1, "x", "y"
+
+    if D == 2:
+        return 0, 1, "obs[0]", "obs[1]"
+
+    return None
+
+
+def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20000) -> bool:
     if not npz_path.exists():
-        return
+        return False
 
     try:
-        data = np.load(npz_path)
+        data = np.load(npz_path, allow_pickle=True)
         obs = data["obs"]
         gates = data["gates"]
     except Exception:
-        return
+        return False
 
-    N = obs.shape[0]
+    env_id = _as_str_scalar(data.get("env_id")) if hasattr(data, "get") else None
+    method = _as_str_scalar(data.get("method")) if hasattr(data, "get") else None
+    gate_source = _as_str_scalar(data.get("gate_source")) if hasattr(data, "get") else None
+
+    env_disp = env_id or npz_path.stem.replace("_trajectory", "")
+    proj = _trajectory_projection(env_id, np.asarray(obs))
+    if proj is None:
+        return False
+
+    xi, yi, xlab, ylab = proj
+    obs_arr = np.asarray(obs)
+    if obs_arr.ndim != 2 or obs_arr.shape[1] <= max(xi, yi):
+        return False
+
+    N = int(obs_arr.shape[0])
     if N > max_points:
         idx = np.linspace(0, N - 1, max_points, dtype=int)
-        obs = obs[idx]
-        gates = gates[idx]
+        obs_arr = obs_arr[idx]
+        gates = np.asarray(gates).reshape(-1)[idx]
+    else:
+        gates = np.asarray(gates).reshape(-1)
 
-    if obs.shape[1] < 2:
-        return
+    x = obs_arr[:, int(xi)]
+    y = obs_arr[:, int(yi)]
 
-    x = obs[:, 0]
-    y = obs[:, 1]
+    g = np.asarray(gates).reshape(-1)
+    if g.size != x.shape[0]:
+        return False
+
+    active = g >= 0.5
+    gated = ~active
+
+    gate_note = (gate_source or "recomputed").strip().lower()
+    if gate_note not in {"checkpoint", "recomputed", "mixed", "n/a"}:
+        gate_note = "recomputed"
+
+    title_bits: list[str] = [str(env_disp)]
+    if method:
+        title_bits.append(str(method))
+    title_bits.append(f"gates: {gate_note}")
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    mask_active = gates == 1
-    mask_gated = gates == 0
-
-    if mask_gated.any():
+    if gated.any():
         ax.scatter(
-            x[mask_gated],
-            y[mask_gated],
+            x[gated],
+            y[gated],
             c="lightgray",
             s=10,
             alpha=0.5,
-            label="Gated (Mastered/Noise)",
+            label="Gated/Off",
             edgecolor="none",
         )
 
-    if mask_active.any():
+    if active.any():
         ax.scatter(
-            x[mask_active],
-            y[mask_active],
+            x[active],
+            y[active],
             c="tab:red",
             s=15,
             alpha=0.8,
-            label="Active (Learning)",
+            label="Active/On",
             edgecolor="none",
         )
 
-    ax.set_xlabel("State Dim 0")
-    ax.set_ylabel("State Dim 1")
-    ax.set_title("Exploration Heatmap: Active vs Gated Regions")
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(ylab)
+    ax.set_title(" — ".join(title_bits))
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
 
@@ -313,3 +376,4 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
     atomic_replace(tmp, out_path)
     plt.close(fig)
+    return True
