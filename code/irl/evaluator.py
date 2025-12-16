@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
@@ -27,21 +28,35 @@ def _build_normalizer(payload) -> tuple[np.ndarray, np.ndarray] | None:
     return mean_arr, std_arr
 
 
+def _seed_torch(seed: int) -> None:
+    s = int(seed)
+    torch.manual_seed(s)
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.manual_seed_all(s)
+        except Exception:
+            pass
+
+
 def evaluate(
     *,
     env: str,
     ckpt: Path,
-    episodes: int = 10,
+    episodes: int = 20,
     device: str = "cpu",
     save_traj: bool = False,
     traj_out_dir: Path | None = None,
+    policy_mode: str = "mode",
+    episode_seeds: Sequence[int] | None = None,
+    seed_offset: int = 0,
 ) -> dict:
     payload = load_checkpoint(ckpt, map_location=device)
     cfg = payload.get("cfg", {}) or {}
-    seed = int(cfg.get("seed", 1))
+    seed_cfg = int(cfg.get("seed", 1))
+    seed_eval_base = int(seed_cfg) + int(seed_offset)
     step = int(payload.get("step", -1))
 
-    seed_everything(seed, deterministic=True)
+    seed_everything(seed_cfg, deterministic=True)
 
     env_cfg = (cfg.get("env") or {}) if isinstance(cfg, dict) else {}
     frame_skip = int(env_cfg.get("frame_skip", 1))
@@ -51,7 +66,7 @@ def evaluate(
     manager = EnvManager(
         env_id=env,
         num_envs=1,
-        seed=seed,
+        seed=seed_eval_base,
         frame_skip=frame_skip,
         domain_randomization=False,
         discrete_actions=discrete_actions,
@@ -106,98 +121,140 @@ def evaluate(
         mean_arr, std_arr = norm
         return (x - mean_arr) / std_arr
 
-    returns: list[float] = []
-    lengths: list[int] = []
+    ep_n = int(episodes)
+    if ep_n <= 0:
+        e.close()
+        raise ValueError("episodes must be >= 1")
 
-    traj_obs: list[np.ndarray] = []
-    traj_gates: list[int] = []
-    traj_int_vals: list[float] = []
+    if episode_seeds is None:
+        episode_seeds_list = [seed_eval_base + i for i in range(ep_n)]
+    else:
+        episode_seeds_list = [int(s) for s in episode_seeds]
+        if len(episode_seeds_list) != ep_n:
+            e.close()
+            raise ValueError("episode_seeds length must match episodes")
 
-    for _ in range(int(episodes)):
-        obs, _ = e.reset()
-        done = False
-        ep_ret = 0.0
-        ep_len = 0
+    def _run(action_mode: str, *, save_traj_local: bool) -> dict:
+        mode = str(action_mode).strip().lower()
+        if mode not in {"mode", "sample"}:
+            raise ValueError("policy_mode must be 'mode' or 'sample'")
 
-        while not done:
-            x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
-            x = _normalize(x_raw)
+        returns: list[float] = []
+        lengths: list[int] = []
 
-            with torch.no_grad():
-                obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
-                dist = policy.distribution(obs_t)
-                act = dist.mode()
-                a_np = act.detach().cpu().numpy()
+        traj_obs: list[np.ndarray] = []
+        traj_gates: list[int] = []
+        traj_int_vals: list[float] = []
 
-            if hasattr(act_space, "n"):
-                action_for_env = int(a_np.item())
-            else:
-                action_for_env = a_np.reshape(-1)
+        for ep_seed in episode_seeds_list:
+            _seed_torch(int(ep_seed))
+            obs, _ = e.reset(seed=int(ep_seed))
+            done = False
+            ep_ret = 0.0
+            ep_len = 0
 
-            next_obs, r, term, trunc, _ = e.step(action_for_env)
-            ep_ret += float(r)
-            ep_len += 1
+            while not done:
+                x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
+                x = _normalize(x_raw)
 
-            if save_traj and not is_image:
-                traj_obs.append(x_raw.copy())
-                gate_val = 1
-                int_val = 0.0
-                if intrinsic_module is not None:
-                    batch_obs = obs_t.unsqueeze(0)
-                    batch_next = torch.as_tensor(
-                        _normalize(next_obs), dtype=torch.float32, device=device
-                    ).unsqueeze(0)
-                    batch_act = act.unsqueeze(0)
-                    try:
-                        r_out = intrinsic_module.compute_batch(
-                            batch_obs, batch_next, batch_act, reduction="none"
-                        )
-                        int_val = float(r_out.mean().item())
-                        if method == "glpe" and hasattr(intrinsic_module, "store"):
-                            with torch.no_grad():
-                                phi = intrinsic_module.icm._phi(batch_obs)
-                                phi_np = phi.cpu().numpy().reshape(-1)
-                            rid = intrinsic_module.store.locate(phi_np)
-                            st = intrinsic_module._stats.get(rid)
-                            if st is not None:
-                                gate_val = int(st.gate)
-                    except Exception:
-                        pass
-                traj_gates.append(gate_val)
-                traj_int_vals.append(int_val)
+                with torch.no_grad():
+                    obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
+                    dist = policy.distribution(obs_t)
+                    act = dist.mode() if mode == "mode" else dist.sample()
+                    a_np = act.detach().cpu().numpy()
 
-            obs = next_obs
-            done = bool(term) or bool(trunc)
+                if hasattr(act_space, "n"):
+                    action_for_env = int(a_np.item())
+                else:
+                    action_for_env = a_np.reshape(-1)
 
-        returns.append(ep_ret)
-        lengths.append(ep_len)
+                next_obs, r, term, trunc, _ = e.step(action_for_env)
+                ep_ret += float(r)
+                ep_len += 1
 
-    summary = {
-        "env_id": str(env),
-        "episodes": int(episodes),
-        "seed": seed,
-        "checkpoint_step": step,
-        "mean_return": float(np.mean(returns)) if returns else 0.0,
-        "std_return": float(np.std(returns, ddof=0)) if len(returns) > 1 else 0.0,
-        "min_return": float(min(returns)) if returns else 0.0,
-        "max_return": float(max(returns)) if returns else 0.0,
-        "mean_length": float(np.mean(lengths)) if lengths else 0.0,
-        "std_length": float(np.std(lengths, ddof=0)) if len(lengths) > 1 else 0.0,
-        "returns": [float(x) for x in returns],
-        "lengths": [int(x) for x in lengths],
-    }
+                if save_traj_local and not is_image:
+                    traj_obs.append(x_raw.copy())
+                    gate_val = 1
+                    int_val = 0.0
+                    if intrinsic_module is not None:
+                        batch_obs = obs_t.unsqueeze(0)
+                        batch_next = torch.as_tensor(
+                            _normalize(next_obs), dtype=torch.float32, device=device
+                        ).unsqueeze(0)
+                        batch_act = act.unsqueeze(0)
+                        try:
+                            r_out = intrinsic_module.compute_batch(
+                                batch_obs, batch_next, batch_act, reduction="none"
+                            )
+                            int_val = float(r_out.mean().item())
+                            if method == "glpe" and hasattr(intrinsic_module, "store"):
+                                with torch.no_grad():
+                                    phi = intrinsic_module.icm._phi(batch_obs)
+                                    phi_np = phi.cpu().numpy().reshape(-1)
+                                rid = intrinsic_module.store.locate(phi_np)
+                                st = intrinsic_module._stats.get(rid)
+                                if st is not None:
+                                    gate_val = int(st.gate)
+                        except Exception:
+                            pass
+                    traj_gates.append(gate_val)
+                    traj_int_vals.append(int_val)
 
-    if save_traj and traj_obs:
-        out_dir = traj_out_dir or ckpt.parent
-        out_dir.mkdir(parents=True, exist_ok=True)
-        env_tag = env.replace("/", "-")
-        traj_file = out_dir / f"{env_tag}_trajectory.npz"
-        np.savez_compressed(
-            traj_file,
-            obs=np.stack(traj_obs),
-            gates=np.array(traj_gates),
-            intrinsic=np.array(traj_int_vals),
-        )
+                obs = next_obs
+                done = bool(term) or bool(trunc)
 
+            returns.append(ep_ret)
+            lengths.append(ep_len)
+
+        summary = {
+            "env_id": str(env),
+            "episodes": int(ep_n),
+            "seed": int(seed_cfg),
+            "seed_offset": int(seed_offset),
+            "episode_seeds": [int(s) for s in episode_seeds_list],
+            "policy_mode": mode,
+            "checkpoint_step": step,
+            "mean_return": float(np.mean(returns)) if returns else 0.0,
+            "std_return": float(np.std(returns, ddof=0)) if len(returns) > 1 else 0.0,
+            "min_return": float(min(returns)) if returns else 0.0,
+            "max_return": float(max(returns)) if returns else 0.0,
+            "mean_length": float(np.mean(lengths)) if lengths else 0.0,
+            "std_length": float(np.std(lengths, ddof=0)) if len(lengths) > 1 else 0.0,
+            "returns": [float(x) for x in returns],
+            "lengths": [int(x) for x in lengths],
+        }
+
+        if save_traj_local and traj_obs:
+            out_dir = traj_out_dir or ckpt.parent
+            out_dir.mkdir(parents=True, exist_ok=True)
+            env_tag = env.replace("/", "-")
+            traj_file = out_dir / f"{env_tag}_trajectory.npz"
+            np.savez_compressed(
+                traj_file,
+                obs=np.stack(traj_obs),
+                gates=np.array(traj_gates),
+                intrinsic=np.array(traj_int_vals),
+            )
+
+        return summary
+
+    pm = str(policy_mode).strip().lower()
+    if pm == "both":
+        det = _run("mode", save_traj_local=bool(save_traj))
+        stoch = _run("sample", save_traj_local=False)
+        e.close()
+        return {
+            "env_id": str(env),
+            "episodes": int(ep_n),
+            "seed": int(seed_cfg),
+            "seed_offset": int(seed_offset),
+            "episode_seeds": [int(s) for s in episode_seeds_list],
+            "policy_mode": "both",
+            "checkpoint_step": step,
+            "deterministic": det,
+            "stochastic": stoch,
+        }
+
+    out = _run(pm, save_traj_local=bool(save_traj))
     e.close()
-    return summary
+    return out
