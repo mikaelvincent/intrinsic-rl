@@ -14,7 +14,6 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    # Preserve dtype unless explicitly overridden (keeps uint8 image inputs intact).
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     if dtype is None:
@@ -28,7 +27,6 @@ def _ensure_time_batch_layout(
     rew_t: Tensor,
     done_t: Tensor,
 ) -> tuple[Tensor, Tensor | None, Tensor, Tensor, int, int]:
-    # Normalize to time-major obs and (T,B) rewards/dones.
     dev = obs_t.device
     rew_t = rew_t.to(dev, dtype=torch.float32)
     done_t = done_t.to(dev, dtype=torch.float32)
