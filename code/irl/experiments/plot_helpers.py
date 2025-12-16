@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import typer
@@ -198,12 +199,12 @@ def _generate_component_plot(
         typer.echo(f"[suite] Saved component plot: {out}")
 
 
-def _generate_trajectory_plots(results_dir: Path, plots_root: Path) -> None:
+def _generate_trajectory_plots(results_dir: Path, _plots_root: Path) -> None:
     traj_dir = results_dir / "plots" / "trajectories"
     if not traj_dir.exists():
         return
 
-    npz_files = list(traj_dir.glob("*_trajectory.npz"))
+    npz_files = sorted(traj_dir.rglob("*_trajectory.npz"), key=lambda p: str(p))
     if not npz_files:
         return
 
@@ -211,7 +212,7 @@ def _generate_trajectory_plots(results_dir: Path, plots_root: Path) -> None:
 
     for npz_file in npz_files:
         env_tag = npz_file.stem.replace("_trajectory", "")
-        out_path = plots_root / f"{env_tag}__state_heatmap.png"
+        out_path = npz_file.with_name(f"{env_tag}__state_heatmap.png")
         try:
             plot_trajectory_heatmap(npz_file, out_path)
             typer.echo(f"[suite] Saved heatmap: {out_path}")
