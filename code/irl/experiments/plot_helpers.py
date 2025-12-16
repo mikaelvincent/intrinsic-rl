@@ -23,8 +23,6 @@ def _generate_comparison_plot(
     filename_suffix: str,
     plots_root: Path,
 ) -> None:
-    _ = shade
-
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         relevant_methods = [m for m in methods_to_plot if m in by_method]
         if not relevant_methods:
