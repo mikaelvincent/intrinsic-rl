@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import sqrt
 from pathlib import Path
 from typing import Dict, List
 
@@ -38,7 +39,7 @@ def _generate_comparison_plot(
             except Exception:
                 continue
 
-            if agg.n_runs == 0:
+            if agg.n_runs == 0 or agg.steps.size == 0:
                 continue
 
             is_main_glpe = method.lower() == "glpe"
@@ -48,7 +49,7 @@ def _generate_comparison_plot(
             color = "#d62728" if is_main_glpe else None
 
             label = f"{method} (n={agg.n_runs})"
-            ax.plot(
+            line = ax.plot(
                 agg.steps,
                 agg.mean,
                 label=label,
@@ -56,7 +57,20 @@ def _generate_comparison_plot(
                 alpha=alpha,
                 zorder=zorder,
                 color=color,
-            )
+            )[0]
+
+            if shade and agg.n_runs > 1:
+                ci = 1.96 * (agg.std / sqrt(float(agg.n_runs)))
+                ax.fill_between(
+                    agg.steps,
+                    agg.mean - ci,
+                    agg.mean + ci,
+                    alpha=0.18 if is_main_glpe else 0.12,
+                    color=line.get_color(),
+                    linewidth=0.0,
+                    zorder=max(0, zorder - 1),
+                )
+
             any_plotted = True
 
         if not any_plotted:
