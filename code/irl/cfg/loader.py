@@ -118,30 +118,30 @@ def validate_config(cfg: Config) -> None:
         raise ConfigError("intrinsic.r_clip must be > 0")
 
     method = str(cfg.method).lower()
-    method_base = "proposed" if method.startswith("proposed_") else method
+    method_base = "glpe" if method.startswith("glpe_") else method
 
-    if method == "proposed_lp_only":
+    if method == "glpe_lp_only":
         if cfg.intrinsic.alpha_impact != 0.0:
-            raise ConfigError("intrinsic.alpha_impact must be 0 for method 'proposed_lp_only'")
+            raise ConfigError("intrinsic.alpha_impact must be 0 for method 'glpe_lp_only'")
         if cfg.intrinsic.alpha_lp <= 0.0:
-            raise ConfigError("intrinsic.alpha_lp must be > 0 for method 'proposed_lp_only'")
+            raise ConfigError("intrinsic.alpha_lp must be > 0 for method 'glpe_lp_only'")
 
-    if method == "proposed_impact_only":
+    if method == "glpe_impact_only":
         if cfg.intrinsic.alpha_lp != 0.0:
-            raise ConfigError("intrinsic.alpha_lp must be 0 for method 'proposed_impact_only'")
+            raise ConfigError("intrinsic.alpha_lp must be 0 for method 'glpe_impact_only'")
         if cfg.intrinsic.alpha_impact <= 0.0:
-            raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'proposed_impact_only'")
+            raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'glpe_impact_only'")
 
-    if method == "proposed_nogate":
+    if method == "glpe_nogate":
         if bool(cfg.intrinsic.gate.enabled):
-            raise ConfigError("intrinsic.gate.enabled must be False for method 'proposed_nogate'")
+            raise ConfigError("intrinsic.gate.enabled must be False for method 'glpe_nogate'")
 
     if method_base == "ride":
         if cfg.intrinsic.alpha_impact <= 0.0:
             raise ConfigError("intrinsic.alpha_impact must be > 0 for method 'ride'")
-    elif method_base == "proposed":
+    elif method_base == "glpe":
         if cfg.intrinsic.alpha_impact < 0.0:
-            raise ConfigError("intrinsic.alpha_impact must be >= 0 for method 'proposed'")
+            raise ConfigError("intrinsic.alpha_impact must be >= 0 for method 'glpe'")
     else:
         if cfg.intrinsic.alpha_impact <= 0.0:
             warnings.warn(
@@ -149,11 +149,11 @@ def validate_config(cfg: Config) -> None:
                 UserWarning,
             )
 
-    if method_base != "proposed":
+    if method_base != "glpe":
         try:
             if hasattr(cfg.intrinsic, "normalize_inside") and not cfg.intrinsic.normalize_inside:
                 warnings.warn(
-                    "intrinsic.normalize_inside is only used for method 'proposed'; "
+                    "intrinsic.normalize_inside is only used for method 'glpe'; "
                     f"ignoring for method '{method}'.",
                     UserWarning,
                 )
@@ -163,7 +163,7 @@ def validate_config(cfg: Config) -> None:
             if hasattr(cfg.intrinsic, "gate") and hasattr(cfg.intrinsic.gate, "enabled"):
                 if not bool(cfg.intrinsic.gate.enabled):
                     warnings.warn(
-                        "intrinsic.gate.enabled is only used for method 'proposed'; "
+                        "intrinsic.gate.enabled is only used for method 'glpe'; "
                         f"ignoring for method '{method}'.",
                         UserWarning,
                     )
@@ -180,27 +180,27 @@ def validate_config(cfg: Config) -> None:
                 UserWarning,
             )
 
-    if method_base == "proposed":
+    if method_base == "glpe":
         gate_enabled = True
         try:
             gate_enabled = bool(cfg.intrinsic.gate.enabled)
         except Exception:
             gate_enabled = True
 
-        if method == "proposed_nogate":
+        if method == "glpe_nogate":
             gate_enabled = False
 
         if gate_enabled:
             if cfg.intrinsic.gate.min_consec_to_gate <= 0:
-                raise ConfigError("intrinsic.gate.min_consec_to_gate must be > 0 for method 'proposed'")
+                raise ConfigError("intrinsic.gate.min_consec_to_gate must be > 0 for method 'glpe'")
             if cfg.intrinsic.gate.min_regions_for_gating <= 0:
                 raise ConfigError(
-                    "intrinsic.gate.min_regions_for_gating must be > 0 for method 'proposed'"
+                    "intrinsic.gate.min_regions_for_gating must be > 0 for method 'glpe'"
                 )
         else:
-            if method != "proposed_nogate":
+            if method != "glpe_nogate":
                 warnings.warn(
-                    "Proposed gating disabled via intrinsic.gate.enabled=False; "
+                    "GLPE gating disabled via intrinsic.gate.enabled=False; "
                     "gating thresholds will be ignored.",
                     UserWarning,
                 )
