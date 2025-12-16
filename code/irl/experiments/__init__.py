@@ -13,6 +13,8 @@ from .videos import run_video_suite
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
+_QUICK_EPISODES = 5
+
 
 @app.command("train")
 def cli_train(
@@ -58,14 +60,21 @@ def cli_eval(
         readable=True,
     ),
     results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
-    episodes: int = typer.Option(5, "--episodes", "-e"),
+    episodes: int = typer.Option(20, "--episodes", "-e"),
     device: str = typer.Option("cpu", "--device", "-d"),
+    policy: str = typer.Option("mode", "--policy", "-p"),
+    quick: bool = typer.Option(False, "--quick/--no-quick"),
 ) -> None:
+    n_eps = int(episodes)
+    if quick:
+        n_eps = min(n_eps, _QUICK_EPISODES)
+
     run_eval_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        episodes=episodes,
+        episodes=n_eps,
         device=device,
+        policy_mode=str(policy),
     )
 
 
@@ -134,13 +143,15 @@ def cli_full(
     runs_root: Path = typer.Option(Path("runs_suite"), "--runs-root"),
     seed: List[int] = typer.Option([], "--seed", "-r"),
     device: Optional[str] = typer.Option(None, "--device", "-d"),
-    episodes: int = typer.Option(5, "--episodes", "-e"),
+    episodes: int = typer.Option(20, "--episodes", "-e"),
     results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
     metric: Optional[str] = typer.Option(None, "--metric", "-m"),
     smooth: int = typer.Option(5, "--smooth", "-w"),
     shade: bool = typer.Option(True, "--shade/--no-shade"),
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     auto_async: bool = typer.Option(False, "--auto-async/--no-auto-async"),
+    policy: str = typer.Option("mode", "--policy", "-p"),
+    quick: bool = typer.Option(False, "--quick/--no-quick"),
 ) -> None:
     run_training_suite(
         configs_dir=configs_dir,
@@ -156,11 +167,16 @@ def cli_full(
 
     eval_device = "cuda:0" if device is None and torch.cuda.is_available() else (device or "cpu")
 
+    n_eps = int(episodes)
+    if quick:
+        n_eps = min(n_eps, _QUICK_EPISODES)
+
     run_eval_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        episodes=episodes,
+        episodes=n_eps,
         device=eval_device,
+        policy_mode=str(policy),
     )
 
     run_plots_suite(
