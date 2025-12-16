@@ -1,15 +1,3 @@
-"""Mann–Whitney U test and ranking helpers.
-
-This module implements:
-
-- ``rankdata()``: average ranks with tie handling (SciPy-like).
-- ``mannwhitney_u()``: U statistic + normal-approximation p-value with
-  tie correction.
-
-All implementations rely only on NumPy and the standard library to
-avoid extra dependencies.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,19 +10,16 @@ Alt = Literal["two-sided", "greater", "less"]
 
 
 def _as_1d_float(a: Iterable[float] | np.ndarray) -> np.ndarray:
-    """Return a 1-D float64 NumPy array view of the input."""
     x = np.asarray(list(a) if not isinstance(a, np.ndarray) else a, dtype=np.float64)
     return x.reshape(-1).astype(np.float64, copy=False)
 
 
 def rankdata(a: Sequence[float] | np.ndarray) -> np.ndarray:
-    """Return average ranks (1..N) for ``a`` using stable sort and tie averaging."""
     x = _as_1d_float(a)
     n = x.size
     if n == 0:
         return np.empty((0,), dtype=np.float64)
 
-    # Stable sort so equal values keep input order before averaging.
     order = np.argsort(x, kind="mergesort")
     xs = x[order]
 
@@ -42,11 +27,10 @@ def rankdata(a: Sequence[float] | np.ndarray) -> np.ndarray:
     i = 0
     while i < n:
         j = i + 1
-        # Advance j while tied.
         while j < n and xs[j] == xs[i]:
             j += 1
         if j - i > 1:
-            avg = 0.5 * ((i + 1) + j)  # average of ranks i+1 .. j
+            avg = 0.5 * ((i + 1) + j)
             ranks_sorted[i:j] = avg
         i = j
 
@@ -57,17 +41,15 @@ def rankdata(a: Sequence[float] | np.ndarray) -> np.ndarray:
 
 @dataclass(frozen=True)
 class MWUResult:
-    """Result of Mann–Whitney U test and common effect sizes."""
-
     n_x: int
     n_y: int
-    U1: float  # U for X (sum of ranks for X minus n_x*(n_x+1)/2)
-    U2: float  # U for Y (n_x*n_y - U1)
-    U: float  # U used for p-value (min(U1, U2) for two-sided)
-    z: float  # Normal-approximation z (with tie & continuity correction)
-    p_value: float  # P-value (Alt: two-sided / greater / less)
-    cles: float  # Common-language effect size P(X > Y) + 0.5*P(=)
-    cliffs_delta: float  # δ = 2*cles - 1 (rank-biserial correlation)
+    U1: float
+    U2: float
+    U: float
+    z: float
+    p_value: float
+    cles: float
+    cliffs_delta: float
     mean_x: float
     mean_y: float
     median_x: float
@@ -81,24 +63,6 @@ def mannwhitney_u(
     alternative: Alt = "two-sided",
     use_continuity: bool = True,
 ) -> MWUResult:
-    """Mann–Whitney U test (normal approximation with tie correction).
-
-    Parameters
-    ----------
-    x, y:
-        Two independent samples (1-D).
-    alternative:
-        Hypothesis form: ``"two-sided"`` (default), ``"greater"`` (X tends larger),
-        or ``"less"``.
-    use_continuity:
-        Apply ±0.5 continuity correction in the z statistic.
-
-    Notes
-    -----
-    Variance uses the standard tie correction:
-
-        var(U) = n_x n_y / 12 * (N + 1 - sum(t_i^3 - t_i) / (N (N - 1)))
-    """
     X = _as_1d_float(x)
     Y = _as_1d_float(y)
     n_x = X.size
@@ -121,33 +85,29 @@ def mannwhitney_u(
 
     mean_U = n_x * n_y / 2.0
 
-    if var_U <= 0.0:  # fully tied or otherwise degenerate
+    if var_U <= 0.0:
         z = 0.0
         p = 1.0
     else:
-        # Continuity correction based on the direction (for U1 w.r.t mean).
         cc = 0.0
         if use_continuity:
             cc = 0.5 if (U_for_p > mean_U) else -0.5
-            # For two-sided tests using min(U1, U2), U_for_p <= mean_U so we move toward the mean.
             if alternative == "two-sided":
                 cc = 0.5
 
         z = (U_for_p - mean_U + cc) / sqrt(var_U)
 
-        # Normal tail probabilities (no SciPy): sf(z) = 0.5 * erfc(z / sqrt(2)).
         sf = 0.5 * erfc(z / sqrt(2.0))
         cdf = 1.0 - sf
 
         if alternative == "two-sided":
             p = erfc(abs(z) / sqrt(2.0))
         elif alternative == "greater":
-            # H1: X tends larger → large U1 → large z (since U_for_p=U1).
             p = sf
-        else:  # "less"
+        else:
             p = cdf
 
-    cles = float(U1) / float(n_x * n_y)  # includes 0.5 for ties implicitly via ranks
+    cles = float(U1) / float(n_x * n_y)
     cliffs = 2.0 * cles - 1.0
 
     return MWUResult(
