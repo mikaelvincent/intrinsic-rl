@@ -1,6 +1,5 @@
 import os
 
-# Avoid NNPACK hangs on some CPUs.
 os.environ["ATEN_NNPACK_ENABLED"] = "0"
 
 from ._version import __version__
