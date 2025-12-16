@@ -561,7 +561,7 @@ def run_training_loop(
         if (
             intrinsic_module is not None
             and use_intrinsic
-            and method_l == "proposed"
+            and method_l == "glpe"
             and hasattr(intrinsic_module, "gate_rate")
         ):
             try:
