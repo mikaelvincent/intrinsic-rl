@@ -1,32 +1,18 @@
-"""Typer CLI for learning-curve and summary plotting.
-
-This is the concrete implementation behind the :mod:`irl.plot` entry
-points. It relies on the data helpers and figure utilities provided by
-``irl.visualization.data`` and ``irl.visualization.figures``.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Optional
 
-# Use a non-interactive backend for headless environments
 import matplotlib
 
-matplotlib.use("Agg")  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import typer  # noqa: E402
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import typer
 
 from irl.utils.checkpoint import atomic_replace
-from .data import (
-    AggregateResult,
-    _aggregate_runs,
-    _expand_run_dirs,
-    _parse_run_name,
-    _ensure_parent,
-)
+from .data import AggregateResult, _aggregate_runs, _ensure_parent, _expand_run_dirs, _parse_run_name
 from .figures import plot_normalized_summary, plot_trajectory_heatmap
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -69,9 +55,6 @@ def cli_curves(
         dir_okay=False,
     ),
 ) -> None:
-    """Plot an aggregate learning curve (mean) for one method/group."""
-    _ = shade  # std shading intentionally disabled (keep flag for CLI compatibility)
-
     run_dirs = _expand_run_dirs(runs)
     if not run_dirs:
         raise typer.BadParameter("No matching run directories found for --runs.")
@@ -151,9 +134,6 @@ def cli_overlay(
         dir_okay=False,
     ),
 ) -> None:
-    """Overlay multiple aggregated learning curves (one line per group)."""
-    _ = shade  # std shading intentionally disabled (keep flag for CLI compatibility)
-
     if not group:
         raise typer.BadParameter("Provide at least one --group.")
 
@@ -221,13 +201,8 @@ def cli_bars(
         dir_okay=False,
     ),
 ) -> None:
-    """Create a bar chart from the sweep's aggregated summary (summary.csv)."""
     df = pd.read_csv(summary)
-    required = {
-        "method",
-        "env_id",
-        "mean_return_mean",
-    }
+    required = {"method", "env_id", "mean_return_mean"}
     missing = required - set(df.columns)
     if missing:
         raise typer.BadParameter(f"Missing columns in {summary}: {sorted(missing)}")
@@ -238,10 +213,7 @@ def cli_bars(
             raise typer.BadParameter(f"No rows for env_id={env!r} in {summary}.")
         d = d.sort_values("mean_return_mean", ascending=False)
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.bar(
-            d["method"],
-            d["mean_return_mean"],
-        )
+        ax.bar(d["method"], d["mean_return_mean"])
         ax.set_ylabel("Mean return")
         ax.set_xlabel("Method")
         ax.set_title(f"{env} — Mean Return")
@@ -260,10 +232,7 @@ def cli_bars(
         n_envs = len(rows)
         fig, axes = plt.subplots(n_envs, 1, figsize=(9, max(4, 3 * n_envs)), squeeze=False)
         for ax, d in zip(axes[:, 0], rows):
-            ax.bar(
-                d["method"],
-                d["mean_return_mean"],
-            )
+            ax.bar(d["method"], d["mean_return_mean"])
             env_name = str(d["env_id"].iloc[0]) if not d.empty else ""
             ax.set_title(f"{env_name} — Mean Return")
             ax.set_ylabel("Mean return")
@@ -304,15 +273,9 @@ def cli_bars_normalized(
         help="Method name to highlight with a distinct color.",
     ),
 ) -> None:
-    """Create a grouped bar chart with Min-Max normalized scores per environment.
-
-    Visualizes relative performance where 0.0 is the worst method and 1.0 is the best method
-    for each environment.
-    """
     plot_normalized_summary(summary, out, highlight_method=highlight)
     typer.echo(f"[green]Saved normalized bars[/green] to {out}")
 
 
-def main(argv: Optional[List[str]] = None) -> None:  # pragma: no cover - CLI entry
-    """CLI entry point forwarding to Typer app."""
+def main(argv: Optional[List[str]] = None) -> None:
     app()
