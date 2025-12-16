@@ -27,7 +27,6 @@ class RNDConfig:
 
 
 class RND(BaseIntrinsicModule, nn.Module):
-    # outputs_normalized tells the trainer whether it should apply its global RMS.
     def __init__(
         self,
         obs_space: gym.Space,
@@ -81,8 +80,6 @@ class RND(BaseIntrinsicModule, nn.Module):
             self.target.eval()
 
         self._opt = torch.optim.Adam(self.predictor.parameters(), lr=float(self.cfg.lr))
-
-        # Start non-zero to avoid tiny denominators early.
         self.register_buffer("_r2_ema", torch.tensor(1.0, dtype=torch.float32))
 
         self.outputs_normalized: bool = bool(self.cfg.normalize_intrinsic)
@@ -152,7 +149,6 @@ class RND(BaseIntrinsicModule, nn.Module):
         per = F.mse_loss(p, tgt, reduction="none").mean(dim=-1)
         total = per.mean()
 
-        # Keep RMS fresh for diagnostics when trainer normalizes globally.
         if not self.cfg.normalize_intrinsic:
             self._update_rms_from_raw(per)
 
