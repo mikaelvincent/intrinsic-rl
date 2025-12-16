@@ -4,7 +4,7 @@ import pytest
 
 from irl.cfg import ConfigError, loads_config
 from irl.intrinsic.factory import create_intrinsic_module
-from irl.intrinsic.proposed import Proposed
+from irl.intrinsic.proposed import GLPE
 
 
 def test_loads_config_rejects_unknown_fields():
@@ -36,44 +36,44 @@ ppo:
     [
         (
             """
-method: proposed
+method: glpe
 intrinsic:
   eta: 0.1
   alpha_impact: 0.0
 """,
-            "proposed",
+            "glpe",
         ),
         (
             """
-method: proposed_lp_only
+method: glpe_lp_only
 intrinsic:
   eta: 0.1
   alpha_impact: 0.0
 """,
-            "proposed_lp_only",
+            "glpe_lp_only",
         ),
         (
             """
-method: proposed_impact_only
+method: glpe_impact_only
 intrinsic:
   eta: 0.1
   alpha_lp: 0.0
 """,
-            "proposed_impact_only",
+            "glpe_impact_only",
         ),
         (
             """
-method: proposed_nogate
+method: glpe_nogate
 intrinsic:
   eta: 0.1
   gate:
     enabled: false
 """,
-            "proposed_nogate",
+            "glpe_nogate",
         ),
     ],
 )
-def test_loads_config_accepts_proposed_variants(yaml_text: str, expected_method: str):
+def test_loads_config_accepts_glpe_variants(yaml_text: str, expected_method: str):
     cfg = loads_config(yaml_text)
     assert str(cfg.method).lower() == expected_method
 
@@ -82,19 +82,19 @@ def test_loads_config_accepts_proposed_variants(yaml_text: str, expected_method:
     "yaml_text",
     [
         """
-method: proposed_lp_only
+method: glpe_lp_only
 intrinsic:
   eta: 0.1
   alpha_impact: 0.25
 """,
         """
-method: proposed_impact_only
+method: glpe_impact_only
 intrinsic:
   eta: 0.1
   alpha_lp: 0.5
 """,
         """
-method: proposed_nogate
+method: glpe_nogate
 intrinsic:
   eta: 0.1
   gate:
@@ -102,7 +102,7 @@ intrinsic:
 """,
     ],
 )
-def test_loads_config_rejects_invalid_proposed_variants(yaml_text: str):
+def test_loads_config_rejects_invalid_glpe_variants(yaml_text: str):
     with pytest.raises(ConfigError):
         loads_config(yaml_text)
 
@@ -134,12 +134,12 @@ def test_loads_config_rejects_invalid_ride_knobs(yaml_text: str):
 @pytest.mark.parametrize(
     "method, expected_impact, expected_lp, expected_gate",
     [
-        ("proposed_lp_only", 0.0, 0.5, True),
-        ("proposed_impact_only", 1.0, 0.0, True),
-        ("proposed_nogate", 1.0, 0.5, False),
+        ("glpe_lp_only", 0.0, 0.5, True),
+        ("glpe_impact_only", 1.0, 0.0, True),
+        ("glpe_nogate", 1.0, 0.5, False),
     ],
 )
-def test_factory_applies_proposed_variant_overrides(
+def test_factory_applies_glpe_variant_overrides(
     method: str, expected_impact: float, expected_lp: float, expected_gate: bool
 ):
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
@@ -154,7 +154,7 @@ def test_factory_applies_proposed_variant_overrides(
         alpha_lp=0.5,
         gating_enabled=True,
     )
-    assert isinstance(mod, Proposed)
+    assert isinstance(mod, GLPE)
     assert float(mod.alpha_impact) == expected_impact
     assert float(mod.alpha_lp) == expected_lp
     assert bool(getattr(mod, "gating_enabled", True)) is expected_gate
