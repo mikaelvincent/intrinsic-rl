@@ -15,10 +15,7 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    """Convert to tensor on device, preserving dtype unless explicitly set.
-
-    Avoid forcing float32 so uint8 image inputs can trigger downstream scaling.
-    """
+    # Preserve dtype unless explicitly overridden (keeps uint8 image inputs intact).
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     if dtype is None:
@@ -37,7 +34,6 @@ def ppo_update(
     optimizers: Optional[Tuple[Adam, Adam]] = None,
     return_stats: bool = False,
 ) -> Optional[Dict[str, float]]:
-    """Run PPO updates over shuffled minibatches; optionally return stats."""
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
