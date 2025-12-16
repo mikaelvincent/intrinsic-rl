@@ -64,7 +64,6 @@ def _maybe_scale_uint8_or_float255(t: Tensor, enable: bool) -> Tensor:
     try:
         with torch.no_grad():
             max_val = torch.amax(out)
-            min_val = torch.amin(out)
         if torch.isfinite(max_val) and float(max_val.item()) > 1.5:
             out = out / 255.0
         out = out.clamp_(0.0, 1.0)
