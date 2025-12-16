@@ -1,49 +1,21 @@
-"""Configuration dataclasses defining the public config surface."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
-
-
-# ----- Section Schemas -------------------------------------------------------
+from typing import Literal
 
 
 @dataclass(frozen=True)
 class GateConfig:
-    """Region gating thresholds for the Proposed intrinsic.
-
-    The global medians used by the gating rule (learning progress and error)
-    only become active once enough regions have seen samples. This threshold is
-    controlled by ``min_regions_for_gating`` (default: 3).
-
-    Attributes
-    ----------
-    enabled:
-        Master switch for gating. When ``False``, gating is disabled regardless
-        of thresholds (equivalent to a "nogate" ablation).
-    """
-
-    enabled: bool = True  # Master on/off switch for gating
-    tau_lp_mult: float = 0.01  # multiply median LP
+    enabled: bool = True
+    tau_lp_mult: float = 0.01
     tau_s: float = 2.0
     hysteresis_up_mult: float = 2.0
     min_consec_to_gate: int = 5
-    min_regions_for_gating: int = 3  # regions needed before using medians
+    min_regions_for_gating: int = 3
 
 
 @dataclass(frozen=True)
 class IntrinsicConfig:
-    """Intrinsic reward configuration shared by intrinsic methods.
-
-    For the Proposed method, ``normalize_inside`` controls where intrinsic
-    normalization happens. When ``False``, Proposed emits raw (unnormalized)
-    component signals and relies on the trainer's global ``RunningRMS`` for
-    scaling. When ``True`` (the default), Proposed performs per-component
-    normalization internally and sets ``outputs_normalized=True`` so the
-    trainer skips its own intrinsic normalization.
-    """
-
     eta: float = 0.1
     alpha_impact: float = 1.0
     alpha_lp: float = 0.5
@@ -53,48 +25,24 @@ class IntrinsicConfig:
     depth_max: int = 12
     ema_beta_long: float = 0.995
     ema_beta_short: float = 0.90
-    normalize_inside: bool = True  # Proposed-only internal normalization toggle
-    fail_on_error: bool = True  # fatal intrinsic construction errors by default
+    normalize_inside: bool = True
+    fail_on_error: bool = True
     gate: GateConfig = field(default_factory=GateConfig)
 
 
 @dataclass(frozen=True)
 class EnvConfig:
-    """Environment settings.
-
-    Notes
-    -----
-    For CarRacing environments (``id`` starting with ``"CarRacing"``) the
-    ``discrete_actions`` flag enables the :class:`CarRacingDiscreteActionWrapper`.
-    When ``car_discrete_action_set`` is not ``None``, it overrides the wrapper's
-    default 5-action set with a custom list of ``[steer, gas, brake]`` triples.
-
-    ``async_vector`` enables process-based vectorization via
-    :class:`gymnasium.vector.AsyncVectorEnv` when ``vec_envs > 1``. This
-    spreads environment stepping across multiple OS processes and can
-    significantly improve CPU utilization for simulation-heavy tasks.
-    If an async vector env cannot be created (e.g., non-picklable env),
-    the manager falls back to a synchronous vector env automatically.
-    """
-
     id: str = "MountainCar-v0"
     vec_envs: int = 16
     frame_skip: int = 1
     domain_randomization: bool = False
-    # For CarRacing, discrete by default; ignored for continuous-control envs.
     discrete_actions: bool = True
-    # Optional explicit discrete action set for CarRacing. When provided, it
-    # must be a sequence of [steer, gas, brake] triples and will be converted
-    # to a NumPy array of shape (N, 3) by the environment manager.
     car_discrete_action_set: tuple[tuple[float, float, float], ...] | None = None
-    # Use process-based vector envs when >1 env is requested.
     async_vector: bool = False
 
 
 @dataclass(frozen=True)
 class PPOConfig:
-    """PPO hyperparameters."""
-
     steps_per_update: int = 2048
     minibatches: int = 32
     epochs: int = 10
@@ -103,18 +51,14 @@ class PPOConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.2
     entropy_coef: float = 0.0
-    # Value loss weighting and optional value-function clipping
     value_coef: float = 0.5
-    value_clip_range: float = 0.0  # <= 0 disables value clipping
-    # KL control (penalty and/or early stop); both disabled by default
-    kl_penalty_coef: float = 0.0  # add kl_penalty_coef * |approx_kl| to policy loss
-    kl_stop: float = 0.0  # if |approx_kl| > kl_stop: early stop PPO epochs
+    value_clip_range: float = 0.0
+    kl_penalty_coef: float = 0.0
+    kl_stop: float = 0.0
 
 
 @dataclass(frozen=True)
 class AdaptationConfig:
-    """Policy-aware α schedule (optional)."""
-
     enabled: bool = True
     interval_steps: int = 50_000
     entropy_low_frac: float = 0.3
@@ -122,44 +66,23 @@ class AdaptationConfig:
 
 @dataclass(frozen=True)
 class EvaluationConfig:
-    """Periodic evaluation (no intrinsic)."""
-
     interval_steps: int = 50_000
     episodes: int = 10
 
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    """Logging & checkpoint cadence."""
-
     tb: bool = True
     csv_interval: int = 10_000
     checkpoint_interval: int = 100_000
-    checkpoint_max_to_keep: Optional[int] = None
+    checkpoint_max_to_keep: int | None = None
 
 
 @dataclass(frozen=True)
 class ExperimentConfig:
-    """Experiment-wide toggles.
-
-    This section is for global behaviours that are not tied to a specific
-    environment or PPO setting. For example, ``deterministic`` controls
-    whether training should request deterministic PyTorch behaviour where
-    supported. By default this is set to ``True`` so that runs are
-    reproducible given a fixed seed, unless a config explicitly opts out.
-
-    ``total_steps`` (optional) allows a configuration file to declare the
-    target number of environment steps for training runs. When provided,
-    higher-level orchestration (CLI/suite) should prefer this value over
-    a global default passed via CLI flags.
-    """
-
     deterministic: bool = True
-    # Optional per-config target step budget (None => defer to CLI/defaults)
     total_steps: int | None = None
 
-
-# ----- Root Schema -----------------------------------------------------------
 
 MethodLiteral = Literal[
     "vanilla",
@@ -167,7 +90,6 @@ MethodLiteral = Literal[
     "rnd",
     "ride",
     "riac",
-    # Proposed family (full method + named ablations).
     "proposed",
     "proposed_lp_only",
     "proposed_impact_only",
@@ -177,17 +99,8 @@ MethodLiteral = Literal[
 
 @dataclass(frozen=True)
 class Config:
-    """Top-level configuration shared by all CLI entry points.
-
-    Notes
-    -----
-    Proposed ablations are represented as distinct ``method`` values (for
-    example ``"proposed_lp_only"``), so that plots, summaries, and run
-    directories treat them as separate experiment categories.
-    """
-
     seed: int = 1
-    device: str = "cpu"  # or "cuda:0"
+    device: str = "cpu"
     method: MethodLiteral = "proposed"
 
     env: EnvConfig = field(default_factory=EnvConfig)
