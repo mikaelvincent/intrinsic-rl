@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+GLPE_FULL_NAME = "Gated Learning-Progress Exploration (GLPE)"
+
 
 @dataclass(frozen=True)
 class GateConfig:
@@ -90,10 +92,10 @@ MethodLiteral = Literal[
     "rnd",
     "ride",
     "riac",
-    "proposed",
-    "proposed_lp_only",
-    "proposed_impact_only",
-    "proposed_nogate",
+    "glpe",
+    "glpe_lp_only",
+    "glpe_impact_only",
+    "glpe_nogate",
 ]
 
 
@@ -101,7 +103,7 @@ MethodLiteral = Literal[
 class Config:
     seed: int = 1
     device: str = "cpu"
-    method: MethodLiteral = "proposed"
+    method: MethodLiteral = "glpe"
 
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
