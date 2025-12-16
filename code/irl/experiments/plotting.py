@@ -221,10 +221,10 @@ def run_plots_suite(
         _generate_comparison_plot(
             groups,
             methods_to_plot=baselines,
-            metric="reward_mean",
+            metric="episode_return_mean",
             smooth=15,
             shade=True,
-            title="Task Performance (Extrinsic Reward)",
+            title="Task Performance (Episode Return)",
             filename_suffix="perf_extrinsic",
             plots_root=plots_root,
         )
@@ -243,10 +243,10 @@ def run_plots_suite(
         _generate_comparison_plot(
             groups,
             methods_to_plot=ablations,
-            metric="reward_mean",
+            metric="episode_return_mean",
             smooth=15,
             shade=True,
-            title="Ablation Study (Extrinsic Reward)",
+            title="Ablation Study (Episode Return)",
             filename_suffix="ablations",
             plots_root=plots_root,
         )
