@@ -40,11 +40,11 @@ def _generate_comparison_plot(
             if agg.n_runs == 0:
                 continue
 
-            is_main_proposed = method.lower() == "proposed"
-            lw = 2.5 if is_main_proposed else 1.5
-            alpha = 1.0 if is_main_proposed else 0.4
-            zorder = 10 if is_main_proposed else 2
-            color = "#d62728" if is_main_proposed else None
+            is_main_glpe = method.lower() == "glpe"
+            lw = 2.5 if is_main_glpe else 1.5
+            alpha = 1.0 if is_main_glpe else 0.4
+            zorder = 10 if is_main_glpe else 2
+            color = "#d62728" if is_main_glpe else None
 
             label = f"{method} (n={agg.n_runs})"
             ax.plot(
@@ -83,10 +83,10 @@ def _generate_gating_plot(
     smooth: int = 25,
 ) -> None:
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
-        runs = by_method.get("proposed")
+        runs = by_method.get("glpe")
         if not runs:
             for m, r in by_method.items():
-                if m.lower() == "proposed":
+                if m.lower() == "glpe":
                     runs = r
                     break
         if not runs:
@@ -129,7 +129,7 @@ def _generate_gating_plot(
         )
         ax2.tick_params(axis="y", labelcolor=color2)
 
-        ax1.set_title(f"{env_id} — Gating Dynamics (Proposed)")
+        ax1.set_title(f"{env_id} — Gating Dynamics (GLPE)")
         ax1.grid(True, alpha=0.3)
 
         env_tag = env_id.replace("/", "-")
@@ -147,10 +147,10 @@ def _generate_component_plot(
     smooth: int = 25,
 ) -> None:
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
-        runs = by_method.get("proposed")
+        runs = by_method.get("glpe")
         if not runs:
             for m, r in by_method.items():
-                if m.lower() == "proposed":
+                if m.lower() == "glpe":
                     runs = r
                     break
         if not runs:
@@ -185,7 +185,7 @@ def _generate_component_plot(
 
         ax.set_xlabel("Environment steps")
         ax.set_ylabel("Running RMS (Signal Magnitude)")
-        ax.set_title(f"{env_id} — Intrinsic Component Evolution (Proposed)")
+        ax.set_title(f"{env_id} — Intrinsic Component Evolution (GLPE)")
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
 
