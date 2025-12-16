@@ -81,7 +81,11 @@ def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) ->
     return uniq
 
 
-def _evaluate_ckpt(ckpt: Path, episodes: int, device: str) -> RunResult:
+def _evaluate_ckpt(ckpt: Path, episodes: int, device: str, policy_mode: str = "mode") -> RunResult:
+    pm = str(policy_mode).strip().lower()
+    if pm not in {"mode", "sample"}:
+        raise ValueError("policy_mode must be 'mode' or 'sample'")
+
     payload = load_checkpoint(ckpt, map_location=device)
     cfg = payload.get("cfg", {}) or {}
     env_id = str(((cfg.get("env") or {}).get("id")) or "MountainCar-v0")
@@ -89,7 +93,7 @@ def _evaluate_ckpt(ckpt: Path, episodes: int, device: str) -> RunResult:
     seed = int(cfg.get("seed", 1))
     step = int(payload.get("step", -1))
 
-    summary = evaluate(env=env_id, ckpt=ckpt, episodes=episodes, device=device)
+    summary = evaluate(env=env_id, ckpt=ckpt, episodes=episodes, device=device, policy_mode=pm)
 
     return RunResult(
         method=method,
