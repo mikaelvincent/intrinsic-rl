@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from irl.intrinsic.icm import ICMConfig
-from irl.intrinsic.proposed import GLPE
+from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.riac import RIAC
 
 
