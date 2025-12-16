@@ -4,7 +4,7 @@ import pytest
 
 from irl.cfg import ConfigError, loads_config
 from irl.intrinsic.factory import create_intrinsic_module
-from irl.intrinsic.proposed import GLPE
+from irl.intrinsic.glpe import GLPE
 
 
 def test_loads_config_rejects_unknown_fields():
