@@ -169,7 +169,7 @@ def cli_bars(
 def cli_bars_normalized(
     summary: Path = typer.Option(Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False),
     out: Path = typer.Option(Path("results/normalized_scores.png"), "--out", "-o", dir_okay=False),
-    highlight: str = typer.Option("proposed", "--highlight"),
+    highlight: str = typer.Option("glpe", "--highlight"),
 ) -> None:
     plot_normalized_summary(summary, out, highlight_method=highlight)
     typer.echo(f"[green]Saved normalized bars[/green] to {out}")
