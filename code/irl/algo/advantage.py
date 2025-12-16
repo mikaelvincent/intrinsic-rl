@@ -14,10 +14,7 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    """Convert to a tensor on `device`, preserving dtype unless explicitly set.
-
-    Avoid forcing float32 so uint8 image inputs can trigger downstream scaling.
-    """
+    # Preserve dtype unless explicitly overridden (keeps uint8 image inputs intact).
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     if dtype is None:
@@ -31,7 +28,7 @@ def _ensure_time_batch_layout(
     rew_t: Tensor,
     done_t: Tensor,
 ) -> tuple[Tensor, Tensor | None, Tensor, Tensor, int, int]:
-    """Normalize to time-major obs and (T,B) rewards/dones."""
+    # Normalize to time-major obs and (T,B) rewards/dones.
     dev = obs_t.device
     rew_t = rew_t.to(dev, dtype=torch.float32)
     done_t = done_t.to(dev, dtype=torch.float32)
@@ -99,7 +96,6 @@ def _ensure_time_batch_layout(
 
 
 def _coerce_mask_to_TB(mask: Tensor, T: int, B: int, like_done: Tensor) -> Tensor:
-    """Coerce a 1D/2D mask into (T,B) float32 on the done device."""
     dev = like_done.device
     m = mask.to(dev, dtype=torch.float32)
     if m.dim() == 2:
@@ -133,7 +129,6 @@ def compute_gae(
     *,
     bootstrap_on_timeouts: bool = False,
 ) -> Tuple[Tensor, Tensor]:
-    """Compute GAE advantages and value targets (flat, shape T*B)."""
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
@@ -178,10 +173,7 @@ def compute_gae(
         if trunc_t is None:
             done_eff = term
         else:
-            if bootstrap_on_timeouts:
-                done_eff = term
-            else:
-                done_eff = torch.clamp(term + trunc_t, max=1.0)
+            done_eff = term if bootstrap_on_timeouts else torch.clamp(term + trunc_t, max=1.0)
 
     with torch.no_grad():
         v_t = value_fn(obs_t).view(T, B)
@@ -203,6 +195,4 @@ def compute_gae(
 
         v_targets = adv + v_t
 
-    adv = adv.reshape(-1)
-    v_targets = v_targets.reshape(-1)
-    return adv, v_targets
+    return adv.reshape(-1), v_targets.reshape(-1)
