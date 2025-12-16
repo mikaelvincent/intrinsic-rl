@@ -8,7 +8,6 @@ import numpy as np
 Array = np.ndarray
 
 
-# On split: left child keeps parent's region_id; right child gets a new id.
 @dataclass
 class RegionNode:
     depth: int
