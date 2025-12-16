@@ -1,17 +1,25 @@
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
 from irl.cfg.schema import PPOConfig
+from irl.models.distributions import CategoricalDist, DiagGaussianDist
 from irl.models.networks import PolicyNetwork, ValueNetwork
 
 
-def test_gae_and_ppo_update_with_images():
+@pytest.mark.parametrize(
+    "act_space",
+    [
+        gym.spaces.Discrete(3),
+        gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
+    ],
+    ids=["discrete", "continuous"],
+)
+def test_gae_and_ppo_update_with_images(act_space):
     obs_space = gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8)
-    act_space = gym.spaces.Discrete(3)
-
     policy = PolicyNetwork(obs_space, act_space)
     value = ValueNetwork(obs_space)
 
@@ -31,13 +39,20 @@ def test_gae_and_ppo_update_with_images():
     )
 
     N = T * B
-    assert adv.shape == (N,) and v_targets.shape == (N,)
+    assert adv.shape == (N,)
+    assert v_targets.shape == (N,)
 
     obs_flat = obs.reshape(N, H, W, C)
     with torch.no_grad():
-        actions = policy.distribution(obs_flat).sample().long().view(N)
+        dist = policy.distribution(obs_flat)
+        if hasattr(act_space, "n"):
+            assert isinstance(dist, CategoricalDist)
+            actions = dist.sample().long().view(N)
+        else:
+            assert isinstance(dist, DiagGaussianDist)
+            actions = dist.sample().view(N, -1)
 
-    ppo_cfg = PPOConfig(
+    cfg = PPOConfig(
         steps_per_update=N,
         minibatches=2,
         epochs=1,
@@ -47,4 +62,18 @@ def test_gae_and_ppo_update_with_images():
         clip_range=0.2,
         entropy_coef=0.01,
     )
-    ppo_update(policy, value, {"obs": obs_flat, "actions": actions}, adv, v_targets, ppo_cfg)
+
+    stats = ppo_update(
+        policy,
+        value,
+        {"obs": obs_flat, "actions": actions},
+        adv,
+        v_targets,
+        cfg,
+        return_stats=True,
+    )
+
+    assert stats is not None
+    for k in ("approx_kl", "clip_frac", "entropy", "policy_loss", "value_loss", "epochs_ran"):
+        assert k in stats
+        assert np.isfinite(float(stats[k]))
