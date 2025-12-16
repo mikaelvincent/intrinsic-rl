@@ -6,10 +6,19 @@ from typing import List, Optional
 import typer
 
 from irl.stats_utils import bootstrap_ci, mannwhitney_u
-from .results import RunResult, _aggregate, _read_summary_raw, _values_for_method, _write_raw_csv, _write_summary_csv
+from .results import (
+    RunResult,
+    _aggregate,
+    _read_summary_raw,
+    _values_for_method,
+    _write_raw_csv,
+    _write_summary_csv,
+)
 from .run_discovery import _evaluate_ckpt, _normalize_inputs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
+
+_QUICK_EPISODES = 5
 
 
 @app.command("eval-many")
@@ -24,8 +33,10 @@ def cli_eval_many(
         dir_okay=False,
         readable=True,
     ),
-    episodes: int = typer.Option(10, "--episodes", "-n"),
+    episodes: int = typer.Option(20, "--episodes", "-n"),
     device: str = typer.Option("cpu", "--device", "-d"),
+    policy: str = typer.Option("mode", "--policy", "-p"),
+    quick: bool = typer.Option(False, "--quick/--no-quick"),
     out: Path = typer.Option(
         Path("results/summary.csv"),
         "--out",
@@ -34,6 +45,14 @@ def cli_eval_many(
     ),
     run_patterns: List[str] = typer.Argument([]),
 ) -> None:
+    policy_mode = str(policy).strip().lower()
+    if policy_mode not in {"mode", "sample"}:
+        raise typer.BadParameter("--policy must be one of: mode, sample")
+
+    n_eps = int(episodes)
+    if quick:
+        n_eps = min(n_eps, _QUICK_EPISODES)
+
     all_run_patterns: List[str] = []
     if runs:
         all_run_patterns.extend(runs)
@@ -50,7 +69,7 @@ def cli_eval_many(
     for i, c in enumerate(ckpts, start=1):
         typer.echo(f"  [{i}/{len(ckpts)}] {c}")
         try:
-            results.append(_evaluate_ckpt(c, episodes=episodes, device=device))
+            results.append(_evaluate_ckpt(c, episodes=n_eps, device=device, policy_mode=policy_mode))
         except Exception as exc:
             typer.echo(f"[warning] Failed to evaluate {c}: {exc}")
 
@@ -127,7 +146,7 @@ def cli_stats(
     med_pt, med_lo, med_hi = (
         bootstrap_ci(x, y, diff_median, n_boot=int(boot))
         if boot > 0
-        else (res.median_x - res.median_y, float("nan"), float("nan"))
+        else (res.median_x - res.mean_y, float("nan"), float("nan"))
     )
 
     typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
@@ -140,7 +159,7 @@ def cli_stats(
         f"(Δ={res.mean_x - res.mean_y:+.3f})"
     )
     typer.echo(
-        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
+        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.mean_y:.3f}  "
         f"(Δ={res.median_x - res.mean_y:+.3f})"
     )
     typer.echo(f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)")
