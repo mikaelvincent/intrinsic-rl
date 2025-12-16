@@ -57,7 +57,9 @@ def log_mujoco_gl_preserve(current: str) -> None:
 
 
 def log_mujoco_gl_default(value: str) -> None:
-    get_logger("mujoco").info("MUJOCO_GL not set; defaulting to %r for headless MuJoCo rendering.", value)
+    get_logger("mujoco").info(
+        "MUJOCO_GL not set; defaulting to %r for headless MuJoCo rendering.", value
+    )
 
 
 def log_intrinsic_norm_hint(method: str, outputs_normalized: bool) -> None:
@@ -203,7 +205,7 @@ class MetricLogger:
             if s == 0 or s >= interval:
                 should_write_csv = True
         else:
-            # Use thresholds (not modulo) to handle step jumps.
+            # Threshold cadence handles step jumps.
             if s >= last + interval:
                 should_write_csv = True
 
