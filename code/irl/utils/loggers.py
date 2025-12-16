@@ -67,7 +67,7 @@ def log_intrinsic_norm_hint(method: str, outputs_normalized: bool) -> None:
     m = str(method).lower()
 
     if outputs_normalized:
-        if m == "proposed":
+        if m == "glpe":
             log.info(
                 "Intrinsic normalization: method=%r normalizes impact+LP inside the module "
                 "(normalize_inside=True, outputs_normalized=True); trainer's global "
