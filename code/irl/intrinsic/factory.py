@@ -6,7 +6,7 @@ import gymnasium as gym
 import torch
 
 from .icm import ICM
-from .proposed import GLPE
+from .glpe import GLPE
 from .riac import RIAC
 from .ride import RIDE
 from .rnd import RND
