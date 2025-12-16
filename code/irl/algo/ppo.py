@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Mapping
 
 import torch
 from torch import Tensor, nn
@@ -30,9 +30,9 @@ def ppo_update(
     value_targets: Any,
     cfg: Any,
     *,
-    optimizers: Optional[Tuple[Adam, Adam]] = None,
+    optimizers: tuple[Adam, Adam] | None = None,
     return_stats: bool = False,
-) -> Optional[Dict[str, float]]:
+) -> dict[str, float] | None:
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
