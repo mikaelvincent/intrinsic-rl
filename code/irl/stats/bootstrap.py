@@ -1,14 +1,3 @@
-"""Bootstrap confidence-interval helper.
-
-Implements:
-
-- ``bootstrap_ci()``: generic bootstrap percentile confidence-interval
-  helper for scalar statistics of two samples.
-
-Relies only on NumPy and the standard library to avoid extra
-dependencies.
-"""
-
 from __future__ import annotations
 
 from typing import Callable, Sequence, Tuple
@@ -27,29 +16,6 @@ def bootstrap_ci(
     ci: float = 0.95,
     rng: np.random.Generator | None = None,
 ) -> Tuple[float, float, float]:
-    """Percentile bootstrap CI for a scalar statistic of two samples.
-
-    Returns (point_estimate, lo, hi), where ``(lo, hi)`` is a two-sided
-    percentile interval with coverage ``ci``.
-
-    Parameters
-    ----------
-    x, y:
-        Two samples to be compared.
-    stat_fn:
-        Statistic function applied to ``(x, y)``; must return a scalar.
-    n_boot:
-        Number of bootstrap draws. If 0, only the point estimate is returned.
-    ci:
-        Two-sided confidence level.
-    rng:
-        Optional NumPy RNG to control bootstrap sampling.
-
-    Returns
-    -------
-    tuple[float, float, float]
-        (point_estimate, lower_quantile, upper_quantile).
-    """
     X = _as_1d_float(x)
     Y = _as_1d_float(y)
     if X.size == 0 or Y.size == 0:
