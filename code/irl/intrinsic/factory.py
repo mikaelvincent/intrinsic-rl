@@ -6,18 +6,18 @@ import gymnasium as gym
 import torch
 
 from .icm import ICM
-from .proposed import Proposed
+from .proposed import GLPE
 from .riac import RIAC
 from .ride import RIDE
 from .rnd import RND
 
-_SUPPORTED = {"icm", "rnd", "ride", "riac", "proposed"}
+_SUPPORTED = {"icm", "rnd", "ride", "riac", "glpe"}
 
 
 def _canonical_method(method: str) -> str:
     m = str(method).lower()
-    if m.startswith("proposed_"):
-        return "proposed"
+    if m.startswith("glpe_"):
+        return "glpe"
     return m
 
 
@@ -60,10 +60,10 @@ def create_intrinsic_module(
                     float(kwargs[k]) if ("alpha" in k or "beta" in k) else int(kwargs[k])
                 )
         return RIAC(obs_space, act_space, device=device, **riac_kwargs)
-    if m == "proposed":
+    if m == "glpe":
         if act_space is None:
-            raise ValueError("Proposed requires an action space (via ICM).")
-        prop_kwargs: dict[str, Any] = {}
+            raise ValueError("GLPE requires an action space (via ICM).")
+        glpe_kwargs: dict[str, Any] = {}
         for k in (
             "alpha_impact",
             "alpha_lp",
@@ -78,7 +78,7 @@ def create_intrinsic_module(
             "gate_min_regions_for_gating",
         ):
             if k in kwargs and kwargs[k] is not None:
-                prop_kwargs[k] = (
+                glpe_kwargs[k] = (
                     float(kwargs[k])
                     if ("alpha" in k or "beta" in k or "tau" in k)
                     else int(kwargs[k])
@@ -99,27 +99,27 @@ def create_intrinsic_module(
             except Exception:
                 pass
 
-        if m_raw == "proposed_lp_only":
-            prop_kwargs["alpha_impact"] = 0.0
-        elif m_raw == "proposed_impact_only":
-            prop_kwargs["alpha_lp"] = 0.0
-        elif m_raw == "proposed_nogate":
+        if m_raw == "glpe_lp_only":
+            glpe_kwargs["alpha_impact"] = 0.0
+        elif m_raw == "glpe_impact_only":
+            glpe_kwargs["alpha_lp"] = 0.0
+        elif m_raw == "glpe_nogate":
             gating_enabled_val = False
-            prop_kwargs["gating_enabled"] = False
+            glpe_kwargs["gating_enabled"] = False
 
         try:
             import inspect
 
-            accepted = set(inspect.signature(Proposed.__init__).parameters.keys())
+            accepted = set(inspect.signature(GLPE.__init__).parameters.keys())
         except Exception:
             accepted = set()
 
         if normalize_inside_val is not None and "normalize_inside" in accepted:
-            prop_kwargs["normalize_inside"] = normalize_inside_val
+            glpe_kwargs["normalize_inside"] = normalize_inside_val
         if gating_enabled_val is not None and "gating_enabled" in accepted:
-            prop_kwargs["gating_enabled"] = gating_enabled_val
+            glpe_kwargs["gating_enabled"] = gating_enabled_val
 
-        mod = Proposed(obs_space, act_space, device=device, **prop_kwargs)
+        mod = GLPE(obs_space, act_space, device=device, **glpe_kwargs)
 
         if gating_enabled_val is not None and "gating_enabled" not in accepted:
             try:
@@ -154,9 +154,9 @@ def compute_intrinsic_batch(
         if actions is None or next_obs is None:
             raise ValueError("RIAC.compute_batch requires next_obs and actions.")
         return module.compute_batch(obs, next_obs, actions, reduction="none")
-    if m == "proposed":
+    if m == "glpe":
         if actions is None or next_obs is None:
-            raise ValueError("Proposed.compute_batch requires next_obs and actions.")
+            raise ValueError("GLPE.compute_batch requires next_obs and actions.")
         return module.compute_batch(obs, next_obs, actions, reduction="none")
     raise ValueError(f"Unsupported intrinsic method for compute: {method!r}")
 
@@ -185,8 +185,8 @@ def update_module(
         if actions is None or next_obs is None:
             raise ValueError("RIAC.update requires next_obs and actions.")
         return dict(module.update(obs, next_obs, actions, steps=int(steps)))
-    if m == "proposed":
+    if m == "glpe":
         if actions is None or next_obs is None:
-            raise ValueError("Proposed.update requires next_obs and actions.")
+            raise ValueError("GLPE.update requires next_obs and actions.")
         return dict(module.update(obs, next_obs, actions, steps=int(steps)))
     raise ValueError(f"Unsupported intrinsic method for update: {method!r}")
