@@ -152,7 +152,6 @@ class MetricLogger:
         self.csv_path = self.run_dir / "logs" / "scalars.csv"
         self.csv = CSVLogger(self.csv_path)
 
-        self.tb = None
         self._last_csv_write_step: Optional[int] = None
 
     def log(self, step: int, **metrics: float) -> None:
