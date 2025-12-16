@@ -8,9 +8,7 @@ import torch
 from gymnasium.envs.registration import register
 
 from irl.evaluator import evaluate
-from irl.envs import EnvManager
 from irl.models import PolicyNetwork
-from irl.trainer.build import single_spaces
 
 
 class _DummyEvalEnv(gym.Env):
@@ -50,11 +48,8 @@ except Exception:
 
 
 def _make_dummy_ckpt(tmp_path: Path, seed: int) -> Path:
-    env = EnvManager(env_id="DummyEval-v0", num_envs=1, seed=seed).make()
-    try:
-        obs_space, act_space = single_spaces(env)
-    finally:
-        env.close()
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+    act_space = gym.spaces.Discrete(2)
 
     torch.manual_seed(0)
     policy = PolicyNetwork(obs_space, act_space)
