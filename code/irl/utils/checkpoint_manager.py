@@ -22,7 +22,6 @@ def _safe_torch_save(obj: Any, path: Path) -> None:
 
 
 def _torch_load_compat(path: Path, map_location: str | torch.device = "cpu") -> Dict[str, Any]:
-    # Torch >=2.6 defaults to weights_only; keep full payload.
     try:
         return torch.load(path, map_location=map_location, weights_only=False)
     except TypeError:
