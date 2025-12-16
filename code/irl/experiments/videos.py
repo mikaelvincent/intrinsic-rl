@@ -72,7 +72,7 @@ def run_video_suite(
     results_dir: Path,
     device: str,
     baseline: str = "vanilla",
-    method: str = "proposed",
+    method: str = "glpe",
 ) -> None:
     root = runs_root.resolve()
     if not root.exists():
@@ -115,9 +115,7 @@ def run_video_suite(
 
     videos_root = Path(results_dir) / "videos"
     videos_root.mkdir(parents=True, exist_ok=True)
-    typer.echo(
-        f"[suite] Generating checkpoint videos ({baseline} vs {method}) for {len(envs)} envs..."
-    )
+    typer.echo(f"[suite] Generating checkpoint videos ({baseline} vs {method}) for {len(envs)} envs...")
 
     for env_id in sorted(envs):
         env_tag = env_id.replace("/", "-")
@@ -211,7 +209,7 @@ def run_video_suite(
                     seed=100,
                     device=device,
                     label_left=baseline.capitalize(),
-                    label_right=method.capitalize(),
+                    label_right="Gated Learning-Progress Exploration (GLPE)",
                 )
             except Exception as exc:
                 typer.echo(f"[warn] Failed to render video for {env_id} ({step_tag}): {exc}")
