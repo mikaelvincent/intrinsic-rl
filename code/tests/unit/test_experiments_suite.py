@@ -33,7 +33,6 @@ ppo:
   minibatches: 2
   epochs: 1
 logging:
-  tb: false
   csv_interval: 1
   checkpoint_interval: 100000
 exp:
