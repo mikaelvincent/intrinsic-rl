@@ -8,17 +8,19 @@ from irl.intrinsic.proposed import Proposed
 
 
 def test_loads_config_rejects_unknown_fields():
-    yaml_text = """
+    with pytest.raises(ConfigError):
+        loads_config(
+            """
 seed: 1
-device: cpu
 unknown_top_level: 123
 """
-    with pytest.raises(ConfigError):
-        loads_config(yaml_text)
+        )
 
 
 def test_loads_config_rejects_minibatch_divisibility():
-    yaml_bad = """
+    with pytest.raises(ConfigError):
+        loads_config(
+            """
 method: vanilla
 env:
   vec_envs: 8
@@ -26,24 +28,87 @@ ppo:
   steps_per_update: 130
   minibatches: 64
 """
-    with pytest.raises(ConfigError):
-        loads_config(yaml_bad)
+        )
 
 
-def test_proposed_allows_alpha_impact_zero():
-    yaml_text = """
+@pytest.mark.parametrize(
+    "yaml_text, expected_method",
+    [
+        (
+            """
 method: proposed
 intrinsic:
   eta: 0.1
   alpha_impact: 0.0
-"""
+""",
+            "proposed",
+        ),
+        (
+            """
+method: proposed_lp_only
+intrinsic:
+  eta: 0.1
+  alpha_impact: 0.0
+""",
+            "proposed_lp_only",
+        ),
+        (
+            """
+method: proposed_impact_only
+intrinsic:
+  eta: 0.1
+  alpha_lp: 0.0
+""",
+            "proposed_impact_only",
+        ),
+        (
+            """
+method: proposed_nogate
+intrinsic:
+  eta: 0.1
+  gate:
+    enabled: false
+""",
+            "proposed_nogate",
+        ),
+    ],
+)
+def test_loads_config_accepts_proposed_variants(yaml_text: str, expected_method: str):
     cfg = loads_config(yaml_text)
-    assert str(cfg.method).lower() == "proposed"
-    assert cfg.intrinsic.alpha_impact == 0.0
+    assert str(cfg.method).lower() == expected_method
 
 
 @pytest.mark.parametrize(
-    "yaml_bad",
+    "yaml_text",
+    [
+        """
+method: proposed_lp_only
+intrinsic:
+  eta: 0.1
+  alpha_impact: 0.25
+""",
+        """
+method: proposed_impact_only
+intrinsic:
+  eta: 0.1
+  alpha_lp: 0.5
+""",
+        """
+method: proposed_nogate
+intrinsic:
+  eta: 0.1
+  gate:
+    enabled: true
+""",
+    ],
+)
+def test_loads_config_rejects_invalid_proposed_variants(yaml_text: str):
+    with pytest.raises(ConfigError):
+        loads_config(yaml_text)
+
+
+@pytest.mark.parametrize(
+    "yaml_text",
     [
         """
 method: ride
@@ -61,108 +126,27 @@ intrinsic:
 """,
     ],
 )
-def test_ride_rejects_nonpositive_required_knobs(yaml_bad: str):
+def test_loads_config_rejects_invalid_ride_knobs(yaml_text: str):
     with pytest.raises(ConfigError):
-        loads_config(yaml_bad)
+        loads_config(yaml_text)
 
 
-def test_cfg_proposed_lp_only_rules():
-    yaml_ok = """
-method: proposed_lp_only
-intrinsic:
-  eta: 0.1
-  alpha_impact: 0.0
-"""
-    cfg = loads_config(yaml_ok)
-    assert str(cfg.method).lower() == "proposed_lp_only"
-    assert cfg.intrinsic.alpha_impact == 0.0
-    assert cfg.intrinsic.alpha_lp > 0.0
-
-    yaml_bad = """
-method: proposed_lp_only
-intrinsic:
-  eta: 0.1
-  alpha_impact: 0.25
-"""
-    with pytest.raises(ConfigError):
-        loads_config(yaml_bad)
-
-
-def test_cfg_proposed_impact_only_rules():
-    yaml_ok = """
-method: proposed_impact_only
-intrinsic:
-  eta: 0.1
-  alpha_lp: 0.0
-"""
-    cfg = loads_config(yaml_ok)
-    assert str(cfg.method).lower() == "proposed_impact_only"
-    assert cfg.intrinsic.alpha_lp == 0.0
-    assert cfg.intrinsic.alpha_impact > 0.0
-
-    yaml_bad = """
-method: proposed_impact_only
-intrinsic:
-  eta: 0.1
-  alpha_lp: 0.5
-"""
-    with pytest.raises(ConfigError):
-        loads_config(yaml_bad)
-
-
-def test_cfg_proposed_nogate_rules():
-    yaml_ok = """
-method: proposed_nogate
-intrinsic:
-  eta: 0.1
-  gate:
-    enabled: false
-"""
-    cfg = loads_config(yaml_ok)
-    assert str(cfg.method).lower() == "proposed_nogate"
-    assert bool(cfg.intrinsic.gate.enabled) is False
-
-    yaml_bad = """
-method: proposed_nogate
-intrinsic:
-  eta: 0.1
-  gate:
-    enabled: true
-"""
-    with pytest.raises(ConfigError):
-        loads_config(yaml_bad)
-
-
-def test_factory_applies_proposed_variant_overrides():
+@pytest.mark.parametrize(
+    "method, expected_impact, expected_lp, expected_gate",
+    [
+        ("proposed_lp_only", 0.0, 0.5, True),
+        ("proposed_impact_only", 1.0, 0.0, True),
+        ("proposed_nogate", 1.0, 0.5, False),
+    ],
+)
+def test_factory_applies_proposed_variant_overrides(
+    method: str, expected_impact: float, expected_lp: float, expected_gate: bool
+):
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
 
-    lp_only = create_intrinsic_module(
-        "proposed_lp_only",
-        obs_space,
-        act_space,
-        device="cpu",
-        alpha_impact=0.0,
-        alpha_lp=0.5,
-        gating_enabled=True,
-    )
-    assert isinstance(lp_only, Proposed)
-    assert float(lp_only.alpha_impact) == 0.0
-
-    impact_only = create_intrinsic_module(
-        "proposed_impact_only",
-        obs_space,
-        act_space,
-        device="cpu",
-        alpha_impact=1.0,
-        alpha_lp=0.0,
-        gating_enabled=True,
-    )
-    assert isinstance(impact_only, Proposed)
-    assert float(impact_only.alpha_lp) == 0.0
-
-    nogate = create_intrinsic_module(
-        "proposed_nogate",
+    mod = create_intrinsic_module(
+        method,
         obs_space,
         act_space,
         device="cpu",
@@ -170,13 +154,16 @@ def test_factory_applies_proposed_variant_overrides():
         alpha_lp=0.5,
         gating_enabled=True,
     )
-    assert isinstance(nogate, Proposed)
-    assert bool(getattr(nogate, "gating_enabled", True)) is False
+    assert isinstance(mod, Proposed)
+    assert float(mod.alpha_impact) == expected_impact
+    assert float(mod.alpha_lp) == expected_lp
+    assert bool(getattr(mod, "gating_enabled", True)) is expected_gate
 
 
 def test_factory_passes_ride_knobs():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=float)
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
     act_space = gym.spaces.Discrete(5)
+
     ride = create_intrinsic_module(
         "ride",
         obs_space,
