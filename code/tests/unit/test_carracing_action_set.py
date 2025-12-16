@@ -1,5 +1,6 @@
 import gymnasium as gym
 import numpy as np
+import pytest
 
 from irl.envs.wrappers import CarRacingDiscreteActionWrapper
 
@@ -28,49 +29,29 @@ class _DummyCarEnv(gym.Env):
 
 def test_carracing_default_action_set_has_five_actions():
     env = _DummyCarEnv()
+    wrapped = CarRacingDiscreteActionWrapper(env)
     try:
-        wrapped = CarRacingDiscreteActionWrapper(env)
         assert wrapped.action_space.n == 5
     finally:
         wrapped.close()
 
 
-def test_carracing_custom_action_set_overrides_default():
-    env = _DummyCarEnv()
-    custom = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [-1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 0.5, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.5],
-            [0.0, 0.0, 1.0],
-            [-0.5, 0.5, 0.0],
-            [0.5, 0.5, 0.0],
-            [-0.5, 0.0, 0.5],
-            [0.5, 0.0, 0.5],
-            [0.0, 0.8, 0.2],
-        ],
-        dtype=np.float32,
-    )
-    try:
-        wrapped = CarRacingDiscreteActionWrapper(env, action_set=custom)
-        assert wrapped.action_space.n == custom.shape[0]
-        assert np.allclose(wrapped._action_set, custom.astype(np.float32))
-    finally:
-        wrapped.close()
-
-
-def test_carracing_action_wrapper_accepts_python_lists():
-    env = _DummyCarEnv()
+def test_carracing_custom_action_set_maps_indices():
     custom = [
         [0.0, 0.0, 0.0],
         [-1.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
+        [0.0, 0.5, 0.0],
     ]
+
+    env = _DummyCarEnv()
+    wrapped = CarRacingDiscreteActionWrapper(env, action_set=custom)
     try:
-        wrapped = CarRacingDiscreteActionWrapper(env, action_set=custom)
-        assert wrapped.action_space.n == 3
+        assert wrapped.action_space.n == len(custom)
+        for i, row in enumerate(custom):
+            assert np.allclose(wrapped.action(i), np.asarray(row, dtype=np.float32))
+
+        with pytest.raises(ValueError):
+            wrapped.action(len(custom))
     finally:
         wrapped.close()
