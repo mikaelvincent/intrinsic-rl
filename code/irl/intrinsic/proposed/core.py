@@ -187,7 +187,6 @@ class Proposed(nn.Module):
         N = int(imp_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
-        # bulk_insert matches sequential insert() region-id assignment semantics.
         rids = self.store.bulk_insert(phi_np)
 
         for i in range(N):
