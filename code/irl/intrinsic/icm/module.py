@@ -17,8 +17,6 @@ from irl.utils.torchops import as_tensor, ensure_2d, one_hot
 from .encoder import mlp
 from .heads import ContinuousInverseHead, ForwardHead
 
-# Image observations: accept uint8 or floats in [0,1]; preprocess_image will scale float255.
-
 
 @dataclass
 class ICMConfig:
@@ -76,7 +74,6 @@ class ICM(BaseIntrinsicModule, nn.Module):
 
             cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.phi_dim))
             self.encoder = ConvEncoder(cnn_cfg, in_hw=in_hw)
-
             self._img_pre_cfg = ImagePreprocessConfig(
                 grayscale=False,
                 scale_uint8=True,
