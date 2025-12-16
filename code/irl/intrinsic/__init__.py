@@ -29,7 +29,7 @@ from .factory import (
     update_module,
 )
 from .normalization import RunningRMS
-from .proposed import Proposed
+from .proposed import GLPE
 from .riac import RIAC
 from .ride import RIDE
 
@@ -44,5 +44,5 @@ __all__ = [
     "RunningRMS",
     "RIDE",
     "RIAC",
-    "Proposed",
+    "GLPE",
 ]
