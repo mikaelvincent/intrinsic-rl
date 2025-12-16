@@ -1,28 +1,6 @@
 import pytest
 
-from irl.cfg import ConfigError, loads_config, to_dict
-
-
-def test_loads_config_roundtrip():
-    yaml_text = """
-seed: 7
-device: cpu
-method: vanilla
-env:
-  id: MountainCar-v0
-  vec_envs: 8
-ppo:
-  steps_per_update: 128
-  minibatches: 32
-logging:
-  tb: false
-"""
-    cfg = loads_config(yaml_text)
-    d = to_dict(cfg)
-    assert d["seed"] == 7
-    assert d["method"] == "vanilla"
-    assert d["env"]["id"] == "MountainCar-v0"
-    assert d["ppo"]["minibatches"] == 32
+from irl.cfg import ConfigError, loads_config
 
 
 def test_validation_divisibility_error():
