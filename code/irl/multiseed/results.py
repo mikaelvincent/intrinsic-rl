@@ -1,5 +1,3 @@
-"""Result structures and CSV I/O helpers for multi-seed evaluation."""
-
 from __future__ import annotations
 
 import csv
@@ -13,8 +11,6 @@ from irl.utils.checkpoint import atomic_replace
 
 @dataclass
 class RunResult:
-    """Per-checkpoint (per seed) evaluation record."""
-
     method: str
     env_id: str
     seed: int
@@ -30,7 +26,6 @@ class RunResult:
 
 
 def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
-    """Write per-checkpoint results to CSV using an atomic rename."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -80,7 +75,6 @@ def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
 
 
 def _aggregate(rows: List[RunResult]) -> List[Dict[str, object]]:
-    """Aggregate per-seed rows by (method, env_id)."""
     groups: dict[tuple[str, str], list[RunResult]] = {}
     for r in rows:
         key = (r.method, r.env_id)
@@ -95,26 +89,26 @@ def _aggregate(rows: List[RunResult]) -> List[Dict[str, object]]:
         lens_means = [r.mean_length for r in rs]
         steps = [int(r.ckpt_step) for r in rs]
 
-        agg = {
-            "method": method,
-            "env_id": env_id,
-            "episodes_per_seed": int(rs[0].episodes) if rs else 0,
-            "n_seeds": n,
-            "seeds": ",".join(str(s) for s in seeds),
-            "mean_return_mean": float(mean(means)) if n > 0 else 0.0,
-            "mean_return_std": float(pstdev(means)) if n > 1 else 0.0,
-            "mean_length_mean": float(mean(lens_means)) if n > 0 else 0.0,
-            "mean_length_std": float(pstdev(lens_means)) if n > 1 else 0.0,
-            "step_min": min(steps) if steps else -1,
-            "step_max": max(steps) if steps else -1,
-            "step_mean": int(round(mean(steps))) if steps else -1,
-        }
-        out.append(agg)
+        out.append(
+            {
+                "method": method,
+                "env_id": env_id,
+                "episodes_per_seed": int(rs[0].episodes) if rs else 0,
+                "n_seeds": n,
+                "seeds": ",".join(str(s) for s in seeds),
+                "mean_return_mean": float(mean(means)) if n > 0 else 0.0,
+                "mean_return_std": float(pstdev(means)) if n > 1 else 0.0,
+                "mean_length_mean": float(mean(lens_means)) if n > 0 else 0.0,
+                "mean_length_std": float(pstdev(lens_means)) if n > 1 else 0.0,
+                "step_min": min(steps) if steps else -1,
+                "step_max": max(steps) if steps else -1,
+                "step_mean": int(round(mean(steps))) if steps else -1,
+            }
+        )
     return out
 
 
 def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
-    """Write aggregated summary to CSV using an atomic rename."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -148,7 +142,6 @@ def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
 
 
 def _read_summary_raw(path: Path) -> list[dict]:
-    """Read ``results/summary_raw.csv`` into a list of typed dictionaries."""
     rows: list[dict] = []
     with path.open("r", newline="", encoding="utf-8") as f:
         r = csv.DictReader(f)
@@ -171,7 +164,6 @@ def _read_summary_raw(path: Path) -> list[dict]:
                     }
                 )
             except Exception:
-                # Skip malformed rows; keep going.
                 continue
     return rows
 
@@ -184,13 +176,11 @@ def _values_for_method(
     metric: str,
     latest_per_seed: bool = True,
 ) -> list[float]:
-    """Collect per-seed values for (env, method), optionally using latest step per seed."""
     filt = [r for r in raw if r["env_id"] == env and r["method"] == method]
     if not filt:
         return []
 
     if latest_per_seed:
-        # Keep highest ckpt_step per seed.
         by_seed: dict[int, dict] = {}
         for r in filt:
             sid = int(r["seed"])
