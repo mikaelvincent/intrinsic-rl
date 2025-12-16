@@ -21,8 +21,13 @@ class BaseIntrinsicModule:
         raise NotImplementedError
 
 
-# Late imports avoid circular dependencies (modules import BaseIntrinsicModule).
-from .factory import create_intrinsic_module, compute_intrinsic_batch, is_intrinsic_method, update_module
+# Late imports avoid cycles.
+from .factory import (
+    compute_intrinsic_batch,
+    create_intrinsic_module,
+    is_intrinsic_method,
+    update_module,
+)
 from .normalization import RunningRMS
 from .proposed import Proposed
 from .riac import RIAC
