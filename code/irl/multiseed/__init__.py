@@ -1,9 +1,3 @@
-"""Multi-seed evaluation and statistics utilities.
-
-This subpackage currently hosts the implementation that backs the
-public :mod:`irl.sweep` facade.
-"""
-
 from __future__ import annotations
 
 from .evaluation import (
