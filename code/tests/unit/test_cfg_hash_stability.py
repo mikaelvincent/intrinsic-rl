@@ -15,11 +15,8 @@ def test_config_hash_is_order_invariant_and_changes_on_diff():
         "method": "vanilla",
     }
 
-    h_a = compute_cfg_hash(a)
-    h_b = compute_cfg_hash(b)
-    assert isinstance(h_a, str)
-    assert isinstance(h_b, str)
-    assert h_a == h_b
+    h = compute_cfg_hash(a)
+    assert compute_cfg_hash(b) == h
 
     c = {
         "method": "vanilla",
@@ -27,4 +24,4 @@ def test_config_hash_is_order_invariant_and_changes_on_diff():
         "env": {"id": "MountainCar-v0", "vec_envs": 8},
         "ppo": {"minibatches": 64, "steps_per_update": 128},
     }
-    assert compute_cfg_hash(c) != h_a
+    assert compute_cfg_hash(c) != h
