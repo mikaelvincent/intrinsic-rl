@@ -22,48 +22,26 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="
 
 @app.command("eval-many")
 def cli_eval_many(
-    runs: Optional[List[str]] = typer.Option(
-        None,
-        "--runs",
-        "-r",
-        help=(
-            "Glob(s) to run directories (e.g., 'runs/proposed__BipedalWalker*'). "
-            "May be passed multiple times."
-        ),
-    ),
+    runs: Optional[List[str]] = typer.Option(None, "--runs", "-r"),
     ckpt: Optional[List[Path]] = typer.Option(
         None,
         "--ckpt",
         "-k",
-        help="Explicit checkpoint path(s) to evaluate (can be repeated).",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
     ),
-    episodes: int = typer.Option(10, "--episodes", "-n", help="Episodes per checkpoint."),
-    device: str = typer.Option(
-        "cpu", "--device", "-d", help='Torch device, e.g. "cpu" or "cuda:0".'
-    ),
+    episodes: int = typer.Option(10, "--episodes", "-n"),
+    device: str = typer.Option("cpu", "--device", "-d"),
     out: Path = typer.Option(
         Path("results/summary.csv"),
         "--out",
         "-o",
-        help=("Path to aggregated CSV (summary.csv). A sibling summary_raw.csv is also written."),
         dir_okay=False,
     ),
-    run_patterns: List[str] = typer.Argument(
-        [],
-        help=(
-            "Additional run directory globs or paths.\n\n"
-            "On some shells (notably Windows cmd.exe), a single pattern like "
-            "runs\\*__Env__seed* may be expanded into multiple arguments before "
-            "Typer sees them. Any extra arguments after the options are collected "
-            "here and treated as additional --runs patterns."
-        ),
-    ),
+    run_patterns: List[str] = typer.Argument([]),
 ) -> None:
-    """Evaluate multiple checkpoints (multi-seed) and export CSV summaries."""
     all_run_patterns: List[str] = []
     if runs:
         all_run_patterns.extend(runs)
@@ -111,45 +89,19 @@ def cli_stats(
         Path("results/summary_raw.csv"),
         "--summary-raw",
         "-s",
-        help="Path to per-checkpoint CSV (from eval-many).",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
     ),
-    env: str = typer.Option(
-        ..., "--env", "-e", help="Environment id to filter (e.g., BipedalWalker-v3)."
-    ),
-    method_a: str = typer.Option(
-        ..., "--method-a", "-a", help="First method name (e.g., proposed)."
-    ),
-    method_b: str = typer.Option(
-        ..., "--method-b", "-b", help="Second method name (e.g., ride)."
-    ),
-    metric: str = typer.Option(
-        "mean_return",
-        "--metric",
-        "-m",
-        help="Column from summary_raw to compare (default: mean_return).",
-    ),
-    boot: int = typer.Option(
-        2000, "--boot", "-B", help="Bootstrap draws for CIs (0 disables bootstrap)."
-    ),
-    alternative: str = typer.Option(
-        "two-sided",
-        "--alt",
-        help=(
-            'Alternative hypothesis: "two-sided" | "greater" | "less". '
-            '"greater" tests if method-a tends larger than method-b.'
-        ),
-    ),
-    latest_per_seed: bool = typer.Option(
-        True,
-        "--latest-per-seed/--all-checkpoints",
-        help="Use the latest ckpt per seed (default) or all rows.",
-    ),
+    env: str = typer.Option(..., "--env", "-e"),
+    method_a: str = typer.Option(..., "--method-a", "-a"),
+    method_b: str = typer.Option(..., "--method-b", "-b"),
+    metric: str = typer.Option("mean_return", "--metric", "-m"),
+    boot: int = typer.Option(2000, "--boot", "-B"),
+    alternative: str = typer.Option("two-sided", "--alt"),
+    latest_per_seed: bool = typer.Option(True, "--latest-per-seed/--all-checkpoints"),
 ) -> None:
-    """Compare two methods with Mann–Whitney U and bootstrap CIs."""
     alt = alternative.strip().lower()
     if alt not in ("two-sided", "greater", "less"):
         raise typer.BadParameter("--alt must be one of: two-sided, greater, less")
@@ -158,12 +110,8 @@ def cli_stats(
     if not raw:
         raise typer.BadParameter(f"No rows parsed from {summary_raw}")
 
-    x = _values_for_method(
-        raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed
-    )
-    y = _values_for_method(
-        raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed
-    )
+    x = _values_for_method(raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed)
+    y = _values_for_method(raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed)
 
     if not x:
         raise typer.BadParameter(f"No rows for env={env!r}, method={method_a!r}")
@@ -202,11 +150,9 @@ def cli_stats(
     )
     typer.echo(
         f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
-        f"(Δ={res.median_x - res.median_y:+.3f})"
+        f"(Δ={res.median_x - res.mean_y:+.3f})"
     )
-    typer.echo(
-        f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)"
-    )
+    typer.echo(f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)")
 
     if boot > 0:
         typer.echo(f"\nBootstrap {boot}× percentile CIs (two-sided 95%):")
