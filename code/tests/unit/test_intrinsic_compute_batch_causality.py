@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from irl.intrinsic.icm import ICMConfig
-from irl.intrinsic.proposed import Proposed
+from irl.intrinsic.proposed import GLPE
 from irl.intrinsic.riac import RIAC
 
 
@@ -21,7 +21,7 @@ def _make_vector_spaces(obs_dim: int = 4, n_actions: int = 3):
     return obs_space, act_space
 
 
-def test_proposed_compute_batch_matches_sequential_compute():
+def test_glpe_compute_batch_matches_sequential_compute():
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
     obs_space, act_space = _make_vector_spaces(obs_dim=4, n_actions=3)
@@ -41,8 +41,8 @@ def test_proposed_compute_batch_matches_sequential_compute():
         gating_enabled=True,
     )
 
-    mod_step = Proposed(obs_space, act_space, **kwargs)
-    mod_batch = Proposed(obs_space, act_space, **kwargs)
+    mod_step = GLPE(obs_space, act_space, **kwargs)
+    mod_batch = GLPE(obs_space, act_space, **kwargs)
     mod_batch.load_state_dict(mod_step.state_dict())
 
     B = 64
