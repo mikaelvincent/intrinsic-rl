@@ -33,7 +33,13 @@ def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int
     return env_id, method, seed
 
 
-def run_eval_suite(runs_root: Path, results_dir: Path, episodes: int, device: str) -> None:
+def run_eval_suite(
+    runs_root: Path, results_dir: Path, episodes: int, device: str, policy_mode: str = "mode"
+) -> None:
+    pm = str(policy_mode).strip().lower()
+    if pm not in {"mode", "sample"}:
+        raise typer.BadParameter("--policy must be one of: mode, sample")
+
     root = runs_root.resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
@@ -115,6 +121,7 @@ def run_eval_suite(runs_root: Path, results_dir: Path, episodes: int, device: st
                 device=device,
                 save_traj=True,
                 traj_out_dir=traj_out_dir,
+                policy_mode=pm,
             )
 
             results.append(
