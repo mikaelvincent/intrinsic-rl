@@ -12,12 +12,10 @@ from torch.nn import functional as F
 
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput, Transition
 from irl.intrinsic.icm import ICM, ICMConfig
-from irl.intrinsic.regions import KDTreeRegionStore
 from irl.intrinsic.normalization import RunningRMS
+from irl.intrinsic.regions import KDTreeRegionStore
 from irl.utils.torchops import as_tensor
 from . import diagnostics as _diag
-
-# Images: accept uint8 or floats in [0,1]; float inputs with max>1.5 are treated as 0..255 and scaled by preprocessing.
 
 
 @dataclass
@@ -124,7 +122,6 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         N = int(err_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
-        # Preserve sequential compute() semantics (ordered per-sample updates) with a single KD-tree routing pass.
         rids = self.store.bulk_insert(phi_np)
 
         for i in range(N):
