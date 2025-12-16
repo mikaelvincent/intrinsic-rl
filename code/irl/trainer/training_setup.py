@@ -1,17 +1,3 @@
-"""Training session construction for PPO training.
-
-This module centralizes the setup phase of the PPO trainer:
-- unified seeding (Python, NumPy, and PyTorch)
-- MuJoCo headless rendering hints (MUJOCO_GL)
-- run directory + checkpoint manager + optional resume verification
-- environment, models, optimizers, and intrinsic module construction
-- logging initialization and observation normalizer bootstrap
-- checkpoint state restoration
-
-The logic is intentionally kept identical to the previous monolithic
-implementation in ``irl.trainer.loop``; only project structure changes.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,10 +6,11 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
-from torch.optim import Adam  # persistent PPO optimizers
+from torch.optim import Adam
 
 from irl.cfg import Config, to_dict
 from irl.envs import EnvManager
+from irl.intrinsic import RunningRMS, create_intrinsic_module, is_intrinsic_method
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.checkpoint import CheckpointManager, compute_cfg_hash
 from irl.utils.determinism import seed_everything
@@ -37,11 +24,6 @@ from irl.utils.loggers import (
     log_resume_optimizer_warning,
     log_resume_state_restored,
 )
-from irl.intrinsic import (  # type: ignore
-    RunningRMS,
-    create_intrinsic_module,
-    is_intrinsic_method,
-)
 
 from .build import default_run_dir, ensure_mujoco_gl, single_spaces
 from .obs_norm import RunningObsNorm
@@ -50,16 +32,12 @@ from .runtime_utils import _is_image_space, _move_optimizer_state_to_device
 
 @dataclass
 class PPOOptimizers:
-    """Persistent PPO optimizers (policy + value)."""
-
     policy: Adam
     value: Adam
 
 
 @dataclass
 class IntrinsicContext:
-    """Intrinsic module wiring and normalization metadata."""
-
     module: Optional[Any]
     method: str
     eta: float
@@ -71,8 +49,6 @@ class IntrinsicContext:
 
 @dataclass
 class TrainingSession:
-    """All objects required to run the PPO training loop."""
-
     run_dir: Path
     device: torch.device
 
@@ -98,11 +74,6 @@ class TrainingSession:
 
 
 def _resolve_deterministic_flag(cfg: Config) -> bool:
-    """Best-effort extraction of cfg.exp.deterministic.
-
-    Mirrors the original trainer behavior, including defensive exception
-    handling to avoid failing on missing config fields.
-    """
     deterministic = False
     try:
         exp_cfg = getattr(cfg, "exp", None)
@@ -113,10 +84,7 @@ def _resolve_deterministic_flag(cfg: Config) -> bool:
     return deterministic
 
 
-def _init_run_dir_and_ckpt(
-    cfg: Config, run_dir: Optional[Path]
-) -> Tuple[Path, CheckpointManager]:
-    """Resolve run directory and create the checkpoint manager."""
+def _init_run_dir_and_ckpt(cfg: Config, run_dir: Optional[Path]) -> Tuple[Path, CheckpointManager]:
     resolved = Path(run_dir) if run_dir is not None else default_run_dir(cfg)
     ckpt = CheckpointManager(
         resolved,
@@ -129,15 +97,12 @@ def _init_run_dir_and_ckpt(
 def _maybe_load_resume_payload(
     cfg: Config, ckpt: CheckpointManager, resume: bool
 ) -> Tuple[Optional[dict], int]:
-    """Optionally load and verify the latest checkpoint payload."""
     resume_payload: Optional[dict] = None
     resume_step: int = 0
 
     if resume:
         try:
-            # Load on CPU first (cheaper / device-agnostic), verify config hash early.
             payload_cpu, step_cpu = ckpt.load_latest(map_location="cpu")
-            # Verify config hash (prefer stored cfg_hash; fallback to hash of embedded cfg).
             current_hash = compute_cfg_hash(to_dict(cfg))
             stored_hash = payload_cpu.get("cfg_hash")
             if stored_hash is None:
@@ -156,14 +121,12 @@ def _maybe_load_resume_payload(
         except FileNotFoundError:
             log_resume_no_checkpoint()
         except Exception:
-            # Fail loudly on intentional config mismatches; user can opt-out via resume=False.
             raise
 
     return resume_payload, resume_step
 
 
 def _build_env(cfg: Config, *, logger) -> Any:
-    """Create and return the environment (vectorized or single)."""
     manager = EnvManager(
         env_id=cfg.env.id,
         num_envs=cfg.env.vec_envs,
@@ -195,13 +158,12 @@ def _build_intrinsic(
     device: torch.device,
     logger,
 ) -> Tuple[Optional[Any], bool, str, Optional[bool], str, float, RunningRMS]:
-    """Construct intrinsic module and associated normalization metadata."""
     method_l = str(cfg.method).lower()
     eta = float(cfg.intrinsic.eta)
     use_intrinsic = is_intrinsic_method(method_l) and eta > 0.0
     intrinsic_module = None
     intrinsic_norm_mode = "none"
-    intrinsic_outputs_normalized_flag: Optional[bool] = None  # module-owned vs trainer RMS
+    intrinsic_outputs_normalized_flag: Optional[bool] = None
 
     if is_intrinsic_method(method_l):
         fail_on_intrinsic_error = bool(getattr(cfg.intrinsic, "fail_on_error", True))
@@ -218,21 +180,17 @@ def _build_intrinsic(
                 depth_max=int(cfg.intrinsic.depth_max),
                 ema_beta_long=float(cfg.intrinsic.ema_beta_long),
                 ema_beta_short=float(cfg.intrinsic.ema_beta_short),
-                # gating thresholds
                 gate_tau_lp_mult=float(cfg.intrinsic.gate.tau_lp_mult),
                 gate_tau_s=float(cfg.intrinsic.gate.tau_s),
                 gate_hysteresis_up_mult=float(cfg.intrinsic.gate.hysteresis_up_mult),
                 gate_min_consec_to_gate=int(cfg.intrinsic.gate.min_consec_to_gate),
                 gate_min_regions_for_gating=int(cfg.intrinsic.gate.min_regions_for_gating),
-                # normalization & gating toggles (Proposed)
                 normalize_inside=bool(cfg.intrinsic.normalize_inside),
                 gating_enabled=bool(cfg.intrinsic.gate.enabled),
             )
             if not use_intrinsic:
                 logger.warning(
-                    "Method %r selected but intrinsic.eta=%.3g; intrinsic module will be "
-                    "initialized but intrinsic rewards are disabled (eta=0). Training will "
-                    "use extrinsic rewards only.",
+                    "Method %r selected but intrinsic.eta=%.3g; intrinsic rewards disabled (eta=0).",
                     method_l,
                     eta,
                 )
@@ -244,13 +202,10 @@ def _build_intrinsic(
                     f"{method_l!r}. Set intrinsic.fail_on_error=False to continue without "
                     "intrinsic rewards."
                 ) from exc
-            logger.error(
-                "intrinsic.fail_on_error is False; continuing without intrinsic rewards."
-            )
+            logger.error("intrinsic.fail_on_error is False; continuing without intrinsic rewards.")
             intrinsic_module = None
             use_intrinsic = False
 
-    # Work out which RMS path is active for intrinsic (if any).
     if intrinsic_module is not None:
         try:
             intrinsic_outputs_normalized_flag = bool(
@@ -288,9 +243,8 @@ def _log_reset_diagnostics(
     method_l: str,
     intrinsic_outputs_normalized_flag: Optional[bool],
 ) -> Any:
-    """Reset env and print one-time diagnostics hints."""
-    printed_dr_hint = False  # one-time DR diagnostics notice (if provided by wrapper)
-    printed_intr_norm_hint = False  # one-time intrinsic normalization hint
+    printed_dr_hint = False
+    printed_intr_norm_hint = False
 
     obs, info = env.reset()
     try:
@@ -302,7 +256,6 @@ def _log_reset_diagnostics(
                 b2 = int(diag.get("box2d", 0))
                 msg = f"mujoco={mj}, box2d={b2}"
             elif isinstance(diag, (list, tuple)):
-                # Vector envs may return per-env diagnostics; aggregate counts
                 mj = 0
                 b2 = 0
                 n = 0
@@ -317,10 +270,8 @@ def _log_reset_diagnostics(
             log_domain_randomization(msg)
             printed_dr_hint = True
     except Exception:
-        # Diagnostics are best-effort; ignore unexpected info formats
         pass
 
-    # Print once a concise, method-aware hint about intrinsic normalization.
     if intrinsic_module is not None and not printed_intr_norm_hint:
         try:
             outputs_norm_flag = (
@@ -332,9 +283,6 @@ def _log_reset_diagnostics(
             printed_intr_norm_hint = True
         except Exception:
             pass
-
-    # Print once if intrinsic module emits raw outputs (trainer will normalize)
-    # (kept comment for backwards readability; behavior is now symmetric for both paths.)
 
     return obs
 
@@ -355,7 +303,6 @@ def _restore_from_checkpoint(
     device: torch.device,
     logger,
 ) -> Tuple[int, int]:
-    """Restore model/module/optimizer state from a resume payload."""
     global_step = 0
     update_idx = 0
 
@@ -363,22 +310,16 @@ def _restore_from_checkpoint(
         return global_step, update_idx
 
     try:
-        # Policy / Value
         policy.load_state_dict(resume_payload["policy"])
         value.load_state_dict(resume_payload["value"])
     except Exception:
-        logger.warning(
-            "Could not load policy/value weights from checkpoint; continuing with "
-            "fresh initialization."
-        )
+        logger.warning("Could not load policy/value weights from checkpoint; using fresh init.")
 
-    # Intrinsic global normalizer
     try:
         int_rms.load_state_dict(resume_payload.get("intrinsic_norm", {}))
     except Exception:
         pass
 
-    # Observation normalizer (only for vector observations)
     try:
         if not is_image and resume_payload.get("obs_norm") is not None and obs_norm is not None:
             on = resume_payload["obs_norm"]
@@ -390,17 +331,15 @@ def _restore_from_checkpoint(
     except Exception:
         pass
 
-    # Intrinsic module state (if present & compatible)
     try:
         intr = resume_payload.get("intrinsic")
         if intrinsic_module is not None and isinstance(intr, dict):
             if intr.get("method") == method_l and "state_dict" in intr:
-                intrinsic_module.load_state_dict(intr["state_dict"])  # type: ignore[attr-defined]
-                intrinsic_module.to(device)  # type: ignore[attr-defined]
+                intrinsic_module.load_state_dict(intr["state_dict"])
+                intrinsic_module.to(device)
     except Exception:
         log_resume_intrinsic_warning(method_l)
 
-    # Load optimizer states (if present) and move tensors to correct device
     try:
         opt_payload = resume_payload.get("optimizers", {})
         pol_state = opt_payload.get("policy", None)
@@ -414,7 +353,6 @@ def _restore_from_checkpoint(
     except Exception:
         log_resume_optimizer_warning()
 
-    # Counters
     global_step = int(resume_step)
     try:
         update_idx = int((resume_payload.get("meta") or {}).get("updates", update_idx))
@@ -433,23 +371,17 @@ def build_training_session(
     resume: bool,
     logger,
 ) -> TrainingSession:
-    """Build all runtime objects needed for PPO training."""
-    # Unified seeding: Python, NumPy, and PyTorch.
     deterministic = _resolve_deterministic_flag(cfg)
     seed_everything(int(cfg.seed), deterministic=deterministic)
 
-    # Ensure sensible MUJOCO_GL for MuJoCo tasks (no-op for others)
     try:
         ensure_mujoco_gl(cfg.env.id)
     except Exception:
-        # Defensive: never hard-fail on an advisory utility
         pass
 
-    # ---- Resolve run directory & (optional) resume payload ----
     run_dir_resolved, ckpt = _init_run_dir_and_ckpt(cfg, run_dir)
     resume_payload, resume_step = _maybe_load_resume_payload(cfg, ckpt, resume)
 
-    # --- Env & models ---
     env = _build_env(cfg, logger=logger)
     obs_space, act_space = single_spaces(env)
 
@@ -458,7 +390,6 @@ def build_training_session(
     policy = PolicyNetwork(obs_space, act_space).to(device)
     value = ValueNetwork(obs_space).to(device)
 
-    # Persistent PPO optimizers (reused each update, saved in checkpoints)
     pol_opt = Adam(policy.parameters(), lr=float(cfg.ppo.learning_rate))
     val_opt = Adam(value.parameters(), lr=float(cfg.ppo.learning_rate))
 
@@ -478,11 +409,9 @@ def build_training_session(
         logger=logger,
     )
 
-    # --- Run dir, logging, checkpoints ---
     ml = MetricLogger(run_dir_resolved, cfg.logging)
     ml.log_hparams(to_dict(cfg))
 
-    # --- Reset env(s) & init norm ---
     obs = _log_reset_diagnostics(
         env=env,
         intrinsic_module=intrinsic_module,
@@ -497,7 +426,6 @@ def build_training_session(
         first_batch = obs if B > 1 else obs[None, :]
         obs_norm.update(first_batch)
 
-    # --- If resuming: restore state from checkpoint payload ---
     global_step, update_idx = _restore_from_checkpoint(
         resume_payload=resume_payload,
         resume_step=resume_step,
