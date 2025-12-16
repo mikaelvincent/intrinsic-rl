@@ -1,17 +1,3 @@
-"""Sweep and multi-seed evaluation, aggregation, and statistics facade.
-
-This module re-exports the public API from the internal helpers in
-:mod:`irl.multiseed.results`, :mod:`irl.multiseed.run_discovery`, and
-:mod:`irl.multiseed.cli`.
-
-Existing imports such as::
-
-    from irl.multiseed.evaluation import RunResult, _aggregate, _find_latest_ckpt
-    from irl.multiseed.evaluation import app, cli_eval_many, cli_stats, main
-
-continue to work without modification.
-"""
-
 from __future__ import annotations
 
 from .results import (
