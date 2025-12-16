@@ -8,11 +8,6 @@ from typing import Mapping, Optional
 
 from irl.cfg.schema import LoggingConfig
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except Exception:
-    SummaryWriter = None
-
 _DEFAULT_LOGGER_NAME = "irl"
 
 
@@ -107,33 +102,6 @@ def log_domain_randomization(summary: str) -> None:
     get_logger("env").info("Domain randomization applied on env.reset(): %s", summary)
 
 
-class TBLogger:
-    def __init__(self, log_dir: Path) -> None:
-        self._writer = None
-        if SummaryWriter is None:
-            raise RuntimeError("TensorBoard SummaryWriter not available. Install 'tensorboard'.")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._writer = SummaryWriter(log_dir=str(log_dir))
-
-    def log_scalars(self, metrics: Mapping[str, float], step: int) -> None:
-        assert self._writer is not None
-        for k, v in metrics.items():
-            try:
-                self._writer.add_scalar(k, float(v), global_step=step)
-            except Exception:
-                pass
-
-    def add_text(self, tag: str, text: str, step: int = 0) -> None:
-        assert self._writer is not None
-        self._writer.add_text(tag, text, global_step=step)
-
-    def close(self) -> None:
-        if self._writer is not None:
-            self._writer.flush()
-            self._writer.close()
-            self._writer = None
-
-
 class CSVLogger:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -184,18 +152,10 @@ class MetricLogger:
         self.csv_path = self.run_dir / "logs" / "scalars.csv"
         self.csv = CSVLogger(self.csv_path)
 
-        self.tb: Optional[TBLogger] = None
-        if bool(cfg.tb):
-            tb_dir = self.run_dir / "tb"
-            if SummaryWriter is not None:
-                self.tb = TBLogger(tb_dir)
-
+        self.tb = None
         self._last_csv_write_step: Optional[int] = None
 
     def log(self, step: int, **metrics: float) -> None:
-        if self.tb is not None:
-            self.tb.log_scalars(metrics, step)
-
         interval = int(max(1, self.cfg.csv_interval))
         s = int(step)
         last = self._last_csv_write_step
@@ -205,7 +165,6 @@ class MetricLogger:
             if s == 0 or s >= interval:
                 should_write_csv = True
         else:
-            # Threshold cadence handles step jumps.
             if s >= last + interval:
                 should_write_csv = True
 
@@ -214,14 +173,7 @@ class MetricLogger:
             self._last_csv_write_step = s
 
     def log_hparams(self, params: Mapping[str, object]) -> None:
-        if self.tb is None:
-            return
-        text_lines = [f"{k}: {v}" for k, v in params.items()]
-        self.tb.add_text("hparams", "\n".join(text_lines), step=0)
+        return
 
     def close(self) -> None:
-        try:
-            self.csv.close()
-        finally:
-            if self.tb is not None:
-                self.tb.close()
+        self.csv.close()
