@@ -74,7 +74,6 @@ class EvaluationConfig:
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    tb: bool = True
     csv_interval: int = 10_000
     checkpoint_interval: int = 100_000
     checkpoint_max_to_keep: int | None = None
