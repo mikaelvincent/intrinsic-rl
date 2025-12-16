@@ -27,12 +27,16 @@ class _DummyEvalEnv(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self._t = 0
-        obs = self._rng.standard_normal(self.observation_space.shape).astype(np.float32)
+        obs = self._rng.uniform(
+            low=-1.0, high=1.0, size=self.observation_space.shape
+        ).astype(np.float32)
         return obs, {}
 
     def step(self, action):
         self._t += 1
-        obs = self._rng.standard_normal(self.observation_space.shape).astype(np.float32)
+        obs = self._rng.uniform(
+            low=-1.0, high=1.0, size=self.observation_space.shape
+        ).astype(np.float32)
         reward = float(action)
         terminated = self._t >= 5
         truncated = False
