@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from irl.intrinsic.icm import ICMConfig
-from irl.intrinsic.proposed import Proposed
+from irl.intrinsic.proposed import GLPE
 
 
 def _rand_batch(obs_dim: int, n_actions: int, B: int, seed: int):
@@ -14,13 +14,13 @@ def _rand_batch(obs_dim: int, n_actions: int, B: int, seed: int):
     return obs, next_obs, actions
 
 
-def test_proposed_normalize_inside_changes_output():
+def test_glpe_normalize_inside_changes_output():
     torch.manual_seed(0)
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
     icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
 
-    mod_raw = Proposed(
+    mod_raw = GLPE(
         obs_space,
         act_space,
         device="cpu",
@@ -28,7 +28,7 @@ def test_proposed_normalize_inside_changes_output():
         normalize_inside=False,
         gating_enabled=False,
     )
-    mod_norm = Proposed(
+    mod_norm = GLPE(
         obs_space,
         act_space,
         device="cpu",
