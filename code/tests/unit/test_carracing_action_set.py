@@ -27,30 +27,26 @@ class _DummyCarEnv(gym.Env):
         return obs, 0.0, False, False, {}
 
 
-def test_carracing_default_action_set_has_five_actions():
+def test_carracing_action_wrapper_maps_actions():
     env = _DummyCarEnv()
-    wrapped = CarRacingDiscreteActionWrapper(env)
     try:
+        wrapped = CarRacingDiscreteActionWrapper(env)
         assert wrapped.action_space.n == 5
     finally:
         wrapped.close()
 
-
-def test_carracing_custom_action_set_maps_indices():
     custom = [
         [0.0, 0.0, 0.0],
         [-1.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
         [0.0, 0.5, 0.0],
     ]
-
     env = _DummyCarEnv()
-    wrapped = CarRacingDiscreteActionWrapper(env, action_set=custom)
     try:
+        wrapped = CarRacingDiscreteActionWrapper(env, action_set=custom)
         assert wrapped.action_space.n == len(custom)
         for i, row in enumerate(custom):
             assert np.allclose(wrapped.action(i), np.asarray(row, dtype=np.float32))
-
         with pytest.raises(ValueError):
             wrapped.action(len(custom))
     finally:
