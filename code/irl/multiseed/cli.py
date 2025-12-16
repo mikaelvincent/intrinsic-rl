@@ -1,8 +1,5 @@
-"""Typer CLI for multi-seed evaluation and statistics."""
-
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import List, Optional
 
@@ -52,9 +49,7 @@ def cli_eval_many(
         Path("results/summary.csv"),
         "--out",
         "-o",
-        help=(
-            "Path to aggregated CSV (summary.csv). A sibling summary_raw.csv is also written."
-        ),
+        help=("Path to aggregated CSV (summary.csv). A sibling summary_raw.csv is also written."),
         dir_okay=False,
     ),
     run_patterns: List[str] = typer.Argument(
@@ -69,7 +64,6 @@ def cli_eval_many(
     ),
 ) -> None:
     """Evaluate multiple checkpoints (multi-seed) and export CSV summaries."""
-    # Merge explicit --runs and any trailing positional patterns (for Windows globbing).
     all_run_patterns: List[str] = []
     if runs:
         all_run_patterns.extend(runs)
@@ -82,28 +76,23 @@ def cli_eval_many(
 
     typer.echo(f"[info] Found {len(ckpts)} checkpoint(s). Starting evaluation...")
 
-    # Evaluate each checkpoint deterministically
     results: list[RunResult] = []
     for i, c in enumerate(ckpts, start=1):
         typer.echo(f"  [{i}/{len(ckpts)}] {c}")
         try:
-            res = _evaluate_ckpt(c, episodes=episodes, device=device)
-            results.append(res)
+            results.append(_evaluate_ckpt(c, episodes=episodes, device=device))
         except Exception as exc:
             typer.echo(f"[warning] Failed to evaluate {c}: {exc}")
 
     if not results:
         raise typer.Exit(code=1)
 
-    # Write raw per-checkpoint results
     raw_path = out.parent / "summary_raw.csv"
     _write_raw_csv(results, raw_path)
 
-    # Aggregate and write summary.csv
     agg = _aggregate(results)
     _write_summary_csv(agg, out)
 
-    # Short console report
     typer.echo("\n[green]Aggregation complete[/green]")
     typer.echo(f"Per-checkpoint results: {raw_path}")
     typer.echo(f"Aggregated summary    : {out}")
@@ -181,13 +170,12 @@ def cli_stats(
     if not y:
         raise typer.BadParameter(f"No rows for env={env!r}, method={method_b!r}")
 
-    res = mannwhitney_u(x, y, alternative=alt)  # MWU (normal approx + tie corr)
+    res = mannwhitney_u(x, y, alternative=alt)
 
-    # Bootstrap CIs for differences in mean and median.
-    def diff_mean(a, b):  # noqa: ANN001 - simple inline for bootstrap
+    def diff_mean(a, b):
         return float(float(sum(a)) / len(a) - float(sum(b)) / len(b))
 
-    def diff_median(a, b):  # noqa: ANN001
+    def diff_median(a, b):
         import numpy as _np
 
         return float(_np.median(a) - _np.median(b))
@@ -203,7 +191,6 @@ def cli_stats(
         else (res.median_x - res.median_y, float("nan"), float("nan"))
     )
 
-    # Pretty report
     typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
     typer.echo(f"Groups: {method_a} (n={res.n_x}) vs {method_b} (n={res.n_y})")
     typer.echo(
@@ -235,5 +222,4 @@ def cli_stats(
 
 
 def main() -> None:
-    """Entry point when invoking this module as a script."""
     app()
