@@ -12,48 +12,20 @@ import pandas as pd
 import typer
 
 from irl.utils.checkpoint import atomic_replace
-from .data import AggregateResult, _aggregate_runs, _ensure_parent, _expand_run_dirs, _parse_run_name
-from .figures import plot_normalized_summary, plot_trajectory_heatmap
+from .data import _aggregate_runs, _ensure_parent, _expand_run_dirs
+from .figures import plot_normalized_summary
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
 
 @app.command("curves")
 def cli_curves(
-    runs: List[str] = typer.Option(
-        ...,
-        "--runs",
-        "-r",
-        help='Glob(s) to run directories (e.g., "runs/proposed__BipedalWalker*"). '
-        "You may pass this option multiple times.",
-    ),
-    metric: str = typer.Option(
-        "reward_total_mean",
-        "--metric",
-        "-m",
-        help="Column to plot from scalars.csv (default: reward_total_mean).",
-    ),
-    smooth: int = typer.Option(
-        1,
-        "--smooth",
-        "-s",
-        help="Moving-average window (in logged points). 1 disables smoothing.",
-    ),
-    shade: bool = typer.Option(
-        False,
-        "--shade/--no-shade",
-        help="Ignored (std shading disabled).",
-    ),
-    label: Optional[str] = typer.Option(
-        None, "--label", "-l", help="Legend label (defaults to method/env hint if available)."
-    ),
-    out: Path = typer.Option(
-        Path("results/curve.png"),
-        "--out",
-        "-o",
-        help="Output image path (PNG).",
-        dir_okay=False,
-    ),
+    runs: List[str] = typer.Option(..., "--runs", "-r"),
+    metric: str = typer.Option("reward_total_mean", "--metric", "-m"),
+    smooth: int = typer.Option(1, "--smooth", "-s"),
+    shade: bool = typer.Option(False, "--shade/--no-shade"),
+    label: Optional[str] = typer.Option(None, "--label", "-l"),
+    out: Path = typer.Option(Path("results/curve.png"), "--out", "-o", dir_okay=False),
 ) -> None:
     run_dirs = _expand_run_dirs(runs)
     if not run_dirs:
@@ -95,48 +67,15 @@ def cli_curves(
 
 @app.command("overlay")
 def cli_overlay(
-    group: List[str] = typer.Option(
-        ...,
-        "--group",
-        "-g",
-        help="One group per option; value is comma-separated glob(s) "
-        '(e.g., --group "runs/proposed__BipedalWalker*" '
-        '--group "runs/ride__BipedalWalker*,runs/rnd__BipedalWalker*").',
-    ),
-    labels: Optional[List[str]] = typer.Option(
-        None,
-        "--labels",
-        "-l",
-        help="Optional labels per group (repeat to match number of --group entries).",
-    ),
-    metric: str = typer.Option(
-        "reward_total_mean",
-        "--metric",
-        "-m",
-        help="Column to plot from scalars.csv (default: reward_total_mean).",
-    ),
-    smooth: int = typer.Option(
-        1,
-        "--smooth",
-        "-s",
-        help="Moving-average window (in logged points). 1 disables smoothing.",
-    ),
-    shade: bool = typer.Option(
-        False,
-        "--shade/--no-shade",
-        help="Ignored (std shading disabled).",
-    ),
-    out: Path = typer.Option(
-        Path("results/overlay.png"),
-        "--out",
-        "-o",
-        help="Output image path (PNG).",
-        dir_okay=False,
-    ),
+    group: List[str] = typer.Option(..., "--group", "-g"),
+    labels: Optional[List[str]] = typer.Option(None, "--labels", "-l"),
+    metric: str = typer.Option("reward_total_mean", "--metric", "-m"),
+    smooth: int = typer.Option(1, "--smooth", "-s"),
+    shade: bool = typer.Option(False, "--shade/--no-shade"),
+    out: Path = typer.Option(Path("results/overlay.png"), "--out", "-o", dir_okay=False),
 ) -> None:
     if not group:
         raise typer.BadParameter("Provide at least one --group.")
-
     if labels is not None and len(labels) != len(group):
         raise typer.BadParameter("--labels count must match the number of --group entries.")
 
@@ -173,33 +112,10 @@ def cli_overlay(
 
 @app.command("bars")
 def cli_bars(
-    summary: Path = typer.Option(
-        Path("results/summary.csv"),
-        "--summary",
-        "-s",
-        help="Path to aggregated summary CSV produced by `irl.sweep eval-many`.",
-        exists=True,
-        dir_okay=False,
-    ),
-    env: Optional[str] = typer.Option(
-        None,
-        "--env",
-        "-e",
-        help="Filter by env_id (e.g., BipedalWalker-v3). If omitted, plots all envs (grouped by env).",
-    ),
-    topk: int = typer.Option(
-        0,
-        "--topk",
-        "-k",
-        help="If >0 and env is omitted, keeps only the top-K (by mean_return_mean) rows per env.",
-    ),
-    out: Path = typer.Option(
-        Path("results/bars.png"),
-        "--out",
-        "-o",
-        help="Output image path (PNG).",
-        dir_okay=False,
-    ),
+    summary: Path = typer.Option(Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False),
+    env: Optional[str] = typer.Option(None, "--env", "-e"),
+    topk: int = typer.Option(0, "--topk", "-k"),
+    out: Path = typer.Option(Path("results/bars.png"), "--out", "-o", dir_okay=False),
 ) -> None:
     df = pd.read_csv(summary)
     required = {"method", "env_id", "mean_return_mean"}
@@ -252,26 +168,9 @@ def cli_bars(
 
 @app.command("bars-normalized")
 def cli_bars_normalized(
-    summary: Path = typer.Option(
-        Path("results/summary.csv"),
-        "--summary",
-        "-s",
-        help="Path to aggregated summary CSV produced by `irl.sweep eval-many`.",
-        exists=True,
-        dir_okay=False,
-    ),
-    out: Path = typer.Option(
-        Path("results/normalized_scores.png"),
-        "--out",
-        "-o",
-        help="Output image path (PNG).",
-        dir_okay=False,
-    ),
-    highlight: str = typer.Option(
-        "proposed",
-        "--highlight",
-        help="Method name to highlight with a distinct color.",
-    ),
+    summary: Path = typer.Option(Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False),
+    out: Path = typer.Option(Path("results/normalized_scores.png"), "--out", "-o", dir_okay=False),
+    highlight: str = typer.Option("proposed", "--highlight"),
 ) -> None:
     plot_normalized_summary(summary, out, highlight_method=highlight)
     typer.echo(f"[green]Saved normalized bars[/green] to {out}")
