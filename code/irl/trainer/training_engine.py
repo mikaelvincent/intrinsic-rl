@@ -470,20 +470,15 @@ def run_training_loop(
 
             ENTROPY_MAX_SAMPLES = 1024
             total_samples = int(T * B)
-            want_update_entropy = (ml.tb is not None) or (total_samples <= ENTROPY_MAX_SAMPLES)
 
             ent_mean_update = float("nan")
-            if want_update_entropy:
-                if total_samples > ENTROPY_MAX_SAMPLES:
-                    idx = np.linspace(0, total_samples - 1, ENTROPY_MAX_SAMPLES, dtype=np.int64)
-                    obs_subset = obs_flat_for_ppo[idx]
-                else:
-                    obs_subset = obs_flat_for_ppo
-
+            if total_samples <= ENTROPY_MAX_SAMPLES:
                 if is_image:
-                    ent_mean_update = float(policy.entropy(obs_subset).mean().item())
+                    ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
                 else:
-                    obs_flat_t = torch.as_tensor(obs_subset, device=device, dtype=torch.float32)
+                    obs_flat_t = torch.as_tensor(
+                        obs_flat_for_ppo, device=device, dtype=torch.float32
+                    )
                     ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
 
         log_payload = {
