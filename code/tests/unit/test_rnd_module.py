@@ -25,25 +25,27 @@ def _rand_images(B: int, H: int, W: int, C: int, seed: int) -> np.ndarray:
     ],
     ids=["vector", "image"],
 )
-def test_rnd_compute_batch_shapes(obs_space):
+def test_rnd_compute_batch_uses_next_obs(obs_space):
     rnd = RND(obs_space, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
 
+    B = 10
     if len(obs_space.shape) == 1:
         D = int(obs_space.shape[0])
-        obs = _rand_obs(D, B=10, seed=1)
-        next_obs = _rand_obs(D, B=10, seed=2)
+        obs = _rand_obs(D, B=B, seed=1)
+        next_obs = _rand_obs(D, B=B, seed=2)
     else:
         H, W, C = (int(x) for x in obs_space.shape)
-        obs = _rand_images(B=10, H=H, W=W, C=C, seed=1)
-        next_obs = _rand_images(B=10, H=H, W=W, C=C, seed=2)
+        obs = _rand_images(B=B, H=H, W=W, C=C, seed=1)
+        next_obs = _rand_images(B=B, H=H, W=W, C=C, seed=2)
 
     r1 = rnd.compute_batch(obs)
     r2 = rnd.compute_batch(obs, next_obs)
+    r3 = rnd.compute_batch(next_obs)
 
-    assert r1.shape == (obs.shape[0],)
-    assert r2.shape == (obs.shape[0],)
+    assert r1.shape == r2.shape == r3.shape == (B,)
     assert torch.isfinite(r1).all()
     assert torch.isfinite(r2).all()
+    assert torch.allclose(r2, r3, atol=1e-6)
 
 
 def test_rnd_normalization_updates_rms():
