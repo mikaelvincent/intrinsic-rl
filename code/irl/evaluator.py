@@ -121,6 +121,51 @@ def evaluate(
         mean_arr, std_arr = norm
         return (x - mean_arr) / std_arr
 
+    def _glpe_gate_and_intrinsic_no_update(
+        mod: object, obs_1d: torch.Tensor, next_obs_1d: torch.Tensor
+    ) -> tuple[int, float] | None:
+        if not (hasattr(mod, "icm") and hasattr(mod, "store")):
+            return None
+        stats = getattr(mod, "_stats", None)
+        if not isinstance(stats, dict):
+            return None
+        try:
+            with torch.no_grad():
+                b_obs = obs_1d.unsqueeze(0)
+                b_next = next_obs_1d.unsqueeze(0)
+
+                phi_t = mod.icm._phi(b_obs)
+                rid = int(mod.store.locate(phi_t.detach().cpu().numpy().reshape(-1)))
+
+                st = stats.get(rid)
+                gate = 1 if st is None else int(getattr(st, "gate", 1))
+
+                lp_raw = 0.0
+                if st is not None and int(getattr(st, "count", 0)) > 0:
+                    lp_raw = max(
+                        0.0,
+                        float(getattr(st, "ema_long", 0.0) - getattr(st, "ema_short", 0.0)),
+                    )
+
+                impact_raw_t = mod._impact_per_sample(b_obs, b_next)
+                impact_raw = float(impact_raw_t.view(-1)[0].item())
+
+                a_imp = float(getattr(mod, "alpha_impact", 1.0))
+                a_lp = float(getattr(mod, "alpha_lp", 0.0))
+
+                if bool(getattr(mod, "_normalize_inside", False)) and hasattr(mod, "_rms"):
+                    imp_n, lp_n = mod._rms.normalize(
+                        np.asarray([impact_raw], dtype=np.float32),
+                        np.asarray([lp_raw], dtype=np.float32),
+                    )
+                    combined = a_imp * float(imp_n[0]) + a_lp * float(lp_n[0])
+                else:
+                    combined = a_imp * float(impact_raw) + a_lp * float(lp_raw)
+
+                return int(gate), float(gate) * float(combined)
+        except Exception:
+            return None
+
     ep_n = int(episodes)
     if ep_n <= 0:
         e.close()
@@ -145,6 +190,10 @@ def evaluate(
         traj_obs: list[np.ndarray] = []
         traj_gates: list[int] = []
         traj_int_vals: list[float] = []
+        traj_gate_source: str | None = None
+
+        method_l = str(method).strip().lower()
+        is_glpe_family = method_l.startswith("glpe")
 
         for ep_seed in episode_seeds_list:
             _seed_torch(int(ep_seed))
@@ -174,31 +223,48 @@ def evaluate(
 
                 if save_traj_local and not is_image:
                     traj_obs.append(x_raw.copy())
+
                     gate_val = 1
                     int_val = 0.0
+                    gate_source = "n/a" if not is_glpe_family else "recomputed"
+
                     if intrinsic_module is not None:
-                        batch_obs = obs_t.unsqueeze(0)
-                        batch_next = torch.as_tensor(
-                            _normalize(next_obs), dtype=torch.float32, device=device
-                        ).unsqueeze(0)
-                        batch_act = act.unsqueeze(0)
                         try:
-                            r_out = intrinsic_module.compute_batch(
-                                batch_obs, batch_next, batch_act, reduction="none"
+                            next_raw = (
+                                next_obs
+                                if isinstance(next_obs, np.ndarray)
+                                else np.asarray(next_obs, dtype=np.float32)
                             )
-                            int_val = float(r_out.mean().item())
-                            if method == "glpe" and hasattr(intrinsic_module, "store"):
-                                with torch.no_grad():
-                                    phi = intrinsic_module.icm._phi(batch_obs)
-                                    phi_np = phi.cpu().numpy().reshape(-1)
-                                rid = intrinsic_module.store.locate(phi_np)
-                                st = intrinsic_module._stats.get(rid)
-                                if st is not None:
-                                    gate_val = int(st.gate)
+                            next_t = torch.as_tensor(
+                                _normalize(next_raw), dtype=torch.float32, device=device
+                            )
+
+                            if is_glpe_family:
+                                res = _glpe_gate_and_intrinsic_no_update(intrinsic_module, obs_t, next_t)
+                                if res is not None:
+                                    gate_val, int_val = res
+                                    gate_source = "checkpoint"
+                            else:
+                                try:
+                                    r_out = intrinsic_module.compute_batch(
+                                        obs_t.unsqueeze(0),
+                                        next_t.unsqueeze(0),
+                                        act.unsqueeze(0),
+                                        reduction="none",
+                                    )
+                                    int_val = float(r_out.mean().item())
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                    traj_gates.append(gate_val)
-                    traj_int_vals.append(int_val)
+
+                    traj_gates.append(int(gate_val))
+                    traj_int_vals.append(float(int_val))
+
+                    if traj_gate_source is None:
+                        traj_gate_source = gate_source
+                    elif traj_gate_source != gate_source:
+                        traj_gate_source = "mixed"
 
                 obs = next_obs
                 done = bool(term) or bool(trunc)
@@ -229,11 +295,19 @@ def evaluate(
             out_dir.mkdir(parents=True, exist_ok=True)
             env_tag = env.replace("/", "-")
             traj_file = out_dir / f"{env_tag}_trajectory.npz"
+
+            gate_src_out = traj_gate_source
+            if gate_src_out is None:
+                gate_src_out = "recomputed" if is_glpe_family else "n/a"
+
             np.savez_compressed(
                 traj_file,
                 obs=np.stack(traj_obs),
-                gates=np.array(traj_gates),
-                intrinsic=np.array(traj_int_vals),
+                gates=np.array(traj_gates, dtype=np.int8),
+                intrinsic=np.array(traj_int_vals, dtype=np.float32),
+                env_id=np.array([str(env)], dtype=np.str_),
+                method=np.array([str(method)], dtype=np.str_),
+                gate_source=np.array([str(gate_src_out)], dtype=np.str_),
             )
 
         return summary
