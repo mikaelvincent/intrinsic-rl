@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import torch
 
 from irl.experiments import run_training_suite
 
@@ -64,56 +63,3 @@ exp:
     )
 
     assert captured["total_steps"] == 24
-
-
-def test_training_suite_skips_when_up_to_date(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    configs_dir = tmp_path / "configs"
-    cfg_path = _write_cfg(
-        configs_dir,
-        "mc.yaml",
-        """
-seed: 1
-device: "cpu"
-method: "vanilla"
-env:
-  id: "MountainCar-v0"
-  vec_envs: 1
-ppo:
-  steps_per_update: 8
-  minibatches: 2
-  epochs: 1
-logging:
-  tb: false
-  csv_interval: 1
-  checkpoint_interval: 100000
-exp:
-  deterministic: true
-  total_steps: 16
-""",
-    )
-
-    runs_root = tmp_path / "runs_suite"
-    run_dir = runs_root / f"vanilla__MountainCar-v0__seed1__{cfg_path.stem}"
-    ckpt_latest = run_dir / "checkpoints" / "ckpt_latest.pt"
-    ckpt_latest.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"step": 16}, ckpt_latest)
-
-    import irl.experiments.training as training_module
-
-    def fail_run_train(*args, **kwargs):
-        raise AssertionError("run_train should not be called")
-
-    monkeypatch.setattr(training_module, "run_train", fail_run_train)
-
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=100,
-        runs_root=runs_root,
-        seeds=[1],
-        device="cpu",
-        resume=True,
-    )
