@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,7 +40,19 @@ def cli_curves(
     lbl = label or f"{(agg.method_hint or '').strip()} {(agg.env_hint or '').strip()}".strip()
     if not lbl:
         lbl = f"{metric} (n={agg.n_runs})"
-    ax.plot(agg.steps, agg.mean, label=lbl)
+    line = ax.plot(agg.steps, agg.mean, label=lbl)[0]
+
+    if shade and agg.n_runs > 1 and agg.steps.size > 0:
+        ci = 1.96 * (agg.std / np.sqrt(float(agg.n_runs)))
+        ax.fill_between(
+            agg.steps,
+            agg.mean - ci,
+            agg.mean + ci,
+            alpha=0.15,
+            color=line.get_color(),
+            linewidth=0.0,
+            zorder=max(0, int(line.get_zorder()) - 1),
+        )
 
     ax.set_xlabel("Environment steps")
     ax.set_ylabel(metric.replace("_", " "))
@@ -92,7 +105,19 @@ def cli_overlay(
             continue
 
         lbl = (labels[i] if labels and i < len(labels) else None) or agg.method_hint or f"group-{i+1}"
-        ax.plot(agg.steps, agg.mean, label=f"{lbl} (n={agg.n_runs})")
+        line = ax.plot(agg.steps, agg.mean, label=f"{lbl} (n={agg.n_runs})")[0]
+
+        if shade and agg.n_runs > 1 and agg.steps.size > 0:
+            ci = 1.96 * (agg.std / np.sqrt(float(agg.n_runs)))
+            ax.fill_between(
+                agg.steps,
+                agg.mean - ci,
+                agg.mean + ci,
+                alpha=0.12,
+                color=line.get_color(),
+                linewidth=0.0,
+                zorder=max(0, int(line.get_zorder()) - 1),
+            )
 
     ax.set_xlabel("Environment steps")
     ax.set_ylabel(metric.replace("_", " "))
@@ -111,7 +136,9 @@ def cli_overlay(
 
 @app.command("bars")
 def cli_bars(
-    summary: Path = typer.Option(Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False),
+    summary: Path = typer.Option(
+        Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False
+    ),
     env: Optional[str] = typer.Option(None, "--env", "-e"),
     topk: int = typer.Option(0, "--topk", "-k"),
     out: Path = typer.Option(Path("results/bars.png"), "--out", "-o", dir_okay=False),
@@ -167,8 +194,12 @@ def cli_bars(
 
 @app.command("bars-normalized")
 def cli_bars_normalized(
-    summary: Path = typer.Option(Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False),
-    out: Path = typer.Option(Path("results/normalized_scores.png"), "--out", "-o", dir_okay=False),
+    summary: Path = typer.Option(
+        Path("results/summary.csv"), "--summary", "-s", exists=True, dir_okay=False
+    ),
+    out: Path = typer.Option(
+        Path("results/normalized_scores.png"), "--out", "-o", dir_okay=False
+    ),
     highlight: str = typer.Option("glpe", "--highlight"),
 ) -> None:
     plot_normalized_summary(summary, out, highlight_method=highlight)
