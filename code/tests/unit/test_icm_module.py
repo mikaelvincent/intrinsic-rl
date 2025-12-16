@@ -45,4 +45,5 @@ def test_icm_compute_batch_matches_loss_mean(act_space):
     assert torch.allclose(losses["intrinsic_mean"], r.mean(), atol=1e-5)
 
     metrics = icm.update(obs, next_obs, acts, steps=1)
-    assert metrics and all(np.isfinite(v) for v in metrics.values())
+    for k in ("loss_total", "loss_forward", "loss_inverse", "intrinsic_mean"):
+        assert np.isfinite(float(metrics[k]))
