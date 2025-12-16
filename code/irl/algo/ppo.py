@@ -15,7 +15,6 @@ def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
 
 
 def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    # Preserve dtype unless explicitly overridden (keeps uint8 image inputs intact).
     if torch.is_tensor(x):
         return x.to(device=device, dtype=dtype or x.dtype)
     if dtype is None:
