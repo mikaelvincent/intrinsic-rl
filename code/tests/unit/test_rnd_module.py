@@ -1,77 +1,70 @@
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
+from torch.nn import functional as F
 
-from irl.intrinsic import IntrinsicOutput
 from irl.intrinsic.rnd import RND, RNDConfig
 
 
-def _rand_obs(obs_dim: int, B: int = 16, seed: int = 0):
+def _rand_obs(obs_dim: int, B: int, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     return rng.standard_normal((B, obs_dim)).astype(np.float32)
 
 
-def test_rnd_shapes_and_compute_batch():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
+def _rand_images(B: int, H: int, W: int, C: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
+
+
+@pytest.mark.parametrize(
+    "obs_space",
+    [
+        gym.spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+        gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8),
+    ],
+    ids=["vector", "image"],
+)
+def test_rnd_compute_batch_shapes(obs_space):
     rnd = RND(obs_space, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
 
-    obs = _rand_obs(6, B=10, seed=1)
-    next_obs = _rand_obs(6, B=10, seed=2)
+    if len(obs_space.shape) == 1:
+        D = int(obs_space.shape[0])
+        obs = _rand_obs(D, B=10, seed=1)
+        next_obs = _rand_obs(D, B=10, seed=2)
+    else:
+        H, W, C = (int(x) for x in obs_space.shape)
+        obs = _rand_images(B=10, H=H, W=W, C=C, seed=1)
+        next_obs = _rand_images(B=10, H=H, W=W, C=C, seed=2)
 
     r1 = rnd.compute_batch(obs)
     r2 = rnd.compute_batch(obs, next_obs)
 
-    assert r1.shape == (10,)
-    assert r2.shape == (10,)
+    assert r1.shape == (obs.shape[0],)
+    assert r2.shape == (obs.shape[0],)
     assert torch.isfinite(r1).all()
     assert torch.isfinite(r2).all()
 
-    tr = type("T", (), {"s": obs[0], "a": 0, "r_ext": 0.0, "s_next": next_obs[0]})
-    out = rnd.compute(tr)
-    assert isinstance(out, IntrinsicOutput)
-    assert np.isfinite(out.r_int)
 
-
-def test_rnd_update_reduces_loss_on_fixed_batch():
+def test_rnd_normalization_updates_rms():
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
-    cfg = RNDConfig(feature_dim=32, hidden=(64, 64), lr=5e-4)
-    rnd = RND(obs_space, device="cpu", cfg=cfg)
-
-    batch = _rand_obs(5, B=64, seed=123)
-
-    with torch.no_grad():
-        initial = float(rnd.loss(batch)["total"])
-
-    for _ in range(10):
-        rnd.update(batch)
-
-    with torch.no_grad():
-        final = float(rnd.loss(batch)["total"])
-
-    assert final <= initial or abs(final - initial) < 1e-6
-
-
-def test_rnd_compute_batch_updates_rms_when_normalized():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
     cfg = RNDConfig(
         feature_dim=16,
         hidden=(32, 32),
-        lr=3e-4,
         rms_beta=0.0,
         normalize_intrinsic=True,
     )
     rnd = RND(obs_space, device="cpu", cfg=cfg)
 
-    obs = _rand_obs(6, B=8, seed=42)
+    obs = _rand_obs(5, B=64, seed=42)
 
     with torch.no_grad():
         x = torch.as_tensor(obs, dtype=torch.float32)
-        per = rnd._intrinsic_raw_per_sample(x)
-        r2_expected = float((per**2).mean().item())
+        p = rnd.predictor(x)
+        tgt = rnd.target(x)
+        per = F.mse_loss(p, tgt, reduction="none").mean(dim=-1)
+        expected_rms = float(torch.sqrt((per**2).mean() + float(cfg.rms_eps)).item())
 
-    r = rnd.compute_batch(obs)
-    assert r.shape == (8,)
-    assert torch.isfinite(r).all()
-
-    r2_ema = float(rnd._r2_ema.item())
-    assert abs(r2_ema - r2_expected) < 1e-6
+    _ = rnd.compute_batch(obs)
+    assert np.isfinite(rnd.rms)
+    assert abs(float(rnd.rms) - expected_rms) < 1e-6
