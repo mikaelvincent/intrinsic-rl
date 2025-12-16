@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # Must precede pyplot import.
+
+matplotlib.use("Agg")  # before pyplot import
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,7 +13,9 @@ from irl.utils.checkpoint import atomic_replace
 from .data import _ensure_parent
 
 
-def plot_normalized_summary(summary_path: Path, out_path: Path, highlight_method: str = "proposed") -> None:
+def plot_normalized_summary(
+    summary_path: Path, out_path: Path, highlight_method: str = "proposed"
+) -> None:
     if not summary_path.exists():
         return
 
@@ -21,7 +24,9 @@ def plot_normalized_summary(summary_path: Path, out_path: Path, highlight_method
     if not required.issubset(df.columns):
         return
 
-    pivoted = df.pivot_table(index="env_id", columns="method", values="mean_return_mean", aggfunc="mean")
+    pivoted = df.pivot_table(
+        index="env_id", columns="method", values="mean_return_mean", aggfunc="mean"
+    )
 
     mins = pivoted.min(axis=1)
     maxs = pivoted.max(axis=1)
