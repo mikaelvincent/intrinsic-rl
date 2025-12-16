@@ -1,24 +1,7 @@
-"""ICM intrinsic module: encoder, inverse, and forward heads.
-
-Intrinsic = per-sample forward MSE in φ-space. Includes compute, loss, and update
-routines for both discrete and continuous actions. Supports **image**
-observations by routing through a ConvEncoder when the observation space has
-rank ≥ 2 (HWC or CHW).
-
-Image dtype contract
---------------------
-This module accepts **raw uint8 images** (HWC/NHWC/CHW/NCHW) or **float images already
-in [0, 1]**. If floats appear to be in [0, 255], the shared preprocessing pipeline
-(`utils.image.preprocess_image`) will defensively scale them to [0, 1]. To avoid
-accidentally bypassing scaling, do **not** pre-cast images to float32 unless you also
-scale to [0, 1]; instead, pass the original arrays/tensors and let preprocessing handle
-layout and normalization.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Optional, Tuple, Union
+from typing import Any, Mapping, Optional, Tuple, Union
 
 import gymnasium as gym
 import numpy as np
@@ -27,43 +10,29 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput, Transition
+from irl.models import ConvEncoder, ConvEncoderConfig
+from irl.utils.image import ImagePreprocessConfig, preprocess_image
 from irl.utils.torchops import as_tensor, ensure_2d, one_hot
-from irl.models import ConvEncoder, ConvEncoderConfig  # CNN path for image observations
-from irl.utils.image import preprocess_image, ImagePreprocessConfig
 
 from .encoder import mlp
 from .heads import ContinuousInverseHead, ForwardHead
 
-
-# ------------------------------ Config ----------------------------------
+# Image observations: accept uint8 or floats in [0,1]; preprocess_image will scale float255.
 
 
 @dataclass
 class ICMConfig:
-    """Lightweight, ICM-local configuration."""
-
     phi_dim: int = 128
     hidden: Tuple[int, int] = (256, 256)
     lr: float = 3e-4
-    beta_forward: float = 1.0  # weight for forward MSE in total loss
-    beta_inverse: float = 1.0  # weight for inverse loss in total loss
+    beta_forward: float = 1.0
+    beta_inverse: float = 1.0
     grad_clip: float = 5.0
-    # Bounds for continuous-inverse head predicted log_std (clamped in forward)
     inv_log_std_min: float = -5.0
     inv_log_std_max: float = 2.0
 
 
-# ---------------------------------- ICM ------------------------------------
-
-
 class ICM(BaseIntrinsicModule, nn.Module):
-    """Intrinsic Curiosity Module with φ, inverse, and forward heads.
-
-    * Vector observations → φ via an MLP.
-    * Image observations (rank ≥ 2) → φ via ConvEncoder (CHW/NCHW/NHWC friendly)
-      with centralized preprocessing.
-    """
-
     def __init__(
         self,
         obs_space: gym.Space,
@@ -77,20 +46,14 @@ class ICM(BaseIntrinsicModule, nn.Module):
         self.device = torch.device(device)
         self.cfg = cfg or ICMConfig()
 
-        # ----- Spaces -----
-        self.is_image_obs = len(obs_space.shape) >= 2  # HWC/CHW or higher rank
-        # For vectors this is the feature dimension; for images it's unused by encoder logic
-        self.obs_dim = (
-            int(np.prod(obs_space.shape))
-            if not self.is_image_obs
-            else int(np.prod(obs_space.shape))
-        )
+        self.is_image_obs = len(obs_space.shape) >= 2
+        self.obs_dim = int(np.prod(obs_space.shape))
 
         self.is_discrete = isinstance(act_space, gym.spaces.Discrete)
         if self.is_discrete:
             self.n_actions = int(act_space.n)
             self.act_dim = 1
-            self._forward_act_in_dim = self.n_actions  # one-hot for forward
+            self._forward_act_in_dim = self.n_actions
         elif isinstance(act_space, gym.spaces.Box):
             self.n_actions = None
             self.act_dim = int(act_space.shape[0])
@@ -98,9 +61,7 @@ class ICM(BaseIntrinsicModule, nn.Module):
         else:
             raise TypeError(f"Unsupported action space for ICM: {type(act_space)}")
 
-        # ----- Encoder φ(s) -----
         if self.is_image_obs:
-            # Infer channel count and HW from either leading or trailing axis (CHW vs HWC)
             shape = tuple(int(s) for s in obs_space.shape)
             if len(shape) == 3:
                 c0 = shape[0]
@@ -110,15 +71,12 @@ class ICM(BaseIntrinsicModule, nn.Module):
                 else:
                     in_channels, in_hw = c2, (shape[0], shape[1])
             else:
-                # Fallback for unexpected rank
                 in_channels = shape[-1]
                 in_hw = (shape[0], shape[1])
 
             cnn_cfg = ConvEncoderConfig(in_channels=int(in_channels), out_dim=int(self.cfg.phi_dim))
-            # Pass in_hw so final projection is created immediately (needed for state_dict loading)
             self.encoder = ConvEncoder(cnn_cfg, in_hw=in_hw)
 
-            # Centralized image preprocessing config: keep original channels; output NCHW; scale uint8 → [0,1]
             self._img_pre_cfg = ImagePreprocessConfig(
                 grayscale=False,
                 scale_uint8=True,
@@ -127,11 +85,8 @@ class ICM(BaseIntrinsicModule, nn.Module):
                 channels_first=True,
             )
         else:
-            # Vector path: simple MLP
-            # Note: first layer of mlp() includes FlattenObs so [T,B,D]/[B,D]/[D] are all handled.
             self.encoder = mlp(int(obs_space.shape[0]), self.cfg.hidden, out_dim=self.cfg.phi_dim)
 
-        # ----- Inverse dynamics head: input = concat[φ(s), φ(s')] -----
         inv_in = 2 * self.cfg.phi_dim
         if self.is_discrete:
             self.inverse = mlp(inv_in, self.cfg.hidden, out_dim=self.n_actions)
@@ -144,89 +99,58 @@ class ICM(BaseIntrinsicModule, nn.Module):
                 log_std_max=self.cfg.inv_log_std_max,
             )
 
-        # ----- Forward dynamics head: input = concat[φ(s), a_embed] -> φ̂(s') -----
         fwd_in = self.cfg.phi_dim + self._forward_act_in_dim
         self.forward_head = ForwardHead(fwd_in, self.cfg.phi_dim, hidden=self.cfg.hidden)
 
-        # Optimizer
         self._opt = torch.optim.Adam(self.parameters(), lr=float(self.cfg.lr))
-
         self.to(self.device)
 
-    # ----------------------------- Embeddings -----------------------------
-
     def _phi(self, obs: Any) -> Tensor:
-        """Return φ(s) for a batch or single observation.
-
-        * If the observation space is image-like, centralized preprocessing
-          produces NCHW float32 inputs in [0, 1] via ``preprocess_image``.
-        * For vector observations, inputs are flattened to [B, D] before
-          passing through the MLP encoder.
-        """
         if self.is_image_obs:
             t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
             if t.dim() >= 5:
-                # Collapse leading dims to a simple NCHW/NHWC batch
                 t = t.reshape(-1, *t.shape[-3:])
-            x = preprocess_image(
-                t, cfg=self._img_pre_cfg, device=self.device
-            )  # -> NCHW float32 [0,1]
+            x = preprocess_image(t, cfg=self._img_pre_cfg, device=self.device)
             return self.encoder(x)
-        else:
-            x = as_tensor(obs, self.device)
-            return self.encoder(ensure_2d(x))
-
-    # ----------------------- Action formatting helpers --------------------
+        x = as_tensor(obs, self.device)
+        return self.encoder(ensure_2d(x))
 
     def _one_hot(self, a: Tensor, n: int) -> Tensor:
         return one_hot(a, n)
 
     def _act_for_forward(self, actions: Tensor) -> Tensor:
-        """Format actions for forward model input."""
         if self.is_discrete:
-            return self._one_hot(actions, self.n_actions)  # [B, A]
-        return ensure_2d(actions).float()  # [B, A]
-
-    # -------------------------- Intrinsic compute -------------------------
+            return self._one_hot(actions, self.n_actions)
+        return ensure_2d(actions).float()
 
     def compute(self, tr: Transition) -> IntrinsicOutput:
-        """Compute intrinsic (per-sample forward MSE) without gradients."""
         with torch.no_grad():
-            s = tr.s
-            s_next = tr.s_next
-            a = tr.a
-
-            r = self.compute_batch(s, s_next, a, reduction="none")
+            r = self.compute_batch(tr.s, tr.s_next, tr.a, reduction="none")
             return IntrinsicOutput(r_int=float(r.view(-1)[0].item()))
 
     def compute_batch(
         self, obs: Any, next_obs: Any, actions: Any, reduction: str = "none"
     ) -> Tensor:
-        """Vectorized intrinsic reward: per-sample forward MSE in φ-space."""
         with torch.no_grad():
-            o = obs
-            op = next_obs
             a = torch.as_tensor(actions, device=self.device)
-            phi_t = self._phi(o)
-            phi_tp1 = self._phi(op)
+            phi_t = self._phi(obs)
+            phi_tp1 = self._phi(next_obs)
             a_fwd = self._act_for_forward(a)
 
             pred = self.forward_head(torch.cat([phi_t, a_fwd], dim=-1))
-            mse_per = F.mse_loss(pred, phi_tp1, reduction="none").mean(dim=-1)  # [B]
+            mse_per = F.mse_loss(pred, phi_tp1, reduction="none").mean(dim=-1)
             if reduction == "mean":
                 return mse_per.mean()
             return mse_per
 
-    # ----------------------------- Losses/Update ---------------------------
-
     def _inverse_loss(self, phi_t: Tensor, phi_tp1: Tensor, actions: Tensor) -> Tensor:
         h = torch.cat([phi_t, phi_tp1], dim=-1)
         if self.is_discrete:
-            logits = self.inverse(h)  # [B, n_actions]
+            logits = self.inverse(h)
             a = actions.long().view(-1)
             return F.cross_entropy(logits, a)
-        # continuous
-        mu, log_std = self.inverse(h)  # type: ignore[misc]
+
+        mu, log_std = self.inverse(h)
         a = ensure_2d(actions).float()
         var = torch.exp(2.0 * log_std)
         nll = 0.5 * ((a - mu) ** 2 / var + 2.0 * log_std + np.log(2 * np.pi))
@@ -243,17 +167,10 @@ class ICM(BaseIntrinsicModule, nn.Module):
         actions: Any,
         weights: Optional[Tuple[float, float]] = None,
     ) -> Mapping[str, Tensor]:
-        """Compute ICM losses without updating parameters.
-
-        Returns a mapping with ``total``, ``forward``, ``inverse``, and
-        ``intrinsic_mean`` entries.
-        """
-        o = obs
-        op = next_obs
         a = torch.as_tensor(actions, device=self.device)
 
-        phi_t = self._phi(o)
-        phi_tp1 = self._phi(op)
+        phi_t = self._phi(obs)
+        phi_tp1 = self._phi(next_obs)
         a_fwd = self._act_for_forward(a)
 
         loss_inv = self._inverse_loss(phi_t, phi_tp1, a)
@@ -292,11 +209,6 @@ class ICM(BaseIntrinsicModule, nn.Module):
         steps: int = 1,
         weights: Optional[Tuple[float, float]] = None,
     ) -> Mapping[str, float]:
-        """Optimize predictor/encoder for ``steps`` iterations on the same batch.
-
-        Returns a dictionary of scalar metrics containing a total loss,
-        forward loss, inverse loss, and the mean intrinsic reward estimate.
-        """
         metrics: Mapping[str, float] = {}
         for _ in range(int(steps)):
             out = self.loss(obs, next_obs, actions, weights=weights)
