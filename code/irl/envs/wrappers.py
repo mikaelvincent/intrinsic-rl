@@ -38,9 +38,7 @@ class CarRacingDiscreteActionWrapper(gym.ActionWrapper):
     ) -> None:
         super().__init__(env)
         if not isinstance(env.action_space, spaces.Box) or env.action_space.shape != (3,):
-            raise TypeError(
-                "CarRacingDiscreteActionWrapper expects an env with Box(3,) action space."
-            )
+            raise TypeError("CarRacingDiscreteActionWrapper expects an env with Box(3,) action space.")
 
         if action_set is None:
             action_set = np.array(
@@ -87,7 +85,6 @@ class DomainRandomizationWrapper(gym.Wrapper):
         self._has_mujoco: bool = False
         self._has_box2d: bool = False
 
-        # Cache baseline physics so noise doesn't drift across resets.
         self._mj_baseline_gravity: np.ndarray | None = None
         self._mj_baseline_geom_friction: np.ndarray | None = None
         self._b2d_baseline_gravity: tuple[float, float] | None = None
@@ -273,6 +270,6 @@ class DomainRandomizationWrapper(gym.Wrapper):
         if not isinstance(info, dict):
             info = {}
         else:
-            info = dict(info)  # Copy to avoid mutating upstream containers.
+            info = dict(info)
         info.setdefault("dr_applied", dict(self._last_diag))
         return obs, info
