@@ -11,7 +11,6 @@ __all__ = ["seed_everything"]
 
 def seed_everything(seed: int, deterministic: bool = False) -> None:
     s = int(seed)
-
     random.seed(s)
     np.random.seed(s)
     torch.manual_seed(s)
@@ -34,5 +33,4 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
             cudnn.benchmark = False
         except Exception:
             pass
-
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
