@@ -21,9 +21,12 @@ def test_checkpoint_should_save_warmup_then_interval() -> None:
         assert cm.should_save(5)
         cm.save(step=5, payload=_payload(5))
 
-        for step in range(6, 50):
-            if cm.should_save(step):
-                cm.save(step=step, payload=_payload(step))
+        assert not cm.should_save(9)
+        assert cm.should_save(10)
+        cm.save(step=10, payload=_payload(10))
+
+        assert cm.should_save(45)
+        cm.save(step=45, payload=_payload(45))
 
         assert not cm.should_save(49)
         assert cm.should_save(50)
