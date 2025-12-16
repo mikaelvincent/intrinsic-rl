@@ -1,5 +1,3 @@
-"""Utility subpackage for logging, checkpointing, tensors, and determinism."""
-
 from __future__ import annotations
 
 from .loggers import CSVLogger, TBLogger, MetricLogger
@@ -10,24 +8,20 @@ from .checkpoint import (
     atomic_write_text,
     atomic_write_bytes,
 )
-from .torchops import as_tensor, ensure_2d, one_hot  # shared tensor helpers
-from .determinism import seed_everything  # reproducible seeding helper
+from .torchops import as_tensor, ensure_2d, one_hot
+from .determinism import seed_everything
 
 __all__ = [
-    # Loggers
     "CSVLogger",
     "TBLogger",
     "MetricLogger",
-    # Checkpointing
     "CheckpointManager",
     "load_checkpoint",
     "atomic_replace",
     "atomic_write_text",
     "atomic_write_bytes",
-    # Tensor helpers
     "as_tensor",
     "ensure_2d",
     "one_hot",
-    # Determinism
     "seed_everything",
 ]
