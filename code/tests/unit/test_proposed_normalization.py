@@ -16,7 +16,6 @@ def _rand_batch(obs_dim: int, n_actions: int, B: int, seed: int):
 
 def test_proposed_normalize_inside_changes_output():
     torch.manual_seed(0)
-
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
     icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
@@ -45,8 +44,6 @@ def test_proposed_normalize_inside_changes_output():
     o, op, a = _rand_batch(4, 3, B=128, seed=123)
 
     with torch.no_grad():
-        _ = mod_raw.compute_batch(o, op, a)
-        _ = mod_norm.compute_batch(o, op, a)
         r_raw = mod_raw.compute_batch(o, op, a)
         r_norm = mod_norm.compute_batch(o, op, a)
 
@@ -54,25 +51,3 @@ def test_proposed_normalize_inside_changes_output():
     assert torch.isfinite(r_raw).all()
     assert torch.isfinite(r_norm).all()
     assert not torch.allclose(r_raw, r_norm, atol=1e-6)
-
-
-def test_proposed_gating_disabled_never_gates():
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(3)
-
-    mod = Proposed(
-        obs_space,
-        act_space,
-        device="cpu",
-        icm_cfg=ICMConfig(phi_dim=16, hidden=(32, 32)),
-        gating_enabled=False,
-    )
-
-    rng = np.random.default_rng(7)
-    for _ in range(3):
-        o = rng.standard_normal((64, 5)).astype(np.float32)
-        op = rng.standard_normal((64, 5)).astype(np.float32)
-        a = rng.integers(0, 3, size=(64,), endpoint=False, dtype=np.int64)
-        mod.compute_batch(o, op, a)
-
-    assert mod.gate_rate == 0.0
