@@ -70,7 +70,7 @@ def _make_cfg(
         entropy_coef=0.01,
     )
     intrinsic_cfg = replace(base.intrinsic, eta=eta)
-    log_cfg = replace(base.logging, tb=False, csv_interval=1, checkpoint_interval=10_000)
+    log_cfg = replace(base.logging, csv_interval=1, checkpoint_interval=10_000)
     eval_cfg = replace(base.evaluation, interval_steps=10_000, episodes=1)
     adapt_cfg = replace(base.adaptation, enabled=False)
     cfg = replace(
