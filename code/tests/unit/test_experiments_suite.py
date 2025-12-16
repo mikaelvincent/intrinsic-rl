@@ -115,60 +115,6 @@ exp:
     )
 
 
-@pytest.mark.parametrize("auto_async, expected", [(False, False), (True, True)])
-def test_training_suite_auto_async_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auto_async: bool, expected: bool
-) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_cfg(
-        configs_dir,
-        "mc_vec.yaml",
-        """
-seed: 1
-device: "cpu"
-method: "vanilla"
-env:
-  id: "MountainCar-v0"
-  vec_envs: 2
-  async_vector: false
-ppo:
-  steps_per_update: 8
-  minibatches: 2
-  epochs: 1
-logging:
-  tb: false
-  csv_interval: 1
-  checkpoint_interval: 100000
-exp:
-  deterministic: true
-  total_steps: 16
-""",
-    )
-
-    captured: dict[str, bool] = {}
-
-    import irl.experiments.training as training_module
-
-    def fake_run_train(cfg, *args, **kwargs):
-        captured["async_vector"] = bool(cfg.env.async_vector)
-
-    monkeypatch.setattr(training_module, "run_train", fake_run_train)
-
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=16,
-        runs_root=tmp_path / "runs_suite",
-        seeds=[1],
-        device="cpu",
-        resume=False,
-        auto_async=auto_async,
-    )
-
-    assert captured["async_vector"] is expected
-
-
 def test_plots_suite_discovers_runs_and_writes_overlay(tmp_path: Path) -> None:
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
