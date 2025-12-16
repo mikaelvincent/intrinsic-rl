@@ -33,7 +33,7 @@ def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarra
 
 
 def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray:
-    # VectorEnv may auto-reset; prefer infos["final_observation"] for done envs when available.
+    # Use infos["final_observation"] when VectorEnv auto-resets.
     obs = np.asarray(next_obs)
     done_mask = np.asarray(done, dtype=bool).reshape(-1)
     if not done_mask.any():
