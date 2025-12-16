@@ -114,7 +114,11 @@ def _infer_method_env_from_checkpoint(
     except Exception:
         seed = None
 
-    return (str(method) if method is not None else None), (str(env_id) if env_id is not None else None), seed
+    return (
+        str(method) if method is not None else None,
+        str(env_id) if env_id is not None else None,
+        seed,
+    )
 
 
 def run_plots_suite(
@@ -201,20 +205,18 @@ def run_plots_suite(
         extras = [
             m
             for m in all_methods
-            if m not in baselines and m != "proposed" and not m.startswith("proposed_")
+            if m not in baselines and m != "glpe" and not m.startswith("glpe_")
         ]
         baselines.extend(extras)
-        if "proposed" in all_methods:
-            baselines.append("proposed")
+        if "glpe" in all_methods:
+            baselines.append("glpe")
 
-        ablation_priority = ["proposed_lp_only", "proposed_impact_only", "proposed_nogate"]
+        ablation_priority = ["glpe_lp_only", "glpe_impact_only", "glpe_nogate"]
         ablations: list[str] = [m for m in ablation_priority if m in all_methods]
-        other_abls = sorted(
-            [m for m in all_methods if m.startswith("proposed_") and m not in ablations]
-        )
+        other_abls = sorted([m for m in all_methods if m.startswith("glpe_") and m not in ablations])
         ablations.extend(other_abls)
-        if "proposed" in all_methods:
-            ablations.append("proposed")
+        if "glpe" in all_methods:
+            ablations.append("glpe")
 
         _generate_comparison_plot(
             groups,
@@ -266,7 +268,7 @@ def run_plots_suite(
         summary_csv = results_root / "summary.csv"
         if summary_csv.exists():
             bar_plot_path = plots_root / "summary_normalized_bars.png"
-            plot_normalized_summary(summary_csv, bar_plot_path, highlight_method="proposed")
+            plot_normalized_summary(summary_csv, bar_plot_path, highlight_method="glpe")
             typer.echo(f"[suite] Saved normalized summary bars: {bar_plot_path}")
         else:
             typer.echo("[suite] Skipping bar chart (summary.csv not found; run 'eval' stage first).")
