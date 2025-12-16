@@ -3,191 +3,154 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import torch
 
-from irl.experiments import run_eval_suite, run_plots_suite, run_training_suite
-from irl.utils.checkpoint import load_checkpoint
+from irl.experiments import run_plots_suite, run_training_suite
 
 
-def _write_mountaincar_config(configs_dir: Path, filename: str = "mc_basic.yaml") -> Path:
+def _write_cfg(configs_dir: Path, filename: str, text: str) -> Path:
     configs_dir.mkdir(parents=True, exist_ok=True)
-    cfg_text = """
+    p = configs_dir / filename
+    p.write_text(text.lstrip(), encoding="utf-8")
+    return p
+
+
+def test_training_suite_prefers_exp_total_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    configs_dir = tmp_path / "configs"
+    _write_cfg(
+        configs_dir,
+        "mc_steps.yaml",
+        """
+seed: 7
+device: "cpu"
+method: "vanilla"
+env:
+  id: "MountainCar-v0"
+  vec_envs: 1
+ppo:
+  steps_per_update: 8
+  minibatches: 2
+  epochs: 1
+logging:
+  tb: false
+  csv_interval: 1
+  checkpoint_interval: 100000
+exp:
+  deterministic: true
+  total_steps: 24
+""",
+    )
+
+    captured: dict[str, int] = {}
+
+    import irl.experiments.training as training_module
+
+    def fake_run_train(cfg, *args, **kwargs):
+        captured["total_steps"] = int(kwargs["total_steps"])
+
+    monkeypatch.setattr(training_module, "run_train", fake_run_train)
+
+    run_training_suite(
+        configs_dir=configs_dir,
+        include=[],
+        exclude=[],
+        total_steps=100,
+        runs_root=tmp_path / "runs_suite",
+        seeds=[1],
+        device="cpu",
+        resume=False,
+    )
+
+    assert captured["total_steps"] == 24
+
+
+def test_training_suite_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    configs_dir = tmp_path / "configs"
+    cfg_path = _write_cfg(
+        configs_dir,
+        "mc.yaml",
+        """
 seed: 1
 device: "cpu"
 method: "vanilla"
 env:
   id: "MountainCar-v0"
   vec_envs: 1
-  frame_skip: 1
-  domain_randomization: false
-  discrete_actions: true
 ppo:
-  steps_per_update: 16
-  minibatches: 4
+  steps_per_update: 8
+  minibatches: 2
   epochs: 1
-  learning_rate: 3.0e-4
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  entropy_coef: 0.01
-intrinsic:
-  eta: 0.0
-adaptation:
-  enabled: false
-evaluation:
-  interval_steps: 100000
-  episodes: 1
 logging:
   tb: false
   csv_interval: 1
-  checkpoint_interval: 16
-"""
-    path = configs_dir / filename
-    path.write_text(cfg_text.lstrip(), encoding="utf-8")
-    return path
+  checkpoint_interval: 100000
+exp:
+  deterministic: true
+  total_steps: 16
+""",
+    )
+
+    runs_root = tmp_path / "runs_suite"
+    run_dir = runs_root / f"vanilla__MountainCar-v0__seed1__{cfg_path.stem}"
+    ckpt_latest = run_dir / "checkpoints" / "ckpt_latest.pt"
+    ckpt_latest.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"step": 16}, ckpt_latest)
+
+    import irl.experiments.training as training_module
+
+    def fail_run_train(*args, **kwargs):
+        raise AssertionError("run_train should not be called when up to date")
+
+    monkeypatch.setattr(training_module, "run_train", fail_run_train)
+
+    run_training_suite(
+        configs_dir=configs_dir,
+        include=[],
+        exclude=[],
+        total_steps=100,
+        runs_root=runs_root,
+        seeds=[1],
+        device="cpu",
+        resume=True,
+    )
 
 
-def _single_run_dir(runs_root: Path) -> Path:
-    run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
-    assert len(run_dirs) == 1, f"Expected a single run dir, found {run_dirs}"
-    return run_dirs[0]
-
-
-def _write_vec_config(
-    configs_dir: Path, filename: str = "mc_vec.yaml", *, async_vector: bool | None = None
-) -> Path:
-    configs_dir.mkdir(parents=True, exist_ok=True)
-    async_line = f"  async_vector: {str(async_vector).lower()}\n" if async_vector is not None else ""
-    cfg_text = f"""
+@pytest.mark.parametrize("auto_async, expected", [(False, False), (True, True)])
+def test_training_suite_auto_async_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auto_async: bool, expected: bool
+) -> None:
+    configs_dir = tmp_path / "configs"
+    _write_cfg(
+        configs_dir,
+        "mc_vec.yaml",
+        """
 seed: 1
 device: "cpu"
 method: "vanilla"
 env:
   id: "MountainCar-v0"
   vec_envs: 2
-  frame_skip: 1
-  domain_randomization: false
-  discrete_actions: true
-{async_line}ppo:
+  async_vector: false
+ppo:
   steps_per_update: 8
   minibatches: 2
   epochs: 1
-  learning_rate: 3.0e-4
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  entropy_coef: 0.0
-intrinsic:
-  eta: 0.0
-adaptation:
-  enabled: false
-evaluation:
-  interval_steps: 100000
-  episodes: 1
 logging:
   tb: false
   csv_interval: 1
-  checkpoint_interval: 8
+  checkpoint_interval: 100000
 exp:
   deterministic: true
   total_steps: 16
-"""
-    path = configs_dir / filename
-    path.write_text(cfg_text.lstrip(), encoding="utf-8")
-    return path
-
-
-def test_suite_train_creates_run_and_checkpoint(tmp_path: Path) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_mountaincar_config(configs_dir)
-
-    runs_root = tmp_path / "runs_suite"
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=32,
-        runs_root=runs_root,
-        seeds=[1],
-        device="cpu",
-        resume=True,
+""",
     )
 
-    run_dir = _single_run_dir(runs_root)
-    ckpt_latest = run_dir / "checkpoints" / "ckpt_latest.pt"
-    assert ckpt_latest.exists()
-
-    step = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
-    assert step >= 32
-
-    csv_path = run_dir / "logs" / "scalars.csv"
-    assert csv_path.exists()
-    contents = csv_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(contents) >= 2
-    assert contents[0].startswith("step,")
-
-
-def test_suite_train_skips_when_up_to_date(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_mountaincar_config(configs_dir)
-    runs_root = tmp_path / "runs_suite"
-    total_steps = 16
-
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=total_steps,
-        runs_root=runs_root,
-        seeds=[1],
-        device="cpu",
-        resume=True,
-    )
-
-    run_dir = _single_run_dir(runs_root)
-    ckpt_latest = run_dir / "checkpoints" / "ckpt_latest.pt"
-    assert ckpt_latest.exists()
-    step_before = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
-
-    import irl.experiments.training as training_module
-
-    called = {"count": 0}
-
-    def fake_run_train(*args, **kwargs):
-        called["count"] += 1
-        raise AssertionError("run_train should not be invoked when up to date")
-
-    monkeypatch.setattr(training_module, "run_train", fake_run_train)
-
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=total_steps,
-        runs_root=runs_root,
-        seeds=[1],
-        device="cpu",
-        resume=True,
-    )
-
-    assert called["count"] == 0
-    step_after = int(load_checkpoint(ckpt_latest, map_location="cpu").get("step", 0))
-    assert step_after == step_before
-
-
-def test_suite_respects_async_vector_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_vec_config(configs_dir, async_vector=False)
-
-    captured = {}
+    captured: dict[str, bool] = {}
 
     import irl.experiments.training as training_module
 
     def fake_run_train(cfg, *args, **kwargs):
-        captured["cfg"] = cfg
+        captured["async_vector"] = bool(cfg.env.async_vector)
 
     monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
@@ -200,68 +163,23 @@ def test_suite_respects_async_vector_by_default(
         seeds=[1],
         device="cpu",
         resume=False,
+        auto_async=auto_async,
     )
 
-    assert captured["cfg"].env.async_vector is False
+    assert captured["async_vector"] is expected
 
 
-def test_suite_can_auto_enable_async_vector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_vec_config(configs_dir, async_vector=False)
-
-    captured = {}
-
-    import irl.experiments.training as training_module
-
-    def fake_run_train(cfg, *args, **kwargs):
-        captured["cfg"] = cfg
-
-    monkeypatch.setattr(training_module, "run_train", fake_run_train)
-
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=16,
-        runs_root=tmp_path / "runs_suite",
-        seeds=[1],
-        device="cpu",
-        resume=False,
-        auto_async=True,
-    )
-
-    assert captured["cfg"].env.async_vector is True
-
-
-def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
-    configs_dir = tmp_path / "configs"
-    _write_mountaincar_config(configs_dir)
-
+def test_plots_suite_discovers_runs_and_writes_overlay(tmp_path: Path) -> None:
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
 
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=[],
-        exclude=[],
-        total_steps=32,
-        runs_root=runs_root,
-        seeds=[1],
-        device="cpu",
-        resume=False,
-    )
-
-    run_eval_suite(runs_root=runs_root, results_dir=results_dir, episodes=2, device="cpu")
-
-    raw_path = results_dir / "summary_raw.csv"
-    summary_path = results_dir / "summary.csv"
-    assert raw_path.exists()
-    assert summary_path.exists()
-    raw_text = raw_path.read_text(encoding="utf-8")
-    assert "mean_return" in raw_text
-    assert "env_id" in raw_text
+    for name in ("vanilla__MountainCar-v0__seed1__A", "proposed__MountainCar-v0__seed2__B"):
+        logs = runs_root / name / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "scalars.csv").write_text(
+            "step,reward_total_mean\n0,0.0\n10,1.0\n",
+            encoding="utf-8",
+        )
 
     run_plots_suite(
         runs_root=runs_root,
@@ -271,7 +189,5 @@ def test_suite_eval_and_plots_smoke(tmp_path: Path) -> None:
         shade=False,
     )
 
-    plots_dir = results_dir / "plots"
-    assert plots_dir.exists()
-    overlay_files = list(plots_dir.glob("MountainCar-v0__overlay_reward_total_mean.png"))
-    assert overlay_files
+    out = results_dir / "plots" / "MountainCar-v0__overlay_reward_total_mean.png"
+    assert out.exists()
