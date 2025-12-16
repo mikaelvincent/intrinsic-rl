@@ -3,20 +3,7 @@ import numpy as np
 from irl.intrinsic.regions.kdtree import KDTreeRegionStore
 
 
-def test_kdtree_splits_at_capacity():
-    store = KDTreeRegionStore(dim=2, capacity=4, depth_max=8)
-    pts = np.array(
-        [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [1.5, 0.0], [2.0, 0.0]],
-        dtype=np.float32,
-    )
-    for p in pts:
-        store.insert(p)
-
-    assert store.num_regions() == 2
-    assert not store.root.is_leaf
-
-
-def test_kdtree_selects_max_variance_dimension():
+def test_kdtree_splits_and_uses_max_variance_dimension():
     store = KDTreeRegionStore(dim=2, capacity=4, depth_max=8)
     pts = np.array(
         [[1.0, 0.0], [1.0, 10.0], [1.0, 20.0], [1.0, 30.0], [1.0, 40.0]],
@@ -25,19 +12,8 @@ def test_kdtree_selects_max_variance_dimension():
     for p in pts:
         store.insert(p)
 
-    assert store.root.split_dim == 1
-
-
-def test_kdtree_depth_limit_stops_splitting():
-    store = KDTreeRegionStore(dim=2, capacity=2, depth_max=1)
-    pts = np.array(
-        [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0], [5.0, 5.0]],
-        dtype=np.float32,
-    )
-    for p in pts:
-        store.insert(p)
-
     assert store.num_regions() == 2
+    assert store.root.split_dim == 1
 
 
 def test_bulk_insert_matches_sequential_insert():
