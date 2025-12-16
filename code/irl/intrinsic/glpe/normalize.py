@@ -18,3 +18,16 @@ class ComponentRMS:
 
     def normalize(self, impact_vals: np.ndarray, lp_vals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self.impact.normalize(impact_vals), self.lp.normalize(lp_vals)
+
+    def state_dict(self) -> dict:
+        return {"impact": self.impact.state_dict(), "lp": self.lp.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        impact = state.get("impact")
+        lp = state.get("lp")
+        if isinstance(impact, dict):
+            self.impact.load_state_dict(impact)
+        if isinstance(lp, dict):
+            self.lp.load_state_dict(lp)
