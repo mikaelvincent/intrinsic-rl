@@ -24,8 +24,8 @@ def run_eval_suite(runs_root: Path, results_dir: Path, episodes: int, device: st
     typer.echo(f"[suite] Evaluating {len(run_dirs)} run(s) from {root}")
     results: list[RunResult] = []
 
-    traj_dir = results_dir / "plots" / "trajectories"
-    traj_dir.mkdir(parents=True, exist_ok=True)
+    traj_root = results_dir / "plots" / "trajectories"
+    traj_root.mkdir(parents=True, exist_ok=True)
 
     for rd in run_dirs:
         ckpt = _find_latest_ckpt(rd)
@@ -34,13 +34,16 @@ def run_eval_suite(runs_root: Path, results_dir: Path, episodes: int, device: st
             continue
         typer.echo(f"[suite]    - {rd.name}: ckpt={ckpt.name}, episodes={episodes}")
         try:
+            traj_out_dir = traj_root / rd.name
+            traj_out_dir.mkdir(parents=True, exist_ok=True)
+
             summary = evaluate(
                 env=str(_parse_run_name(rd).get("env", "UnknownEnv")),
                 ckpt=ckpt,
                 episodes=episodes,
                 device=device,
                 save_traj=True,
-                traj_out_dir=traj_dir,
+                traj_out_dir=traj_out_dir,
             )
 
             payload = load_checkpoint(ckpt, map_location="cpu")
