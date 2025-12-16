@@ -14,8 +14,8 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
 
     random.seed(s)
     np.random.seed(s)
-
     torch.manual_seed(s)
+
     if torch.cuda.is_available():
         try:
             torch.cuda.manual_seed_all(s)
@@ -35,5 +35,4 @@ def seed_everything(seed: int, deterministic: bool = False) -> None:
         except Exception:
             pass
 
-        # Must be set before the first CUDA context for full effect.
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
