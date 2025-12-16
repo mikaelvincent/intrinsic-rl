@@ -153,7 +153,7 @@ def evaluate(
                             batch_obs, batch_next, batch_act, reduction="none"
                         )
                         int_val = float(r_out.mean().item())
-                        if method == "proposed" and hasattr(intrinsic_module, "store"):
+                        if method == "glpe" and hasattr(intrinsic_module, "store"):
                             with torch.no_grad():
                                 phi = intrinsic_module.icm._phi(batch_obs)
                                 phi_np = phi.cpu().numpy().reshape(-1)
