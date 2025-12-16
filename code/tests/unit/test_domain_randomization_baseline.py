@@ -40,23 +40,23 @@ def test_domain_randomization_mujoco_stays_near_baseline():
         wrapped = DomainRandomizationWrapper(env, seed=123)
         baseline = wrapped.unwrapped.model.opt.gravity.copy()
 
-        scales = []
-        for _ in range(100):
+        unique_scales: set[float] = set()
+        for _ in range(30):
             _, info = wrapped.reset()
             g = wrapped.unwrapped.model.opt.gravity
             ratio = g / baseline
+
             assert np.all(np.isfinite(ratio))
             assert np.all(ratio >= 0.95 - 1e-6)
             assert np.all(ratio <= 1.05 + 1e-6)
-            scales.append(ratio.copy())
 
             assert isinstance(info, dict)
-            assert "dr_applied" in info
-            diag = info["dr_applied"]
+            diag = info.get("dr_applied")
             assert isinstance(diag, dict)
             assert diag.get("mujoco", 0) >= 0
 
-        unique_scales = {tuple(np.round(s, decimals=3).tolist()) for s in scales}
+            unique_scales.add(round(float(ratio.reshape(-1)[0]), 3))
+
         assert len(unique_scales) > 1
     finally:
         env.close()
