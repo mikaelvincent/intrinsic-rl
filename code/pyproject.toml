@@ -38,6 +38,7 @@ irl-train = "irl.train:main"
 irl-eval = "irl.eval:main"
 irl-plot = "irl.plot:main"
 irl-sweep = "irl.sweep:main"
+irl-suite = "irl.experiments:main"
 
 [tool.setuptools.packages.find]
 include = ["irl", "irl.*"]
