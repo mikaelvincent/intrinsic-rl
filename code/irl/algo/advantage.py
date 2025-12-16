@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping
 
 import torch
 from torch import Tensor
@@ -126,7 +126,7 @@ def compute_gae(
     lam: float,
     *,
     bootstrap_on_timeouts: bool = False,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     if not isinstance(batch, Mapping):
         raise TypeError("batch must be a mapping/dict-like object")
 
@@ -156,9 +156,8 @@ def compute_gae(
         obs_t, next_obs_t, rew_t, done_base
     )
 
-    term_t: Optional[Tensor] = None
-    trunc_t: Optional[Tensor] = None
-
+    term_t: Tensor | None = None
+    trunc_t: Tensor | None = None
     if terminals_raw is not None:
         term_t = _coerce_mask_to_TB(_to_tensor(terminals_raw, device), T, B, done_t)
     if trunc_raw is not None:
