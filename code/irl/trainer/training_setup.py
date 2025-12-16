@@ -333,10 +333,36 @@ def _restore_from_checkpoint(
 
     try:
         intr = resume_payload.get("intrinsic")
-        if intrinsic_module is not None and isinstance(intr, dict):
-            if intr.get("method") == method_l and "state_dict" in intr:
-                intrinsic_module.load_state_dict(intr["state_dict"])
-                intrinsic_module.to(device)
+        if intrinsic_module is not None and isinstance(intr, dict) and intr.get("method") == method_l:
+            sd = intr.get("state_dict", None)
+            extra_state = intr.get("extra_state", None)
+
+            if isinstance(sd, dict):
+                res = intrinsic_module.load_state_dict(sd, strict=False)
+                missing = [k for k in res.missing_keys if k != "_extra_state"]
+                unexpected = [k for k in res.unexpected_keys if k != "_extra_state"]
+                if missing or unexpected:
+                    logger.warning(
+                        "Intrinsic state mismatch on resume for method=%s (missing=%s, unexpected=%s).",
+                        method_l,
+                        missing,
+                        unexpected,
+                    )
+
+            if extra_state is None:
+                extra_state = resume_payload.get("intrinsic_extra_state", None)
+                if extra_state is None:
+                    extra_state = resume_payload.get("intrinsic_state", None)
+
+            if (
+                extra_state is not None
+                and hasattr(intrinsic_module, "set_extra_state")
+                and callable(getattr(intrinsic_module, "set_extra_state"))
+                and not (isinstance(sd, dict) and "_extra_state" in sd)
+            ):
+                intrinsic_module.set_extra_state(extra_state)
+
+            intrinsic_module.to(device)
     except Exception:
         log_resume_intrinsic_warning(method_l)
 
