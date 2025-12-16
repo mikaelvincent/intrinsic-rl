@@ -1,15 +1,9 @@
-"""Training suite helpers for intrinsic-rl experiments.
-
-This module exposes :func:`run_training_suite`, which trains all eligible
-configuration files under a configs/ tree.
-"""
-
 from __future__ import annotations
 
 import glob
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 import typer
 
@@ -23,19 +17,7 @@ def _discover_configs(
     configs_root: Path,
     include: Sequence[str] | None = None,
     exclude: Sequence[str] | None = None,
-) -> List[Path]:
-    """Return sorted list of config paths under configs_root.
-
-    Parameters
-    ----------
-    configs_root:
-        Root directory that holds YAML configs (e.g. code/configs).
-    include:
-        Optional glob patterns **relative** to configs_root. If omitted,
-        defaults to ["**/*.yaml", "**/*.yml"].
-    exclude:
-        Optional glob patterns to subtract from the result.
-    """
+) -> list[Path]:
     root = configs_root.resolve()
     if not root.exists():
         raise typer.BadParameter(f"configs_dir does not exist: {root}")
@@ -62,23 +44,12 @@ def _discover_configs(
 
 
 def _run_dir_for(cfg: Config, cfg_path: Path, seed: int, runs_root: Path) -> Path:
-    """Deterministic run directory for (config, seed).
-
-    Layout (relative to runs_root):
-
-    <method>__<env_id>__seed<seed>__<config_stem>
-
-    where env_id has '/' replaced by '-'.
-    """
     env_tag = str(cfg.env.id).replace("/", "-")
-    method = str(cfg.method)
-    stem = cfg_path.stem
-    name = f"{method}__{env_tag}__seed{int(seed)}__{stem}"
+    name = f"{cfg.method}__{env_tag}__seed{int(seed)}__{cfg_path.stem}"
     return runs_root / name
 
 
 def _format_steps(step: int) -> str:
-    """Human-friendly representation of a step count."""
     if step >= 1_000_000:
         return f"{step / 1_000_000:.1f}M"
     if step >= 1_000:
@@ -97,46 +68,6 @@ def run_training_suite(
     resume: bool,
     auto_async: bool = False,
 ) -> None:
-    """Train all (config, seed) combinations into a suite of runs.
-
-    Parameters
-    ----------
-    configs_dir : Path
-        Root directory containing YAML configuration files.
-    include : Sequence[str]
-        Glob patterns (relative to ``configs_dir``) selecting which configs
-        to run. When empty, all ``*.yaml``/``*.yml`` files are considered.
-    exclude : Sequence[str]
-        Glob patterns (relative to ``configs_dir``) that are excluded from
-        the included set.
-    total_steps : int
-        Default target environment steps per run. If a configuration
-        provides ``exp.total_steps``, that value takes precedence for
-        that particular run.
-    runs_root : Path
-        Root directory into which per-run subdirectories are created.
-    seeds : Sequence[int]
-        Optional list of seeds to use for each config. When empty, the
-        seed stored in the configuration is used instead.
-    device : str or None
-        Optional device override for training (for example ``"cpu"`` or
-        ``"cuda:0"``). When ``None``, each config's ``device`` field is
-        respected.
-    resume : bool
-        When ``True``, resume from existing checkpoints (if present) and
-        skip runs that already reached their target step budget.
-    auto_async : bool
-        When ``True``, automatically enable ``async_vector`` for configs that
-        request more than one vector environment and have not explicitly set
-        ``env.async_vector``. When ``False``, the value from each config is
-        respected as-is.
-
-    Returns
-    -------
-    None
-        The function is called for its side effects: training runs are
-        executed and checkpoints/logs are written under ``runs_root``.
-    """
     cfg_paths = _discover_configs(configs_dir, include=include, exclude=exclude)
     if not cfg_paths:
         typer.echo(f"[suite] No configuration files found under {configs_dir}")
@@ -158,11 +89,9 @@ def run_training_suite(
             if device is not None:
                 cfg_seeded = replace(cfg_seeded, device=str(device))
 
-            # Prefer per-config exp.total_steps when provided; otherwise, use CLI/default.
             steps_from_cfg = getattr(getattr(cfg_seeded, "exp", object()), "total_steps", None)
             target_steps = int(steps_from_cfg) if steps_from_cfg is not None else int(total_steps)
 
-            # Optionally enable AsyncVectorEnv automatically when multiple envs are requested.
             if auto_async and int(cfg_seeded.env.vec_envs) > 1 and not bool(
                 getattr(cfg_seeded.env, "async_vector", False)
             ):
