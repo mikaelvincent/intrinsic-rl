@@ -11,7 +11,6 @@ from irl.utils.torchops import as_tensor
 __all__ = ["ConvEncoder", "ConvEncoderConfig"]
 
 
-# Expects float images in [0, 1]; preprocessing is handled elsewhere.
 @dataclass(frozen=True)
 class ConvEncoderConfig:
     in_channels: int = 3
