@@ -29,7 +29,7 @@ from .factory import (
     update_module,
 )
 from .normalization import RunningRMS
-from .proposed import GLPE
+from .glpe import GLPE
 from .riac import RIAC
 from .ride import RIDE
 
