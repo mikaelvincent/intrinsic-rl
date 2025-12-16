@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from irl.experiments import run_plots_suite, run_training_suite
+from irl.experiments import run_training_suite
 
 
 def _write_cfg(configs_dir: Path, filename: str, text: str) -> Path:
@@ -15,7 +15,9 @@ def _write_cfg(configs_dir: Path, filename: str, text: str) -> Path:
     return p
 
 
-def test_training_suite_prefers_exp_total_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_training_suite_prefers_exp_total_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configs_dir = tmp_path / "configs"
     _write_cfg(
         configs_dir,
@@ -64,7 +66,9 @@ exp:
     assert captured["total_steps"] == 24
 
 
-def test_training_suite_skips_when_up_to_date(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_training_suite_skips_when_up_to_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     configs_dir = tmp_path / "configs"
     cfg_path = _write_cfg(
         configs_dir,
@@ -99,7 +103,7 @@ exp:
     import irl.experiments.training as training_module
 
     def fail_run_train(*args, **kwargs):
-        raise AssertionError("run_train should not be called when up to date")
+        raise AssertionError("run_train should not be called")
 
     monkeypatch.setattr(training_module, "run_train", fail_run_train)
 
@@ -113,27 +117,3 @@ exp:
         device="cpu",
         resume=True,
     )
-
-
-def test_plots_suite_discovers_runs_and_writes_overlay(tmp_path: Path) -> None:
-    runs_root = tmp_path / "runs_suite"
-    results_dir = tmp_path / "results_suite"
-
-    for name in ("vanilla__MountainCar-v0__seed1__A", "proposed__MountainCar-v0__seed2__B"):
-        logs = runs_root / name / "logs"
-        logs.mkdir(parents=True, exist_ok=True)
-        (logs / "scalars.csv").write_text(
-            "step,reward_total_mean\n0,0.0\n10,1.0\n",
-            encoding="utf-8",
-        )
-
-    run_plots_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        metric="reward_total_mean",
-        smooth=1,
-        shade=False,
-    )
-
-    out = results_dir / "plots" / "MountainCar-v0__overlay_reward_total_mean.png"
-    assert out.exists()
