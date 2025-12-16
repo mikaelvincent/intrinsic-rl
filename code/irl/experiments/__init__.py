@@ -106,7 +106,7 @@ def cli_videos(
     results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
     device: str = typer.Option("cpu", "--device", "-d"),
     baseline: str = typer.Option("vanilla", "--baseline", "-b"),
-    method: str = typer.Option("proposed", "--method", "-m"),
+    method: str = typer.Option("glpe", "--method", "-m"),
 ) -> None:
     run_video_suite(
         runs_root=runs_root,
@@ -176,7 +176,7 @@ def cli_full(
         results_dir=results_dir,
         device=eval_device,
         baseline="vanilla",
-        method="proposed",
+        method="glpe",
     )
 
 
