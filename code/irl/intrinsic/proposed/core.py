@@ -17,7 +17,7 @@ from .gating import _RegionStats, update_region_gate
 from .normalize import ComponentRMS
 
 
-class Proposed(nn.Module):
+class GLPE(nn.Module):
     def __init__(
         self,
         obs_space: gym.Space,
@@ -42,7 +42,7 @@ class Proposed(nn.Module):
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
-            raise TypeError("Proposed supports Box observation spaces (vector states or images).")
+            raise TypeError("GLPE supports Box observation spaces (vector states or images).")
 
         self.device = torch.device(device)
 
