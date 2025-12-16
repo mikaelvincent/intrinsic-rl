@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import glob
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+_REWARD_METRIC_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "reward_mean": ("reward_total_mean",),
+    "reward_total_mean": ("reward_mean",),
+}
 
 
 def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
@@ -89,6 +95,38 @@ class AggregateResult:
     env_hint: Optional[str]
 
 
+def _resolve_metric_for_run(
+    *,
+    metric: str,
+    df_columns: Sequence[str],
+    scalars_path: Path,
+) -> str | None:
+    cols = set(map(str, df_columns))
+    if metric in cols:
+        return metric
+
+    fallback = None
+    for cand in _REWARD_METRIC_FALLBACKS.get(metric, ()):
+        if cand in cols:
+            fallback = cand
+            break
+
+    if fallback is not None:
+        warnings.warn(
+            f"Metric {metric!r} missing in {scalars_path}; using {fallback!r}. "
+            f"Available columns: {sorted(cols)}",
+            UserWarning,
+        )
+        return fallback
+
+    warnings.warn(
+        f"Metric {metric!r} missing in {scalars_path}; skipping run. "
+        f"Available columns: {sorted(cols)}",
+        UserWarning,
+    )
+    return None
+
+
 def _aggregate_runs(run_dirs: Sequence[Path], metric: str, smooth: int = 1) -> AggregateResult:
     if not run_dirs:
         return AggregateResult(np.array([]), np.array([]), np.array([]), 0, None, None)
@@ -109,18 +147,14 @@ def _aggregate_runs(run_dirs: Sequence[Path], metric: str, smooth: int = 1) -> A
         except Exception:
             continue
 
-        if metric not in df.columns:
-            fallback = None
-            if metric != "reward_total_mean" and "reward_total_mean" in df.columns:
-                fallback = "reward_total_mean"
-            elif metric != "reward_mean" and "reward_mean" in df.columns:
-                fallback = "reward_mean"
-
-            if fallback is None:
-                continue
-            metric_local = fallback
-        else:
-            metric_local = metric
+        scalars_path = rd / "logs" / "scalars.csv"
+        metric_local = _resolve_metric_for_run(
+            metric=str(metric),
+            df_columns=df.columns,
+            scalars_path=scalars_path,
+        )
+        if metric_local is None:
+            continue
 
         y = pd.to_numeric(df[metric_local], errors="coerce")
         x = df["step"]
