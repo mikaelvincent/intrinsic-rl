@@ -203,7 +203,7 @@ class MetricLogger:
             if s == 0 or s >= interval:
                 should_write_csv = True
         else:
-            # Threshold-based cadence (not modulo) to handle large step jumps.
+            # Use thresholds (not modulo) to handle step jumps.
             if s >= last + interval:
                 should_write_csv = True
 
