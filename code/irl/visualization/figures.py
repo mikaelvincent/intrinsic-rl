@@ -4,8 +4,7 @@ from pathlib import Path
 
 import matplotlib
 
-# Must be set before importing pyplot in headless runs.
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # Must run before importing pyplot.
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -23,9 +22,7 @@ def plot_normalized_summary(summary_path: Path, out_path: Path, highlight_method
     if not required.issubset(df.columns):
         return
 
-    pivoted = df.pivot_table(
-        index="env_id", columns="method", values="mean_return_mean", aggfunc="mean"
-    )
+    pivoted = df.pivot_table(index="env_id", columns="method", values="mean_return_mean", aggfunc="mean")
 
     mins = pivoted.min(axis=1)
     maxs = pivoted.max(axis=1)
