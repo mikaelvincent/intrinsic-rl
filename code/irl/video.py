@@ -79,7 +79,7 @@ def render_side_by_side(
     seed: int = 42,
     device: str = "cpu",
     label_left: str = "Baseline",
-    label_right: str = "Proposed",
+    label_right: str = "Gated Learning-Progress Exploration (GLPE)",
 ) -> None:
     seed_everything(seed, deterministic=True)
 
