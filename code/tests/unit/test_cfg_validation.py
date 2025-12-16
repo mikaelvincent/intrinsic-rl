@@ -172,3 +172,18 @@ def test_factory_applies_proposed_variant_overrides():
     )
     assert isinstance(nogate, Proposed)
     assert bool(getattr(nogate, "gating_enabled", True)) is False
+
+
+def test_factory_passes_ride_knobs():
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=float)
+    act_space = gym.spaces.Discrete(5)
+    ride = create_intrinsic_module(
+        "ride",
+        obs_space,
+        act_space,
+        device="cpu",
+        bin_size=0.5,
+        alpha_impact=1.7,
+    )
+    assert abs(float(ride.bin_size) - 0.5) < 1e-8
+    assert abs(float(ride.alpha_impact) - 1.7) < 1e-8
