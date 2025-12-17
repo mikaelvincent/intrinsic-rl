@@ -9,7 +9,7 @@ from irl.results.summary import RunResult
 from irl.utils.checkpoint import load_checkpoint
 
 
-def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
+def cfg_fields_from_payload(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
     cfg = payload.get("cfg") or {}
     if not isinstance(cfg, Mapping):
         return None, None, None
@@ -29,6 +29,10 @@ def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int
             seed = None
 
     return env_id, method, seed
+
+
+def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
+    return cfg_fields_from_payload(payload)
 
 
 def _episode_seeds_hash(summary: Mapping[str, Any]) -> str:
