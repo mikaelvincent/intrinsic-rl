@@ -15,9 +15,41 @@ from .wrappers import CarRacingDiscreteActionWrapper, DomainRandomizationWrapper
 
 _LOG = get_logger(__name__)
 
+try:
+    from gymnasium.vector import AutoresetMode as _AutoresetMode
+except Exception:
+    _AutoresetMode = None
+
 
 def _is_car_racing(env_id: str) -> bool:
     return env_id.startswith("CarRacing")
+
+
+def _make_vector_env(cls, thunks, *, copy: bool):
+    if _AutoresetMode is not None:
+        try:
+            return cls(thunks, copy=copy, autoreset_mode=_AutoresetMode.SAME_STEP)
+        except TypeError:
+            pass
+    try:
+        return cls(thunks, copy=copy, autoreset_mode="same_step")
+    except TypeError:
+        pass
+
+    if _AutoresetMode is not None:
+        try:
+            return cls(thunks, autoreset_mode=_AutoresetMode.SAME_STEP)
+        except TypeError:
+            pass
+    try:
+        return cls(thunks, autoreset_mode="same_step")
+    except TypeError:
+        pass
+
+    try:
+        return cls(thunks, copy=copy)
+    except TypeError:
+        return cls(thunks)
 
 
 @dataclass
@@ -40,10 +72,7 @@ class EnvManager:
 
         if self.async_vector:
             try:
-                try:
-                    return AsyncVectorEnv(thunks, copy=True)
-                except TypeError:
-                    return AsyncVectorEnv(thunks)
+                return _make_vector_env(AsyncVectorEnv, thunks, copy=True)
             except Exception as exc:
                 _LOG.info(
                     "AsyncVectorEnv failed (%s); falling back to SyncVectorEnv for env_id=%s.",
@@ -51,10 +80,7 @@ class EnvManager:
                     self.env_id,
                 )
 
-        try:
-            return SyncVectorEnv(thunks, copy=True)
-        except TypeError:
-            return SyncVectorEnv(thunks)
+        return _make_vector_env(SyncVectorEnv, thunks, copy=True)
 
     def _build_carracing_action_set(self) -> Optional[np.ndarray]:
         spec = self.car_action_set
