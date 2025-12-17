@@ -13,10 +13,7 @@ from irl.models import PolicyNetwork
 from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything
-
-
-def _is_image_space(space) -> bool:
-    return hasattr(space, "shape") and len(space.shape) >= 2
+from irl.utils.spaces import is_image_space
 
 
 def _build_normalizer(payload) -> tuple[np.ndarray, np.ndarray] | None:
@@ -129,7 +126,7 @@ def render_rollout_video(
 
     try:
         obs_space, act_space = single_spaces(env)
-        is_image = _is_image_space(obs_space)
+        is_image = is_image_space(obs_space)
         norm = None if is_image else _build_normalizer(payload)
 
         def _norm_obs(x: np.ndarray) -> np.ndarray:
