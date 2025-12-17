@@ -64,8 +64,8 @@ def cli_eval(
     device: str = typer.Option("cpu", "--device", "-d"),
     policy: str = typer.Option("mode", "--policy", "-p"),
     quick: bool = typer.Option(False, "--quick/--no-quick"),
-    strict_coverage: bool = typer.Option(False, "--strict-coverage/--no-strict-coverage"),
-    strict_step_parity: bool = typer.Option(False, "--strict-step-parity/--no-strict-step-parity"),
+    strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
+    strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
 ) -> None:
     n_eps = int(episodes)
     if quick:
@@ -188,8 +188,8 @@ def cli_full(
     auto_async: bool = typer.Option(False, "--auto-async/--no-auto-async"),
     policy: str = typer.Option("mode", "--policy", "-p"),
     quick: bool = typer.Option(False, "--quick/--no-quick"),
-    strict_coverage: bool = typer.Option(False, "--strict-coverage/--no-strict-coverage"),
-    strict_step_parity: bool = typer.Option(False, "--strict-step-parity/--no-strict-step-parity"),
+    strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
+    strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
 ) -> None:
     run_training_suite(
         configs_dir=configs_dir,
