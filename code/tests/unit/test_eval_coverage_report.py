@@ -53,13 +53,14 @@ def test_eval_suite_writes_coverage_for_nested_runs(tmp_path: Path, monkeypatch:
 
     monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
 
-    run_eval_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        episodes=1,
-        device="cpu",
-        policy_mode="mode",
-    )
+    with pytest.raises(RuntimeError, match="Seed coverage mismatch"):
+        run_eval_suite(
+            runs_root=runs_root,
+            results_dir=results_dir,
+            episodes=1,
+            device="cpu",
+            policy_mode="mode",
+        )
 
     cov_path = results_dir / "coverage.csv"
     assert cov_path.exists()
@@ -101,4 +102,31 @@ def test_eval_suite_strict_coverage_raises(tmp_path: Path, monkeypatch: pytest.M
             device="cpu",
             policy_mode="mode",
             strict_coverage=True,
+        )
+
+
+def test_eval_suite_strict_step_parity_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs_root = tmp_path / "runs_suite"
+    results_dir = tmp_path / "results_suite"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    r_v1 = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    r_g1 = runs_root / "glpe__DummyEval-v0__seed1__cfgA"
+    for rd in (r_v1, r_g1):
+        rd.mkdir(parents=True, exist_ok=True)
+
+    _write_latest_ckpt(r_v1, env_id="DummyEval-v0", method="vanilla", seed=1, step=100_000)
+    _write_latest_ckpt(r_g1, env_id="DummyEval-v0", method="glpe", seed=1, step=1_000)
+
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
+    with pytest.raises(RuntimeError, match="Step parity mismatch"):
+        run_eval_suite(
+            runs_root=runs_root,
+            results_dir=results_dir,
+            episodes=1,
+            device="cpu",
+            policy_mode="mode",
         )
