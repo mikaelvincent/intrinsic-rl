@@ -9,20 +9,11 @@ import torch
 from irl.envs.builder import make_env
 from irl.intrinsic.factory import create_intrinsic_module
 from irl.models import PolicyNetwork
+from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import single_spaces
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything
 from irl.utils.spaces import is_image_space
-
-
-def _build_normalizer(payload) -> tuple[np.ndarray, np.ndarray] | None:
-    on = payload.get("obs_norm")
-    if on is None:
-        return None
-    mean_arr = np.asarray(on.get("mean"), dtype=np.float64)
-    var_arr = np.asarray(on.get("var"), dtype=np.float64)
-    std_arr = np.sqrt(var_arr + 1e-8)
-    return mean_arr, std_arr
 
 
 def _seed_torch(seed: int) -> None:
@@ -55,10 +46,10 @@ def evaluate(
 
     seed_everything(seed_cfg, deterministic=True)
 
-    env_cfg = (cfg.get("env") or {}) if isinstance(cfg, dict) else {}
-    frame_skip = int(env_cfg.get("frame_skip", 1))
-    discrete_actions = bool(env_cfg.get("discrete_actions", True))
-    car_action_set = env_cfg.get("car_discrete_action_set", None)
+    runtime = extract_env_runtime(cfg)
+    frame_skip = int(runtime["frame_skip"])
+    discrete_actions = bool(runtime["discrete_actions"])
+    car_action_set = runtime["car_action_set"]
 
     e = make_env(
         env_id=env,
@@ -109,7 +100,7 @@ def evaluate(
             intrinsic_module = None
 
     is_image = is_image_space(obs_space)
-    norm = None if is_image else _build_normalizer(payload)
+    norm = None if is_image else build_obs_normalizer(payload)
 
     def _normalize(x: np.ndarray) -> np.ndarray:
         if norm is None:
@@ -236,7 +227,9 @@ def evaluate(
                             )
 
                             if is_glpe_family:
-                                res = _glpe_gate_and_intrinsic_no_update(intrinsic_module, obs_t, next_t)
+                                res = _glpe_gate_and_intrinsic_no_update(
+                                    intrinsic_module, obs_t, next_t
+                                )
                                 if res is not None:
                                     gate_val, int_val = res
                                     gate_source = "checkpoint"
