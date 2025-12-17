@@ -242,6 +242,19 @@ def collect_rollout(
 
     t_rollout_start = time.perf_counter()
 
+    prev_done_flags: np.ndarray | None = None
+    if r_int_raw_seq is not None and intrinsic_module is not None:
+        prev = getattr(intrinsic_module, "_ride_prev_done_flags", None)
+        if prev is not None:
+            try:
+                arr = np.asarray(prev, dtype=bool).reshape(-1)
+                if int(arr.size) == int(B):
+                    prev_done_flags = arr.astype(bool, copy=False)
+            except Exception:
+                prev_done_flags = None
+        if prev_done_flags is None:
+            prev_done_flags = np.zeros((B,), dtype=bool)
+
     for t in range(int(T)):
         obs_b = obs_var if B > 1 else obs_var[None, ...]
         if not is_image:
@@ -311,7 +324,7 @@ def collect_rollout(
             r_step = intrinsic_module.compute_impact_binned(
                 obs_b_norm,
                 next_obs_b_norm,
-                dones=done_flags,
+                dones=prev_done_flags,
                 reduction="none",
             )
             r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
@@ -319,7 +332,20 @@ def collect_rollout(
             r_int_raw_seq[t] = r_step_np
             t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
+            if prev_done_flags is not None:
+                prev_done_flags = done_flags.astype(bool, copy=False)
+
         obs_var = next_obs_env
+
+    if r_int_raw_seq is not None and intrinsic_module is not None and prev_done_flags is not None:
+        try:
+            setattr(
+                intrinsic_module,
+                "_ride_prev_done_flags",
+                prev_done_flags.astype(bool, copy=True),
+            )
+        except Exception:
+            pass
 
     if not is_image:
         obs_seq_final = obs_seq
