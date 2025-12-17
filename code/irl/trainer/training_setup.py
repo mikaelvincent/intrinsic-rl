@@ -10,14 +10,54 @@ from irl.cfg import Config, to_dict
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.determinism import seed_everything
 from irl.utils.spaces import is_image_space
+from irl.utils.loggers import MetricLogger
 
-from .build import ensure_mujoco_gl, single_spaces
+from .build import default_run_dir, ensure_mujoco_gl, single_spaces
 from .obs_norm import RunningObsNorm
 from .resume import _init_run_dir_and_ckpt, _maybe_load_resume_payload, _restore_from_checkpoint
 from .session_types import IntrinsicContext, PPOOptimizers, TrainingSession
 from .setup_env import _build_env, _log_reset_diagnostics
 from .setup_intrinsic import _build_intrinsic
-from irl.utils.loggers import MetricLogger
+
+
+def _existing_run_artifacts(run_dir: Path) -> list[Path]:
+    run_dir = Path(run_dir)
+    if not run_dir.exists():
+        return []
+    if not run_dir.is_dir():
+        return [run_dir]
+
+    artifacts: list[Path] = []
+
+    ckpt_dir = run_dir / "checkpoints"
+    latest = ckpt_dir / "ckpt_latest.pt"
+    if latest.exists():
+        artifacts.append(latest)
+    if ckpt_dir.exists():
+        try:
+            artifacts.extend(sorted(p for p in ckpt_dir.glob("ckpt_step_*.pt") if p.is_file()))
+        except Exception:
+            pass
+
+    scalars = run_dir / "logs" / "scalars.csv"
+    if scalars.exists():
+        try:
+            if scalars.is_file() and scalars.stat().st_size > 0:
+                artifacts.append(scalars)
+        except Exception:
+            artifacts.append(scalars)
+
+    return artifacts
+
+
+def _format_artifacts(run_dir: Path, artifacts: list[Path]) -> str:
+    bits: list[str] = []
+    for p in artifacts:
+        try:
+            bits.append(str(p.resolve().relative_to(run_dir.resolve())))
+        except Exception:
+            bits.append(str(p))
+    return ", ".join(bits)
 
 
 def _resolve_deterministic_flag(cfg: Config) -> bool:
@@ -39,6 +79,18 @@ def build_training_session(
     resume: bool,
     logger,
 ) -> TrainingSession:
+    run_dir_candidate = Path(run_dir) if run_dir is not None else default_run_dir(cfg)
+
+    # A fresh run into an existing directory can corrupt checkpoint cadence and mix logs.
+    if not bool(resume):
+        artifacts = _existing_run_artifacts(run_dir_candidate)
+        if artifacts:
+            found = _format_artifacts(run_dir_candidate, artifacts)
+            raise RuntimeError(
+                "Refusing to start a fresh run in a directory that already contains run artifacts: "
+                f"{run_dir_candidate} (found: {found}). Delete the directory or run with resume=True."
+            )
+
     deterministic = _resolve_deterministic_flag(cfg)
     seed_everything(int(cfg.seed), deterministic=deterministic)
 
@@ -47,7 +99,7 @@ def build_training_session(
     except Exception:
         pass
 
-    run_dir_resolved, ckpt = _init_run_dir_and_ckpt(cfg, run_dir)
+    run_dir_resolved, ckpt = _init_run_dir_and_ckpt(cfg, run_dir_candidate)
     resume_payload, resume_step = _maybe_load_resume_payload(cfg, ckpt, resume)
 
     env = _build_env(cfg, logger=logger)
