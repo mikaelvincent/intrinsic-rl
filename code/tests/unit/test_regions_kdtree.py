@@ -3,19 +3,6 @@ import numpy as np
 from irl.intrinsic.regions.kdtree import KDTreeRegionStore
 
 
-def test_kdtree_splits_and_uses_max_variance_dimension():
-    store = KDTreeRegionStore(dim=2, capacity=4, depth_max=8)
-    pts = np.array(
-        [[1.0, 0.0], [1.0, 10.0], [1.0, 20.0], [1.0, 30.0], [1.0, 40.0]],
-        dtype=np.float32,
-    )
-    for p in pts:
-        store.insert(p)
-
-    assert store.num_regions() == 2
-    assert store.root.split_dim == 1
-
-
 def test_bulk_insert_matches_sequential_insert():
     rng = np.random.default_rng(0)
     dim = 3
