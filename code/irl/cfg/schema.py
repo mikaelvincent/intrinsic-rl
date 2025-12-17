@@ -14,6 +14,7 @@ class GateConfig:
     hysteresis_up_mult: float = 2.0
     min_consec_to_gate: int = 5
     min_regions_for_gating: int = 3
+    median_cache_interval: int = 1
 
 
 @dataclass(frozen=True)
