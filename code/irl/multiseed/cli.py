@@ -146,7 +146,7 @@ def cli_stats(
     med_pt, med_lo, med_hi = (
         bootstrap_ci(x, y, diff_median, n_boot=int(boot))
         if boot > 0
-        else (res.median_x - res.mean_y, float("nan"), float("nan"))
+        else (res.median_x - res.median_y, float("nan"), float("nan"))
     )
 
     typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
@@ -159,8 +159,8 @@ def cli_stats(
         f"(Δ={res.mean_x - res.mean_y:+.3f})"
     )
     typer.echo(
-        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.mean_y:.3f}  "
-        f"(Δ={res.median_x - res.mean_y:+.3f})"
+        f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
+        f"(Δ={res.median_x - res.median_y:+.3f})"
     )
     typer.echo(f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)")
 
