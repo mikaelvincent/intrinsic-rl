@@ -10,10 +10,10 @@ import typer
 
 from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
+from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
 from irl.plot import _parse_run_name
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
-from irl.utils.runs import find_latest_ckpt
 
 
 def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
@@ -203,30 +203,7 @@ def _enforce_coverage_and_step_parity(
 
 
 def _discover_run_dirs_with_ckpt(runs_root: Path) -> list[tuple[Path, Path]]:
-    root = Path(runs_root).resolve()
-    if not root.exists():
-        return []
-
-    seen: set[Path] = set()
-    out: list[tuple[Path, Path]] = []
-
-    for ckpt_dir in root.rglob("checkpoints"):
-        if not ckpt_dir.is_dir():
-            continue
-
-        run_dir = ckpt_dir.parent.resolve()
-        if run_dir in seen:
-            continue
-
-        ckpt = find_latest_ckpt(run_dir)
-        if ckpt is None:
-            continue
-
-        seen.add(run_dir)
-        out.append((run_dir, ckpt))
-
-    out.sort(key=lambda t: str(t[0]))
-    return out
+    return discover_run_dirs_with_latest_ckpt(runs_root)
 
 
 def run_eval_suite(
@@ -318,6 +295,8 @@ def run_eval_suite(
                 save_traj=True,
                 traj_out_dir=traj_out_dir,
                 policy_mode=pm,
+                strict_coverage=bool(strict_coverage),
+                strict_step_parity=bool(strict_step_parity),
             )
 
             results.append(
