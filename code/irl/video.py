@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
+from irl.cli.validators import normalize_policy_mode
 from irl.envs.builder import make_env
 from irl.models import PolicyNetwork
 from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
@@ -84,9 +85,7 @@ def render_rollout_video(
     policy_mode: str = "mode",
     fps: int = 30,
 ) -> None:
-    pm = str(policy_mode).strip().lower()
-    if pm not in {"mode", "sample"}:
-        raise ValueError("policy_mode must be 'mode' or 'sample'")
+    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
 
     payload = load_checkpoint(Path(ckpt_path), map_location=device)
     cfg = payload.get("cfg", {}) or {}
