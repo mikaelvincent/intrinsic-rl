@@ -29,6 +29,7 @@ class IntrinsicConfig:
     ema_beta_short: float = 0.90
     normalize_inside: bool = True
     fail_on_error: bool = True
+    checkpoint_include_points: bool = True
     gate: GateConfig = field(default_factory=GateConfig)
 
 
