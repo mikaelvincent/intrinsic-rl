@@ -60,6 +60,7 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         ema_beta_long: float = 0.995,
         ema_beta_short: float = 0.90,
         alpha_lp: float = 0.5,
+        checkpoint_include_points: bool = True,
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
@@ -83,11 +84,17 @@ class RIAC(BaseIntrinsicModule, nn.Module):
 
         self._lp_rms = RunningRMS(beta=0.99, eps=1e-8)
         self.outputs_normalized = True
+        self.checkpoint_include_points = bool(checkpoint_include_points)
         self.to(self.device)
 
     def get_extra_state(self) -> dict:
+        store_state = self.store.state_dict(include_points=bool(self.checkpoint_include_points))
+        if isinstance(store_state, dict):
+            store_state = dict(store_state)
+            store_state["include_points"] = bool(self.checkpoint_include_points)
+
         return {
-            "store": self.store.state_dict(include_points=True),
+            "store": store_state,
             "stats": {int(k): asdict(v) for k, v in self._stats.items()},
             "rms": self._lp_rms.state_dict(),
         }
@@ -99,7 +106,11 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         try:
             store_state = state.get("store")
             if isinstance(store_state, dict):
+                includes_points = bool(store_state.get("include_points", True))
                 self.store = KDTreeRegionStore.from_state_dict(store_state)
+                if not includes_points:
+                    # If points were omitted, further splits would be history-dependent.
+                    self.store.depth_max = 0
         except Exception:
             pass
 
