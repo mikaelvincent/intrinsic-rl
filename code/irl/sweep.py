@@ -7,7 +7,6 @@ from irl.multiseed.evaluation import (
     app,
     cli_eval_many,
     cli_stats,
-    main as _impl_main,
 )
 
 __all__ = (
@@ -24,4 +23,6 @@ __all__ = (
 
 
 def main(argv: list[str] | None = None) -> None:
-    _impl_main()
+    from irl.cli.app import dispatch
+
+    dispatch("sweep", argv, prog_name="irl-sweep")
