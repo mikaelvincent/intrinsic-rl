@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-from irl.envs import EnvManager
+from irl.envs.builder import make_env
 from irl.models import PolicyNetwork
 from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
@@ -112,7 +112,7 @@ def render_rollout_video(
     discrete_actions = bool(env_cfg.get("discrete_actions", True))
     car_action_set = env_cfg.get("car_discrete_action_set", None)
 
-    manager = EnvManager(
+    env = make_env(
         env_id=env_id,
         num_envs=1,
         seed=int(seed),
@@ -122,7 +122,6 @@ def render_rollout_video(
         car_action_set=car_action_set,
         render_mode="rgb_array",
     )
-    env = manager.make()
 
     try:
         obs_space, act_space = single_spaces(env)
