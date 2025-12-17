@@ -20,9 +20,15 @@ def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
-def parse_run_name(run_dir_name: str) -> dict[str, str]:
+def parse_run_name(run_dir_name: str | Path) -> dict[str, str]:
     info: dict[str, str] = {}
-    name = str(run_dir_name)
+
+    name_raw = str(run_dir_name)
+    try:
+        name = Path(name_raw).name
+    except Exception:
+        name = name_raw
+
     parts = name.split("__")
     if len(parts) >= 1:
         info["method"] = parts[0]
