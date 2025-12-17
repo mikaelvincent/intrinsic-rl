@@ -10,7 +10,7 @@ from torch.optim import Adam
 
 import irl.utils.checkpoint_schema as ckpt_schema
 from irl.cfg import Config, to_dict
-from irl.envs import EnvManager
+from irl.envs.builder import make_env
 from irl.intrinsic import RunningRMS, create_intrinsic_module, is_intrinsic_method
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.checkpoint import CheckpointManager, compute_cfg_hash
@@ -129,7 +129,8 @@ def _maybe_load_resume_payload(
 
 
 def _build_env(cfg: Config, *, logger) -> Any:
-    manager = EnvManager(
+    async_vector = bool(getattr(cfg.env, "async_vector", False))
+    env = make_env(
         env_id=cfg.env.id,
         num_envs=cfg.env.vec_envs,
         seed=cfg.seed,
@@ -138,14 +139,13 @@ def _build_env(cfg: Config, *, logger) -> Any:
         discrete_actions=cfg.env.discrete_actions,
         car_action_set=cfg.env.car_discrete_action_set,
         render_mode=None,
-        async_vector=bool(getattr(cfg.env, "async_vector", False)),
+        async_vector=async_vector,
         make_kwargs=None,
     )
-    env = manager.make()
     if int(cfg.env.vec_envs) > 1:
         logger.info(
             "Vector env mode: %s (num_envs=%d) for env_id=%s",
-            "Async" if bool(getattr(cfg.env, "async_vector", False)) else "Sync",
+            "Async" if async_vector else "Sync",
             int(cfg.env.vec_envs),
             cfg.env.id,
         )
