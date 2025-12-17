@@ -1,44 +1,51 @@
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
 from pathlib import Path
+from typing import Iterable, Sequence
 
-import pandas as pd
 import typer
 
-from irl.plot import _parse_run_name
-from irl.video import render_side_by_side
+from irl.video import render_rollout_video
 
 _CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
 
 
-def _run_dir_from_ckpt_path(p: Path) -> Path | None:
-    try:
-        p = Path(p)
-    except Exception:
-        return None
+def _discover_run_dirs_with_checkpoints(runs_root: Path) -> list[Path]:
+    root = Path(runs_root).resolve()
+    if not root.exists():
+        return []
 
-    if p.is_dir():
-        return p
+    seen: set[Path] = set()
+    out: list[Path] = []
 
-    if p.is_file():
-        if p.parent.name == "checkpoints":
-            return p.parent.parent
-        return p.parent
+    for ckpt_dir in root.rglob("checkpoints"):
+        if not ckpt_dir.is_dir():
+            continue
+        try:
+            has_any = any(
+                p.is_file() and _CKPT_RE.match(p.name) for p in ckpt_dir.iterdir()
+            )
+        except Exception:
+            has_any = False
 
-    if p.name.startswith("ckpt_") and p.parent.name == "checkpoints":
-        return p.parent.parent
+        if not has_any:
+            continue
 
-    return None
+        run_dir = ckpt_dir.parent.resolve()
+        if run_dir not in seen:
+            seen.add(run_dir)
+            out.append(run_dir)
+
+    return sorted(out, key=lambda p: str(p))
 
 
-def _list_step_checkpoints(run_dir: Path) -> dict[int, Path]:
+def _list_step_checkpoints(run_dir: Path) -> list[tuple[int, Path]]:
     ckpt_dir = Path(run_dir) / "checkpoints"
     if not ckpt_dir.exists():
-        return {}
+        return []
 
-    out: dict[int, Path] = {}
+    out: list[tuple[int, Path]] = []
     for p in ckpt_dir.iterdir():
         if not p.is_file():
             continue
@@ -49,167 +56,89 @@ def _list_step_checkpoints(run_dir: Path) -> dict[int, Path]:
             step = int(m.group(1))
         except Exception:
             continue
-        out[step] = p
+        out.append((step, p))
+
+    out.sort(key=lambda t: (t[0], str(t[1])))
     return out
 
 
-def _latest_alias(run_dir: Path) -> Path | None:
-    p = Path(run_dir) / "checkpoints" / "ckpt_latest.pt"
-    return p if p.exists() else None
-
-
-def _select_at_or_before(steps_sorted: list[int], ckpts: dict[int, Path], target_step: int) -> Path:
-    if not steps_sorted:
-        raise ValueError("steps_sorted must be non-empty")
-    idx = bisect_right(steps_sorted, int(target_step)) - 1
-    if idx < 0:
-        return ckpts[steps_sorted[0]]
-    return ckpts[steps_sorted[idx]]
+def _normalize_seeds(seeds: Iterable[int] | None) -> list[int]:
+    if seeds is None:
+        return [100]
+    out: list[int] = []
+    for s in seeds:
+        try:
+            out.append(int(s))
+        except Exception:
+            continue
+    return out or [100]
 
 
 def run_video_suite(
     runs_root: Path,
     results_dir: Path,
     device: str,
-    baseline: str = "vanilla",
-    method: str = "glpe",
+    *,
+    policy_mode: str = "mode",
+    eval_seeds: Sequence[int] | None = None,
+    max_steps: int = 1000,
+    fps: int = 30,
+    overwrite: bool = False,
 ) -> None:
-    root = runs_root.resolve()
+    pm = str(policy_mode).strip().lower()
+    if pm not in {"mode", "sample"}:
+        raise typer.BadParameter("--policy must be one of: mode, sample")
+
+    root = Path(runs_root).resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    run_dirs = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
-
-    summary_csv = Path(results_dir) / "summary_raw.csv"
-    best_run_dirs: dict[tuple[str, str], Path] = {}
-    if summary_csv.exists():
-        try:
-            df = pd.read_csv(summary_csv)
-            if "mean_return" in df.columns:
-                df = df.sort_values("mean_return", ascending=False)
-            for _, row in df.iterrows():
-                env_id = str(row.get("env_id", "")).strip()
-                mth = str(row.get("method", "")).strip()
-                ckpt_str = str(row.get("ckpt_path", "")).strip()
-                if not env_id or not mth or not ckpt_str:
-                    continue
-                rd = _run_dir_from_ckpt_path(Path(ckpt_str))
-                if rd is None:
-                    continue
-                key = (env_id, mth)
-                if key not in best_run_dirs:
-                    best_run_dirs[key] = rd
-        except Exception:
-            best_run_dirs = {}
-
-    envs: set[str] = set()
-    for rd in run_dirs:
-        info = _parse_run_name(rd)
-        if "env" in info:
-            envs.add(info["env"])
-
-    if not envs:
-        typer.echo("[suite] No environments found.")
+    run_dirs = _discover_run_dirs_with_checkpoints(root)
+    if not run_dirs:
+        typer.echo(f"[suite] No run directories with checkpoints under {root}")
         return
 
-    videos_root = Path(results_dir) / "videos"
+    seeds = _normalize_seeds(eval_seeds)
+
+    videos_root = (Path(results_dir) / "videos").resolve()
     videos_root.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"[suite] Generating checkpoint videos ({baseline} vs {method}) for {len(envs)} envs...")
 
-    for env_id in sorted(envs):
-        env_tag = env_id.replace("/", "-")
+    typer.echo(
+        f"[suite] Rendering rollout videos for {len(run_dirs)} run(s) "
+        f"({pm}, eval_seeds={seeds}) to {videos_root}"
+    )
 
-        rd_left = best_run_dirs.get((env_id, baseline))
-        if rd_left is None:
-            matches = [
-                rd
-                for rd in run_dirs
-                if _parse_run_name(rd).get("env") == env_id
-                and _parse_run_name(rd).get("method") == baseline
-            ]
-            rd_left = matches[0] if matches else None
-
-        rd_right = best_run_dirs.get((env_id, method))
-        if rd_right is None:
-            matches = [
-                rd
-                for rd in run_dirs
-                if _parse_run_name(rd).get("env") == env_id
-                and _parse_run_name(rd).get("method") == method
-            ]
-            rd_right = matches[0] if matches else None
-
-        if rd_left is None or rd_right is None:
-            typer.echo(f"[suite]    - {env_id}: missing run dirs for one or both methods. Skipping.")
+    for rd in run_dirs:
+        ckpts = _list_step_checkpoints(rd)
+        if not ckpts:
+            typer.echo(f"[suite]    - {rd.name}: no step checkpoints found, skipping")
             continue
 
-        ckpts_left = _list_step_checkpoints(rd_left)
-        ckpts_right = _list_step_checkpoints(rd_right)
-        latest_left = _latest_alias(rd_left)
-        latest_right = _latest_alias(rd_right)
-
-        steps_union = sorted(set(ckpts_left.keys()) | set(ckpts_right.keys()))
-        if not steps_union:
-            if latest_left is None or latest_right is None:
-                typer.echo(
-                    f"[suite]    - {env_id}: no step checkpoints and missing ckpt_latest.pt. Skipping."
-                )
-                continue
-            steps_to_render: list[int | str] = ["latest"]
-        else:
-            steps_to_render = steps_union
-
-        out_dir = videos_root / env_tag
+        out_dir = videos_root / rd.name
         out_dir.mkdir(parents=True, exist_ok=True)
-        typer.echo(
-            f"[suite]    - {env_id}: Rendering {len(steps_to_render)} checkpoint video(s) to {out_dir}..."
-        )
 
-        left_steps_sorted = sorted(ckpts_left.keys())
-        right_steps_sorted = sorted(ckpts_right.keys())
+        typer.echo(f"[suite]    - {rd.name}: {len(ckpts)} checkpoint(s)")
 
-        for s in steps_to_render:
-            if s == "latest":
-                ckpt_l = latest_left
-                ckpt_r = latest_right
-                assert ckpt_l is not None and ckpt_r is not None
-                step_tag = "latest"
-            else:
-                step = int(s)
-                ckpt_l = (
-                    _select_at_or_before(left_steps_sorted, ckpts_left, step)
-                    if ckpts_left
-                    else latest_left
-                )
-                ckpt_r = (
-                    _select_at_or_before(right_steps_sorted, ckpts_right, step)
-                    if ckpts_right
-                    else latest_right
-                )
-                if ckpt_l is None or ckpt_r is None:
-                    typer.echo(f"[suite]        * step={step}: missing ckpt on one side; skipping.")
+        for step, ckpt_path in ckpts:
+            step_tag = f"step{int(step):09d}"
+            for s in seeds:
+                out_name = f"{step_tag}__{pm}__evalseed{int(s)}.mp4"
+                out_path = out_dir / out_name
+
+                if out_path.exists() and not overwrite:
                     continue
-                step_tag = f"step{step:09d}"
 
-            out_name = f"{env_tag}__{baseline}_vs_{method}__{step_tag}.mp4"
-            out_path = out_dir / out_name
-
-            typer.echo(
-                f"[suite]        * {env_id}: {step_tag} -> {out_path.name} "
-                f"(L={Path(ckpt_l).name}, R={Path(ckpt_r).name})"
-            )
-
-            try:
-                render_side_by_side(
-                    env_id=env_id,
-                    ckpt_left=Path(ckpt_l),
-                    ckpt_right=Path(ckpt_r),
-                    out_path=out_path,
-                    seed=100,
-                    device=device,
-                    label_left=baseline.capitalize(),
-                    label_right="Gated Learning-Progress Exploration (GLPE)",
-                )
-            except Exception as exc:
-                typer.echo(f"[warn] Failed to render video for {env_id} ({step_tag}): {exc}")
+                typer.echo(f"[suite]        * {ckpt_path.name} -> {out_path.name}")
+                try:
+                    render_rollout_video(
+                        ckpt_path=ckpt_path,
+                        out_path=out_path,
+                        seed=int(s),
+                        max_steps=int(max_steps),
+                        device=str(device),
+                        policy_mode=pm,
+                        fps=int(fps),
+                    )
+                except Exception as exc:
+                    typer.echo(f"[warn] Failed to render {ckpt_path}: {exc}")
