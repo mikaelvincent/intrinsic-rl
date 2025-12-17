@@ -11,6 +11,7 @@ import typer
 from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
+from irl.pipelines.eval import cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_ckpt_to_run_result
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
@@ -18,25 +19,7 @@ from irl.utils.runs import parse_run_name
 
 
 def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
-    cfg = payload.get("cfg") or {}
-    if not isinstance(cfg, Mapping):
-        return None, None, None
-
-    env_id = None
-    env_cfg = cfg.get("env") or {}
-    if isinstance(env_cfg, Mapping) and env_cfg.get("id") is not None:
-        env_id = str(env_cfg.get("id"))
-
-    method = str(cfg.get("method")) if cfg.get("method") is not None else None
-
-    seed = None
-    if cfg.get("seed") is not None:
-        try:
-            seed = int(cfg.get("seed"))
-        except Exception:
-            seed = None
-
-    return env_id, method, seed
+    return _cfg_fields_from_payload(payload)
 
 
 _COVERAGE_COLS: list[str] = [
