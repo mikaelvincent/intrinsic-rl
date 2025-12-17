@@ -9,6 +9,7 @@ import typer
 from .evaluation import run_eval_suite
 from .plotting import run_plots_suite
 from .training import run_training_suite
+from .validation import run_validate_results
 from .videos import run_video_suite
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -134,6 +135,32 @@ def cli_videos(
         fps=int(fps),
         overwrite=bool(overwrite),
     )
+
+
+@app.command("validate-results")
+def cli_validate_results(
+    runs_root: Path = typer.Option(
+        Path("runs_suite"),
+        "--runs-root",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    results_dir: Path = typer.Option(
+        Path("results_suite"),
+        "--results-dir",
+        "-o",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    strict: bool = typer.Option(True, "--strict/--no-strict"),
+) -> None:
+    ok = run_validate_results(runs_root=runs_root, results_dir=results_dir, strict=bool(strict))
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 @app.command("full")
