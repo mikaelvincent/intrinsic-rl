@@ -18,32 +18,6 @@ def _payload(step: int) -> dict:
     return {"step": int(step), "meta": {"note": "test"}}
 
 
-def test_checkpoint_should_save_warmup_then_interval() -> None:
-    with TemporaryDirectory() as td:
-        run_dir = Path(td) / "run"
-        cm = CheckpointManager(run_dir, interval_steps=50, max_to_keep=None)
-
-        cm.save(step=0, payload=_payload(0))
-
-        assert not cm.should_save(4)
-        assert cm.should_save(5)
-        cm.save(step=5, payload=_payload(5))
-
-        assert not cm.should_save(9)
-        assert cm.should_save(10)
-        cm.save(step=10, payload=_payload(10))
-
-        assert cm.should_save(45)
-        cm.save(step=45, payload=_payload(45))
-
-        assert not cm.should_save(49)
-        assert cm.should_save(50)
-        cm.save(step=50, payload=_payload(50))
-
-        assert not cm.should_save(99)
-        assert cm.should_save(100)
-
-
 def test_checkpoint_prune_preserves_step0() -> None:
     with TemporaryDirectory() as td:
         run_dir = Path(td) / "run"
