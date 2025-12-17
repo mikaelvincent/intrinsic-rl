@@ -1,5 +1,10 @@
+from __future__ import annotations
+
+from irl.cli.app import main as _cli_main
+
+
 def main() -> None:
-    print("intrinsic-rl\nCommands: irl-train, irl-eval, irl-plot, irl-sweep, irl-suite")
+    _cli_main()
 
 
 if __name__ == "__main__":
