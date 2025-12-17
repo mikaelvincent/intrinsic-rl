@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 from logging import Logger
 from pathlib import Path
 from typing import Mapping, Optional
 
 from irl.cfg.schema import LoggingConfig
+from irl.utils.checkpoint import atomic_write_text, compute_cfg_hash
 
 _DEFAULT_LOGGER_NAME = "irl"
 
@@ -172,7 +174,49 @@ class MetricLogger:
             self._last_csv_write_step = s
 
     def log_hparams(self, params: Mapping[str, object]) -> None:
-        return
+        if not isinstance(params, Mapping):
+            return
+
+        cfg_path = self.run_dir / "config.json"
+        hash_path = self.run_dir / "config_hash.txt"
+
+        def _write_hash_file(h: str) -> None:
+            hs = str(h).strip()
+            if not hs:
+                return
+            try:
+                if hash_path.exists() and hash_path.is_file() and hash_path.stat().st_size > 0:
+                    return
+            except Exception:
+                return
+            atomic_write_text(hash_path, hs + "\n")
+
+        try:
+            if cfg_path.exists() and cfg_path.is_file() and cfg_path.stat().st_size > 0:
+                try:
+                    existing = json.loads(cfg_path.read_text(encoding="utf-8"))
+                except Exception:
+                    return
+                if isinstance(existing, Mapping):
+                    h = existing.get("cfg_hash")
+                    if not isinstance(h, str) or not h.strip():
+                        tmp = dict(existing)
+                        tmp.pop("cfg_hash", None)
+                        h = compute_cfg_hash(tmp)
+                    _write_hash_file(str(h))
+                return
+        except Exception:
+            return
+
+        cfg_dict = dict(params)
+        cfg_dict.pop("cfg_hash", None)
+        cfg_hash = compute_cfg_hash(cfg_dict)
+
+        payload = dict(cfg_dict)
+        payload["cfg_hash"] = cfg_hash
+
+        atomic_write_text(cfg_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        _write_hash_file(cfg_hash)
 
     def close(self) -> None:
         self.csv.close()
