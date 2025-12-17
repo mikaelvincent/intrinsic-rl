@@ -109,7 +109,6 @@ class RIAC(BaseIntrinsicModule, nn.Module):
                 includes_points = bool(store_state.get("include_points", True))
                 self.store = KDTreeRegionStore.from_state_dict(store_state)
                 if not includes_points:
-                    # If points were omitted, further splits would be history-dependent.
                     self.store.depth_max = 0
         except Exception:
             pass
@@ -164,8 +163,8 @@ class RIAC(BaseIntrinsicModule, nn.Module):
             err, phi_t = self._forward_error_per_sample(tr.s, tr.s_next, tr.a)
             rid = int(self.store.insert(phi_t.detach().cpu().numpy().reshape(-1)))
             lp = self._update_region(rid=int(rid), error=float(err.view(-1)[0].item()))
-            self._lp_rms.update([lp])
-            lp_norm = self._lp_rms.normalize([lp])[0]
+            self._lp_rms.update_scalar(lp)
+            lp_norm = self._lp_rms.normalize_scalar(lp)
             r = self.alpha_lp * float(lp_norm)
             return IntrinsicOutput(r_int=float(r))
 
@@ -189,9 +188,9 @@ class RIAC(BaseIntrinsicModule, nn.Module):
         for i in range(N):
             rid = int(rids[i])
             lp_val = float(self._update_region(rid, float(err_np[i])))
-            self._lp_rms.update([lp_val])
-            lp_norm = self._lp_rms.normalize(np.asarray([lp_val], dtype=np.float32))
-            out[i] = self.alpha_lp * float(lp_norm[0])
+            self._lp_rms.update_scalar(lp_val)
+            lp_norm = self._lp_rms.normalize_scalar(lp_val)
+            out[i] = self.alpha_lp * float(lp_norm)
 
         out_t = torch.as_tensor(out, dtype=torch.float32, device=self.device)
         return out_t.mean() if reduction == "mean" else out_t
