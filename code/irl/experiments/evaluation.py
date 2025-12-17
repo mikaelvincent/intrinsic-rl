@@ -10,8 +10,9 @@ import typer
 
 from irl.evaluator import evaluate
 from irl.plot import _parse_run_name
-from irl.sweep import RunResult, _aggregate, _find_latest_ckpt, _write_raw_csv, _write_summary_csv
+from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
+from irl.utils.runs import find_latest_ckpt
 
 
 def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
@@ -216,7 +217,7 @@ def _discover_run_dirs_with_ckpt(runs_root: Path) -> list[tuple[Path, Path]]:
         if run_dir in seen:
             continue
 
-        ckpt = _find_latest_ckpt(run_dir)
+        ckpt = find_latest_ckpt(run_dir)
         if ckpt is None:
             continue
 
