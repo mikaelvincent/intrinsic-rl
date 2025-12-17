@@ -70,9 +70,8 @@ ppo:
         )
 
 
-@pytest.mark.parametrize(
-    "yaml_text, expected_method",
-    [
+def test_loads_config_accepts_glpe_variants():
+    cases = [
         (
             """
 method: glpe_lp_only
@@ -92,11 +91,11 @@ intrinsic:
 """,
             "glpe_nogate",
         ),
-    ],
-)
-def test_loads_config_accepts_glpe_variants(yaml_text: str, expected_method: str):
-    cfg = loads_config(yaml_text)
-    assert str(cfg.method).lower() == expected_method
+    ]
+
+    for yaml_text, expected_method in cases:
+        cfg = loads_config(yaml_text)
+        assert str(cfg.method).lower() == expected_method
 
 
 def test_loads_config_rejects_invalid_glpe_variant():
@@ -124,29 +123,26 @@ intrinsic:
         )
 
 
-@pytest.mark.parametrize(
-    "method, expected_impact, expected_lp, expected_gate",
-    [
-        ("glpe_lp_only", 0.0, 0.5, True),
-        ("glpe_nogate", 1.0, 0.5, False),
-    ],
-)
-def test_factory_applies_glpe_variant_overrides(
-    method: str, expected_impact: float, expected_lp: float, expected_gate: bool
-):
+def test_factory_applies_glpe_variant_overrides():
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
 
-    mod = create_intrinsic_module(
-        method,
-        obs_space,
-        act_space,
-        device="cpu",
-        alpha_impact=1.0,
-        alpha_lp=0.5,
-        gating_enabled=True,
-    )
-    assert isinstance(mod, GLPE)
-    assert float(mod.alpha_impact) == expected_impact
-    assert float(mod.alpha_lp) == expected_lp
-    assert bool(getattr(mod, "gating_enabled", True)) is expected_gate
+    cases = [
+        ("glpe_lp_only", 0.0, 0.5, True),
+        ("glpe_nogate", 1.0, 0.5, False),
+    ]
+
+    for method, expected_impact, expected_lp, expected_gate in cases:
+        mod = create_intrinsic_module(
+            method,
+            obs_space,
+            act_space,
+            device="cpu",
+            alpha_impact=1.0,
+            alpha_lp=0.5,
+            gating_enabled=True,
+        )
+        assert isinstance(mod, GLPE)
+        assert float(mod.alpha_impact) == expected_impact
+        assert float(mod.alpha_lp) == expected_lp
+        assert bool(getattr(mod, "gating_enabled", True)) is expected_gate
