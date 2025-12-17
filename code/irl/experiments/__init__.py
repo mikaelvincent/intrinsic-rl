@@ -118,15 +118,21 @@ def cli_videos(
     ),
     results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
     device: str = typer.Option("cpu", "--device", "-d"),
-    baseline: str = typer.Option("vanilla", "--baseline", "-b"),
-    method: str = typer.Option("glpe", "--method", "-m"),
+    policy: str = typer.Option("mode", "--policy", "-p"),
+    seed: List[int] = typer.Option([100], "--seed", "-s"),
+    max_steps: int = typer.Option(1000, "--max-steps"),
+    fps: int = typer.Option(30, "--fps"),
+    overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
 ) -> None:
     run_video_suite(
         runs_root=runs_root,
         results_dir=results_dir,
         device=device,
-        baseline=baseline,
-        method=method,
+        policy_mode=str(policy),
+        eval_seeds=seed,
+        max_steps=int(max_steps),
+        fps=int(fps),
+        overwrite=bool(overwrite),
     )
 
 
@@ -199,8 +205,11 @@ def cli_full(
         runs_root=runs_root,
         results_dir=results_dir,
         device=eval_device,
-        baseline="vanilla",
-        method="glpe",
+        policy_mode=str(policy).strip().lower(),
+        eval_seeds=[100],
+        max_steps=1000,
+        fps=30,
+        overwrite=False,
     )
 
 
