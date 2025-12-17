@@ -236,17 +236,40 @@ def _build_intrinsic(
     )
 
 
+def _reset_env(env: Any, seed: int | None) -> tuple[Any, Any]:
+    if seed is None:
+        return env.reset()
+
+    B = int(getattr(env, "num_envs", 1))
+    if B <= 1:
+        try:
+            return env.reset(seed=int(seed))
+        except (TypeError, ValueError):
+            return env.reset()
+
+    seeds = [int(seed) + i for i in range(B)]
+    try:
+        return env.reset(seed=seeds)
+    except (TypeError, ValueError):
+        try:
+            return env.reset(seed=int(seed))
+        except (TypeError, ValueError):
+            return env.reset()
+
+
 def _log_reset_diagnostics(
     *,
     env: Any,
     intrinsic_module: Optional[Any],
     method_l: str,
     intrinsic_outputs_normalized_flag: Optional[bool],
+    seed: int | None,
 ) -> Any:
     printed_dr_hint = False
     printed_intr_norm_hint = False
 
-    obs, info = env.reset()
+    obs, info = _reset_env(env, seed)
+
     try:
         if isinstance(info, dict) and ("dr_applied" in info) and not printed_dr_hint:
             diag = info.get("dr_applied")
@@ -443,6 +466,7 @@ def build_training_session(
         intrinsic_module=intrinsic_module,
         method_l=method_l,
         intrinsic_outputs_normalized_flag=intrinsic_outputs_normalized_flag,
+        seed=int(cfg.seed),
     )
 
     B = int(getattr(env, "num_envs", 1))
