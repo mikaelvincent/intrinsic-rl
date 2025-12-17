@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+from irl.cli.validators import normalize_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import collect_ckpts_from_patterns
 from irl.pipelines.eval import evaluate_ckpt_to_run_result
@@ -24,9 +25,7 @@ def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) ->
 
 
 def _evaluate_ckpt(ckpt: Path, episodes: int, device: str, policy_mode: str = "mode") -> RunResult:
-    pm = str(policy_mode).strip().lower()
-    if pm not in {"mode", "sample"}:
-        raise ValueError("policy_mode must be 'mode' or 'sample'")
+    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
 
     return evaluate_ckpt_to_run_result(
         ckpt,
