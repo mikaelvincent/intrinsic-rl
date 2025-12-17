@@ -24,13 +24,18 @@ class RegionNode:
     bbox_hi: Optional[Array] = None
     _points: List[Array] = field(default_factory=list)
 
-    def add_point(self, p: Array) -> None:
+    def add_point(self, p: Array, *, store: bool = True, max_points: int | None = None) -> None:
         assert self.is_leaf, "add_point only valid on leaves"
         x = np.asarray(p, dtype=np.float32).reshape(-1)
         if x.shape[0] != self.dim:
             raise ValueError(f"Point has dim {x.shape[0]}, expected {self.dim}")
-        self._points.append(x)
+
         self.count += 1
+
+        if store:
+            if max_points is None or int(len(self._points)) < int(max_points):
+                self._points.append(x)
+
         if self.bbox_lo is None:
             self.bbox_lo = x.copy()
             self.bbox_hi = x.copy()
@@ -123,20 +128,52 @@ def _node_from_state(
     )
 
     if is_leaf:
-        pts_raw = state.get("points", None)
-        pts = None if pts_raw is None else np.asarray(pts_raw, dtype=np.float32)
-        if pts is None or pts.size == 0:
-            node._points = []
-            node.count = 0
+        node.count = int(state.get("count", 0))
+
+        bbox_lo_raw = state.get("bbox_lo", None)
+        bbox_hi_raw = state.get("bbox_hi", None)
+        try:
+            node.bbox_lo = (
+                None
+                if bbox_lo_raw is None
+                else np.asarray(bbox_lo_raw, dtype=np.float32).reshape(-1).astype(np.float32, copy=False)
+            )
+        except Exception:
             node.bbox_lo = None
+        try:
+            node.bbox_hi = (
+                None
+                if bbox_hi_raw is None
+                else np.asarray(bbox_hi_raw, dtype=np.float32).reshape(-1).astype(np.float32, copy=False)
+            )
+        except Exception:
             node.bbox_hi = None
+
+        pts_raw = state.get("points", None)
+        if pts_raw is None:
+            node._points = []
+            return node
+
+        try:
+            pts = np.asarray(pts_raw, dtype=np.float32)
+        except Exception:
+            node._points = []
+            return node
+
+        if pts.size == 0:
+            node._points = []
             return node
 
         pts = pts.reshape(-1, int(dim)).astype(np.float32, copy=False)
         node._points = [np.asarray(p, dtype=np.float32).reshape(-1) for p in pts]
-        node.count = int(pts.shape[0])
-        node.bbox_lo = pts.min(axis=0).astype(np.float32, copy=False)
-        node.bbox_hi = pts.max(axis=0).astype(np.float32, copy=False)
+
+        if node.bbox_lo is None or node.bbox_hi is None:
+            try:
+                node.bbox_lo = pts.min(axis=0).astype(np.float32, copy=False)
+                node.bbox_hi = pts.max(axis=0).astype(np.float32, copy=False)
+            except Exception:
+                pass
+
         return node
 
     split_dim_raw = state.get("split_dim", None)
@@ -176,7 +213,14 @@ def _collect_leaves(node: RegionNode, out: Dict[int, RegionNode]) -> None:
 
 
 class KDTreeRegionStore:
-    def __init__(self, dim: int, capacity: int = 200, depth_max: int = 12) -> None:
+    def __init__(
+        self,
+        dim: int,
+        capacity: int = 200,
+        depth_max: int = 12,
+        *,
+        max_points_at_max_depth: int | None = 0,
+    ) -> None:
         if dim <= 0:
             raise ValueError("dim must be positive")
         if capacity <= 0:
@@ -188,13 +232,33 @@ class KDTreeRegionStore:
         self.capacity = int(capacity)
         self.depth_max = int(depth_max)
 
+        self.max_points_at_max_depth: int | None = (
+            None if max_points_at_max_depth is None else int(max_points_at_max_depth)
+        )
+
         self.root = RegionNode(depth=0, dim=self.dim, capacity=self.capacity, region_id=0)
         self.leaf_by_id: Dict[int, RegionNode] = {0: self.root}
         self._next_region_id: int = 1
 
+    def _leaf_store_policy(self, leaf: RegionNode) -> tuple[bool, int | None]:
+        if int(leaf.depth) < int(self.depth_max):
+            return True, None
+
+        mp = self.max_points_at_max_depth
+        if mp is None:
+            return True, None
+        m = int(mp)
+        if m <= 0:
+            return False, None
+        return True, m
+
+    def _add_point_to_leaf(self, leaf: RegionNode, p: Array) -> None:
+        store, max_points = self._leaf_store_policy(leaf)
+        leaf.add_point(p, store=store, max_points=max_points)
+
     def insert(self, p: Array) -> int:
         leaf = self.root.route(p)
-        leaf.add_point(p)
+        self._add_point_to_leaf(leaf, p)
         split_performed = False
         if leaf.count >= self.capacity and leaf.depth < self.depth_max:
             split_performed = self._split_leaf(leaf)
@@ -212,7 +276,7 @@ class KDTreeRegionStore:
         for i in range(pts.shape[0]):
             x = pts[i]
             leaf = self.root.route(x)
-            leaf.add_point(x)
+            self._add_point_to_leaf(leaf, x)
 
             split_performed = False
             if leaf.count >= self.capacity and leaf.depth < self.depth_max:
@@ -294,9 +358,9 @@ class KDTreeRegionStore:
         self._next_region_id += 1
 
         for x in pts[left_mask]:
-            left.add_point(x)
+            self._add_point_to_leaf(left, x)
         for x in pts[right_mask]:
-            right.add_point(x)
+            self._add_point_to_leaf(right, x)
 
         leaf.is_leaf = False
         leaf.left = left
@@ -335,6 +399,7 @@ class KDTreeRegionStore:
             "dim": self.dim,
             "capacity": self.capacity,
             "depth_max": self.depth_max,
+            "max_points_at_max_depth": self.max_points_at_max_depth,
             "root": _node(self.root),
         }
 
@@ -343,6 +408,7 @@ class KDTreeRegionStore:
             "dim": int(self.dim),
             "capacity": int(self.capacity),
             "depth_max": int(self.depth_max),
+            "max_points_at_max_depth": self.max_points_at_max_depth,
             "next_region_id": int(self._next_region_id),
             "root": _node_state(self.root, include_points=bool(include_points)),
         }
@@ -354,7 +420,13 @@ class KDTreeRegionStore:
             raise ValueError("KDTreeRegionStore.from_state_dict: missing/invalid dim")
         capacity = int(state.get("capacity", 200))
         depth_max = int(state.get("depth_max", 12))
-        store = cls(dim=dim, capacity=capacity, depth_max=depth_max)
+        mp = state.get("max_points_at_max_depth", 0)
+        store = cls(
+            dim=dim,
+            capacity=capacity,
+            depth_max=depth_max,
+            max_points_at_max_depth=None if mp is None else int(mp),
+        )
         store.load_state_dict(state)
         return store
 
@@ -362,6 +434,9 @@ class KDTreeRegionStore:
         dim = int(state.get("dim", self.dim))
         capacity = int(state.get("capacity", self.capacity))
         depth_max = int(state.get("depth_max", self.depth_max))
+
+        mp = state.get("max_points_at_max_depth", self.max_points_at_max_depth)
+        self.max_points_at_max_depth = None if mp is None else int(mp)
 
         root_state = state.get("root", None)
         if not isinstance(root_state, Mapping):
