@@ -54,11 +54,21 @@ def create_intrinsic_module(
         if act_space is None:
             raise ValueError("RIAC requires an action space (via ICM forward model).")
         riac_kwargs: dict[str, Any] = {}
-        for k in ("alpha_lp", "region_capacity", "depth_max", "ema_beta_long", "ema_beta_short"):
+        for k in (
+            "alpha_lp",
+            "region_capacity",
+            "depth_max",
+            "ema_beta_long",
+            "ema_beta_short",
+            "checkpoint_include_points",
+        ):
             if k in kwargs and kwargs[k] is not None:
-                riac_kwargs[k] = (
-                    float(kwargs[k]) if ("alpha" in k or "beta" in k) else int(kwargs[k])
-                )
+                if k == "checkpoint_include_points":
+                    riac_kwargs[k] = bool(kwargs[k])
+                else:
+                    riac_kwargs[k] = (
+                        float(kwargs[k]) if ("alpha" in k or "beta" in k) else int(kwargs[k])
+                    )
         return RIAC(obs_space, act_space, device=device, **riac_kwargs)
     if m == "glpe":
         if act_space is None:
@@ -76,13 +86,17 @@ def create_intrinsic_module(
             "gate_hysteresis_up_mult",
             "gate_min_consec_to_gate",
             "gate_min_regions_for_gating",
+            "checkpoint_include_points",
         ):
             if k in kwargs and kwargs[k] is not None:
-                glpe_kwargs[k] = (
-                    float(kwargs[k])
-                    if ("alpha" in k or "beta" in k or "tau" in k)
-                    else int(kwargs[k])
-                )
+                if k == "checkpoint_include_points":
+                    glpe_kwargs[k] = bool(kwargs[k])
+                else:
+                    glpe_kwargs[k] = (
+                        float(kwargs[k])
+                        if ("alpha" in k or "beta" in k or "tau" in k)
+                        else int(kwargs[k])
+                    )
 
         normalize_inside_val = None
         if "normalize_inside" in kwargs:
