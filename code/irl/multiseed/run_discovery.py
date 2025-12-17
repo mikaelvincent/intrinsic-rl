@@ -1,44 +1,18 @@
 from __future__ import annotations
 
 import glob
-import re
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from irl.evaluator import evaluate
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.runs import find_latest_ckpt as _find_latest_ckpt_impl
 
 from .results import RunResult
 
-_CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
-
 
 def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
-    if not run_dir.exists() or not run_dir.is_dir():
-        return None
-    ckpt_dir = run_dir / "checkpoints"
-    if not ckpt_dir.exists():
-        return None
-
-    latest = ckpt_dir / "ckpt_latest.pt"
-    if latest.exists():
-        return latest
-
-    candidates: list[tuple[int, Path]] = []
-    for p in ckpt_dir.iterdir():
-        if not p.is_file():
-            continue
-        m = _CKPT_RE.match(p.name)
-        if not m:
-            continue
-        try:
-            candidates.append((int(m.group(1)), p))
-        except Exception:
-            continue
-    if not candidates:
-        return None
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    return candidates[0][1]
+    return _find_latest_ckpt_impl(run_dir)
 
 
 def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
