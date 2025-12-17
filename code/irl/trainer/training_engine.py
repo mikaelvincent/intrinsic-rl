@@ -723,8 +723,7 @@ def run_training_loop(
 
         if (
             intrinsic_module is not None
-            and use_intrinsic
-            and method_l == "glpe"
+            and method_l.startswith("glpe")
             and hasattr(intrinsic_module, "gate_rate")
         ):
             try:
