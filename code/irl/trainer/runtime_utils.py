@@ -76,7 +76,23 @@ def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray
 
     if done_mask.shape[0] == 1:
         try:
-            fixed[0] = np.asarray(final)
+            fo = np.asarray(final)
+
+            if fixed.ndim <= 1:
+                if fo.size == 1 and fixed.size != 1:
+                    try:
+                        fo = np.asarray(fo.reshape(-1)[0])
+                    except Exception:
+                        pass
+
+                if fo.size == fixed.size:
+                    return fo.reshape(fixed.shape).astype(fixed.dtype, copy=False)
+
+                if fixed.size == 1 and fo.size == 1:
+                    fixed[...] = fo.reshape(())
+                    return fixed
+            else:
+                fixed[0] = fo
         except Exception:
             pass
 
