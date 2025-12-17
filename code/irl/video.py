@@ -10,20 +10,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from irl.envs.builder import make_env
 from irl.models import PolicyNetwork
+from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything
 from irl.utils.spaces import is_image_space
-
-
-def _build_normalizer(payload) -> tuple[np.ndarray, np.ndarray] | None:
-    on = payload.get("obs_norm")
-    if on is None:
-        return None
-    mean_arr = np.asarray(on.get("mean"), dtype=np.float64)
-    var_arr = np.asarray(on.get("var"), dtype=np.float64)
-    std_arr = np.sqrt(var_arr + 1e-8)
-    return mean_arr, std_arr
 
 
 def _render_frame(env: gym.Env) -> np.ndarray:
@@ -108,9 +99,10 @@ def render_rollout_video(
     ensure_mujoco_gl(env_id)
     seed_everything(int(seed), deterministic=True)
 
-    frame_skip = int(env_cfg.get("frame_skip", 1))
-    discrete_actions = bool(env_cfg.get("discrete_actions", True))
-    car_action_set = env_cfg.get("car_discrete_action_set", None)
+    runtime = extract_env_runtime(cfg)
+    frame_skip = int(runtime["frame_skip"])
+    discrete_actions = bool(runtime["discrete_actions"])
+    car_action_set = runtime["car_action_set"]
 
     env = make_env(
         env_id=env_id,
@@ -126,7 +118,7 @@ def render_rollout_video(
     try:
         obs_space, act_space = single_spaces(env)
         is_image = is_image_space(obs_space)
-        norm = None if is_image else _build_normalizer(payload)
+        norm = None if is_image else build_obs_normalizer(payload)
 
         def _norm_obs(x: np.ndarray) -> np.ndarray:
             if norm is None:
