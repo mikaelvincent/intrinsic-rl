@@ -54,6 +54,23 @@ def train(
         else:
             _LOG.info("Training total_steps=%d.", effective_total_steps)
 
+    vec_envs = 1
+    try:
+        vec_envs = int(getattr(getattr(cfg, "env", None), "vec_envs", 1) or 1)
+    except Exception:
+        vec_envs = 1
+
+    if vec_envs > 1:
+        aligned = (int(effective_total_steps) // int(vec_envs)) * int(vec_envs)
+        if int(aligned) != int(effective_total_steps):
+            _LOG.info(
+                "Aligning total_steps=%d to %d to match vec_envs=%d.",
+                int(effective_total_steps),
+                int(aligned),
+                int(vec_envs),
+            )
+            effective_total_steps = int(aligned)
+
     session = build_training_session(
         cfg,
         device=device,
