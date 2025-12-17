@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Iterable, Tuple, Union
 
 import gymnasium as gym
+import numpy as np
 import torch
 from torch import Tensor, nn
 
@@ -11,7 +12,7 @@ from irl.utils.image import ImagePreprocessConfig, preprocess_image
 from irl.utils.images import infer_channels_hw
 
 from .cnn import ConvEncoder, ConvEncoderConfig
-from .distributions import CategoricalDist, DiagGaussianDist
+from .distributions import CategoricalDist, DiagGaussianDist, SquashedDiagGaussianDist
 from .layers import mlp
 
 
@@ -107,7 +108,21 @@ class PolicyNetwork(nn.Module):
             self.mu_head = nn.Linear(feat_dim, self.act_dim)
             self.log_std = nn.Parameter(torch.zeros(self.act_dim))
 
-    def distribution(self, obs: Tensor | object) -> Union[CategoricalDist, DiagGaussianDist]:
+            self._squash_actions = False
+            try:
+                low = np.asarray(action_space.low, dtype=np.float32).reshape(-1)
+                high = np.asarray(action_space.high, dtype=np.float32).reshape(-1)
+                if low.shape == (self.act_dim,) and high.shape == (self.act_dim,):
+                    if np.isfinite(low).all() and np.isfinite(high).all() and np.all(high > low):
+                        self.register_buffer("_action_low", torch.as_tensor(low, dtype=torch.float32))
+                        self.register_buffer(
+                            "_action_high", torch.as_tensor(high, dtype=torch.float32)
+                        )
+                        self._squash_actions = True
+            except Exception:
+                self._squash_actions = False
+
+    def distribution(self, obs: Tensor | object) -> Union[CategoricalDist, DiagGaussianDist, SquashedDiagGaussianDist]:
         device = self.log_std.device if hasattr(self, "log_std") else next(self.parameters()).device
         if self.is_image:
             x = _prep_images_to_nchw(obs, expected_c=self.cnn.in_channels, device=device)
@@ -120,8 +135,21 @@ class PolicyNetwork(nn.Module):
         if self.is_discrete:
             logits = self.policy_head(feats)
             return CategoricalDist(logits=logits)
+
         mu = self.mu_head(feats)
-        return DiagGaussianDist(mean=mu, log_std=self.log_std.expand_as(mu))
+        log_std = self.log_std.expand_as(mu)
+
+        if bool(getattr(self, "_squash_actions", False)) and hasattr(self, "_action_low") and hasattr(
+            self, "_action_high"
+        ):
+            return SquashedDiagGaussianDist(
+                mean=mu,
+                log_std=log_std,
+                low=self._action_low,
+                high=self._action_high,
+            )
+
+        return DiagGaussianDist(mean=mu, log_std=log_std)
 
     def act(self, obs: Tensor | object) -> tuple[Tensor, Tensor]:
         dist = self.distribution(obs)
