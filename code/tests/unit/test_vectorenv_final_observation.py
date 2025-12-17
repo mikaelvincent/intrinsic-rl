@@ -27,3 +27,15 @@ def test_final_observation_single_env_payload():
 
     assert fixed.shape == next_obs.shape
     assert np.isclose(float(fixed[0]), 123.0)
+
+
+def test_final_observation_single_env_vector_payload():
+    next_obs = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    done = np.array([True], dtype=bool)
+    infos = {"final_observation": np.array([10.0, 11.0, 12.0], dtype=np.float32)}
+
+    fixed = _apply_final_observation(next_obs, done, infos)
+
+    assert fixed.shape == next_obs.shape
+    assert np.allclose(fixed, np.array([10.0, 11.0, 12.0], dtype=np.float32))
+    assert np.allclose(next_obs, np.array([0.0, 1.0, 2.0], dtype=np.float32))
