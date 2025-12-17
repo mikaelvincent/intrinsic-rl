@@ -3,7 +3,6 @@ from irl.visualization.plotting import (
     _aggregate_runs,
     _parse_run_name,
     app,
-    main as _impl_main,
     plot_normalized_summary,
     plot_trajectory_heatmap,
 )
@@ -20,4 +19,6 @@ __all__ = (
 
 
 def main(argv: list[str] | None = None) -> None:
-    _impl_main(argv)
+    from irl.cli.app import dispatch
+
+    dispatch("plot", argv, prog_name="irl-plot")
