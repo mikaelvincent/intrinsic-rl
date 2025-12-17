@@ -74,6 +74,61 @@ def test_eval_suite_writes_coverage_report(tmp_path: Path, monkeypatch: pytest.M
     assert glpe_rows[0]["missing_seeds"] == "2"
 
 
+def test_eval_suite_discovers_nested_run_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs_root = tmp_path / "runs_suite"
+    results_dir = tmp_path / "results_suite"
+    group = runs_root / "groupA"
+    group.mkdir(parents=True, exist_ok=True)
+
+    r_v1 = group / "vanilla__DummyEval-v0__seed1__cfgA"
+    r_v2 = group / "vanilla__DummyEval-v0__seed2__cfgA"
+    r_g1 = group / "glpe__DummyEval-v0__seed1__cfgA"
+
+    for rd in (r_v1, r_v2, r_g1):
+        rd.mkdir(parents=True, exist_ok=True)
+
+    _write_latest_ckpt(r_v1, env_id="DummyEval-v0", method="vanilla", seed=1, step=100)
+    _write_latest_ckpt(r_v2, env_id="DummyEval-v0", method="vanilla", seed=2, step=100)
+    _write_latest_ckpt(r_g1, env_id="DummyEval-v0", method="glpe", seed=1, step=50)
+
+    import irl.experiments.evaluation as eval_module
+
+    def fake_evaluate(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs) -> dict:
+        return {
+            "env_id": str(env),
+            "episodes": int(episodes),
+            "seed": 0,
+            "mean_return": 1.0,
+            "std_return": 0.0,
+            "min_return": 1.0,
+            "max_return": 1.0,
+            "mean_length": 5.0,
+            "std_length": 0.0,
+            "returns": [1.0],
+            "lengths": [5],
+        }
+
+    monkeypatch.setattr(eval_module, "evaluate", fake_evaluate)
+
+    run_eval_suite(
+        runs_root=runs_root,
+        results_dir=results_dir,
+        episodes=1,
+        device="cpu",
+        policy_mode="mode",
+    )
+
+    cov_path = results_dir / "coverage.csv"
+    assert cov_path.exists()
+
+    with cov_path.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    glpe_rows = [r for r in rows if r["env_id"] == "DummyEval-v0" and r["method"] == "glpe"]
+    assert len(glpe_rows) == 1
+    assert glpe_rows[0]["missing_seeds"] == "2"
+
+
 def test_eval_suite_strict_coverage_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
