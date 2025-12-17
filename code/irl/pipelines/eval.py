@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +29,20 @@ def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int
             seed = None
 
     return env_id, method, seed
+
+
+def _episode_seeds_hash(summary: Mapping[str, Any]) -> str:
+    seeds = summary.get("episode_seeds")
+    if not isinstance(seeds, Sequence) or isinstance(seeds, (str, bytes)):
+        return ""
+    try:
+        ints = [int(s) for s in seeds]
+    except Exception:
+        return ""
+    if not ints:
+        return ""
+    blob = ",".join(str(s) for s in ints).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:12]
 
 
 def evaluate_ckpt_to_run_result(
@@ -78,6 +93,8 @@ def evaluate_ckpt_to_run_result(
 
         evaluate_fn = _evaluate
 
+    pm = str(policy_mode).strip().lower() or "mode"
+
     summary = evaluate_fn(
         env=env_eff,
         ckpt=ckpt_path,
@@ -85,7 +102,7 @@ def evaluate_ckpt_to_run_result(
         device=str(device),
         save_traj=bool(save_traj),
         traj_out_dir=traj_out_dir,
-        policy_mode=str(policy_mode),
+        policy_mode=pm,
         episode_seeds=None if episode_seeds is None else list(episode_seeds),
         seed_offset=int(seed_offset),
     )
@@ -129,4 +146,7 @@ def evaluate_ckpt_to_run_result(
         max_return=float(summary.get("max_return", 0.0)),
         mean_length=float(summary.get("mean_length", 0.0)),
         std_length=float(summary.get("std_length", 0.0)),
+        policy_mode=str(pm),
+        seed_offset=int(seed_offset),
+        episode_seeds_hash=_episode_seeds_hash(summary),
     )
