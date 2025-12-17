@@ -415,7 +415,7 @@ def run_training_loop(
                     reduction="none",
                 )
                 r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
-                r_step_np[done_flags] = 0.0
+                r_step_np[terms_b] = 0.0
                 r_int_raw_seq[t] = r_step_np
                 t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
@@ -501,9 +501,9 @@ def run_training_loop(
                 )
                 r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-            done_mask_flat = (done_seq.reshape(T * B) > 0.0)
+            term_mask_flat = (terms_seq.reshape(T * B) > 0.0)
             r_int_raw_flat = np.asarray(r_int_raw_flat, dtype=np.float32)
-            r_int_raw_flat[done_mask_flat] = 0.0
+            r_int_raw_flat[term_mask_flat] = 0.0
 
             r_clip = float(cfg.intrinsic.r_clip)
             outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
