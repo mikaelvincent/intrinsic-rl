@@ -8,7 +8,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from irl.utils.runs import expand_runs_from_patterns, parse_run_name
+from irl.utils.runs import expand_runs_from_patterns, parse_run_name as _parse_run_name
 
 _REWARD_METRIC_FALLBACKS: dict[str, tuple[str, ...]] = {
     "reward_mean": ("reward_total_mean",),
@@ -29,10 +29,6 @@ def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
 
 def _expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
     return _dedup_paths(expand_runs_from_patterns(list(patterns)))
-
-
-def _parse_run_name(run_dir: Path) -> dict[str, str]:
-    return parse_run_name(run_dir.name)
 
 
 def _read_scalars(run_dir: Path) -> pd.DataFrame:
