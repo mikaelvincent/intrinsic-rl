@@ -10,6 +10,7 @@ from irl.envs.builder import make_env
 from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.factory import create_intrinsic_module
 from irl.models import PolicyNetwork
+from irl.pipelines.policy_rollout import iter_policy_rollout
 from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import single_spaces
 from irl.utils.checkpoint import load_checkpoint
@@ -168,34 +169,30 @@ def evaluate(
         method_l = str(method).strip().lower()
         is_glpe_family = method_l.startswith("glpe")
 
+        dev = torch.device(device)
+
         for ep_seed in episode_seeds_list:
             _seed_torch(int(ep_seed))
-            obs, _ = e.reset(seed=int(ep_seed))
-            done = False
+            obs0, _ = e.reset(seed=int(ep_seed))
+
             ep_ret = 0.0
             ep_len = 0
 
-            while not done:
-                x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs, dtype=np.float32)
-                x = _normalize(x_raw)
-
-                with torch.no_grad():
-                    obs_t = torch.as_tensor(x, dtype=torch.float32, device=device)
-                    dist = policy.distribution(obs_t)
-                    act = dist.mode() if mode == "mode" else dist.sample()
-                    a_np = act.detach().cpu().numpy()
-
-                if hasattr(act_space, "n"):
-                    action_for_env = int(a_np.item())
-                else:
-                    action_for_env = a_np.reshape(-1)
-
-                next_obs, r, term, trunc, _ = e.step(action_for_env)
-                ep_ret += float(r)
+            for step_rec in iter_policy_rollout(
+                env=e,
+                policy=policy,
+                obs0=obs0,
+                act_space=act_space,
+                device=dev,
+                policy_mode=mode,
+                normalize_obs=_normalize,
+                max_steps=None,
+            ):
+                ep_ret += float(step_rec.reward)
                 ep_len += 1
 
                 if save_traj_local and not is_image:
-                    traj_obs.append(x_raw.copy())
+                    traj_obs.append(step_rec.obs_raw.copy())
 
                     gate_val = 1
                     int_val = 0.0
@@ -203,18 +200,15 @@ def evaluate(
 
                     if intrinsic_module is not None:
                         try:
-                            next_raw = (
-                                next_obs
-                                if isinstance(next_obs, np.ndarray)
-                                else np.asarray(next_obs, dtype=np.float32)
-                            )
                             next_t = torch.as_tensor(
-                                _normalize(next_raw), dtype=torch.float32, device=device
+                                _normalize(step_rec.next_obs_raw),
+                                dtype=torch.float32,
+                                device=dev,
                             )
 
                             if is_glpe_family:
                                 res = _glpe_gate_and_intrinsic_no_update(
-                                    intrinsic_module, obs_t, next_t
+                                    intrinsic_module, step_rec.obs_t, next_t
                                 )
                                 if res is not None:
                                     gate_val, int_val = res
@@ -222,9 +216,9 @@ def evaluate(
                             else:
                                 try:
                                     r_out = intrinsic_module.compute_batch(
-                                        obs_t.unsqueeze(0),
+                                        step_rec.obs_t.unsqueeze(0),
                                         next_t.unsqueeze(0),
-                                        act.unsqueeze(0),
+                                        step_rec.act_t.unsqueeze(0),
                                         reduction="none",
                                     )
                                     int_val = float(r_out.mean().item())
@@ -240,9 +234,6 @@ def evaluate(
                         traj_gate_source = gate_source
                     elif traj_gate_source != gate_source:
                         traj_gate_source = "mixed"
-
-                obs = next_obs
-                done = bool(term) or bool(trunc)
 
             returns.append(ep_ret)
             lengths.append(ep_len)
