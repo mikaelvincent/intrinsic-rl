@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import hashlib
 from dataclasses import dataclass
 from math import sqrt
@@ -10,7 +9,7 @@ from typing import Dict, List, Literal, Sequence
 
 import numpy as np
 
-from irl.utils.checkpoint import atomic_replace
+from irl.utils.io import atomic_write_csv
 
 
 @dataclass
@@ -33,58 +32,47 @@ class RunResult:
 
 
 def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(
-            [
-                "method",
-                "env_id",
-                "seed",
-                "policy_mode",
-                "seed_offset",
-                "episode_seeds_hash",
-                "ckpt_step",
-                "episodes",
-                "mean_return",
-                "std_return",
-                "min_return",
-                "max_return",
-                "mean_length",
-                "std_length",
-                "ckpt_path",
-            ]
-        )
-        for r in rows:
-            w.writerow(
-                [
-                    r.method,
-                    r.env_id,
-                    r.seed,
-                    str(r.policy_mode),
-                    int(r.seed_offset),
-                    str(r.episode_seeds_hash or ""),
-                    r.ckpt_step,
-                    r.episodes,
-                    f"{r.mean_return:.6f}",
-                    f"{r.std_return:.6f}",
-                    f"{r.min_return:.6f}",
-                    f"{r.max_return:.6f}",
-                    f"{r.mean_length:.6f}",
-                    f"{r.std_length:.6f}",
-                    str(r.ckpt_path),
-                ]
-            )
-        f.flush()
-        try:
-            import os
+    cols = [
+        "method",
+        "env_id",
+        "seed",
+        "policy_mode",
+        "seed_offset",
+        "episode_seeds_hash",
+        "ckpt_step",
+        "episodes",
+        "mean_return",
+        "std_return",
+        "min_return",
+        "max_return",
+        "mean_length",
+        "std_length",
+        "ckpt_path",
+    ]
 
-            os.fsync(f.fileno())
-        except Exception:
-            pass
-    atomic_replace(tmp, path)
+    out_rows: list[dict[str, object]] = []
+    for r in rows:
+        out_rows.append(
+            {
+                "method": r.method,
+                "env_id": r.env_id,
+                "seed": int(r.seed),
+                "policy_mode": str(r.policy_mode),
+                "seed_offset": int(r.seed_offset),
+                "episode_seeds_hash": str(r.episode_seeds_hash or ""),
+                "ckpt_step": int(r.ckpt_step),
+                "episodes": int(r.episodes),
+                "mean_return": f"{float(r.mean_return):.6f}",
+                "std_return": f"{float(r.std_return):.6f}",
+                "min_return": f"{float(r.min_return):.6f}",
+                "max_return": f"{float(r.max_return):.6f}",
+                "mean_length": f"{float(r.mean_length):.6f}",
+                "std_length": f"{float(r.std_length):.6f}",
+                "ckpt_path": str(r.ckpt_path),
+            }
+        )
+
+    atomic_write_csv(path, cols, out_rows)
 
 
 def _stable_u32_seed(*parts: str) -> int:
@@ -223,9 +211,6 @@ def _aggregate(
 
 
 def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
     cols = [
         "method",
         "env_id",
@@ -248,16 +233,4 @@ def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
         "step_max",
         "step_mean",
     ]
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=cols)
-        w.writeheader()
-        for row in agg_rows:
-            w.writerow(row)
-        f.flush()
-        try:
-            import os
-
-            os.fsync(f.fileno())
-        except Exception:
-            pass
-    atomic_replace(tmp, path)
+    atomic_write_csv(path, cols, agg_rows)
