@@ -199,6 +199,7 @@ def _aggregate(
             {
                 "method": method,
                 "env_id": env_id,
+                "per_seed_ckpt_policy": str(per_seed_policy),
                 "episodes_per_seed": int(rs_per_seed[0].episodes) if rs_per_seed else 0,
                 "n_runs": n_runs_total,
                 "n_seeds": n_seeds,
@@ -228,6 +229,7 @@ def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
     cols = [
         "method",
         "env_id",
+        "per_seed_ckpt_policy",
         "episodes_per_seed",
         "n_runs",
         "n_seeds",
