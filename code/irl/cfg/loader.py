@@ -343,7 +343,7 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
 
     if typ is int:
         if isinstance(value, bool):
-            raise ConfigError("Expected int at {path}, got bool")
+            raise ConfigError(f"Expected int at {path}, got bool")
         if isinstance(value, int):
             return value
         if isinstance(value, float) and float(value).is_integer():
