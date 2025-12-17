@@ -12,6 +12,7 @@ from irl.intrinsic import BaseIntrinsicModule, IntrinsicOutput
 from irl.models.cnn import ConvEncoder, ConvEncoderConfig
 from irl.models.networks import mlp
 from irl.utils.image import ImagePreprocessConfig, preprocess_image
+from irl.utils.images import infer_channels_hw
 from irl.utils.torchops import as_tensor, ensure_2d
 
 
@@ -43,16 +44,7 @@ class RND(BaseIntrinsicModule, nn.Module):
 
         if self.is_image:
             shape = tuple(int(s) for s in obs_space.shape)
-            if len(shape) == 3:
-                c0 = shape[0]
-                c2 = shape[-1]
-                if c0 in (1, 3, 4) and c2 not in (1, 3, 4):
-                    in_channels, in_hw = c0, (shape[1], shape[2])
-                else:
-                    in_channels, in_hw = c2, (shape[0], shape[1])
-            else:
-                in_channels = shape[-1]
-                in_hw = (shape[0], shape[1])
+            in_channels, in_hw = infer_channels_hw(shape)
 
             cnn_cfg = ConvEncoderConfig(
                 in_channels=int(in_channels), out_dim=int(self.cfg.feature_dim)
