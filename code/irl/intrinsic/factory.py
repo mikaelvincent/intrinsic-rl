@@ -86,6 +86,7 @@ def create_intrinsic_module(
             "gate_hysteresis_up_mult",
             "gate_min_consec_to_gate",
             "gate_min_regions_for_gating",
+            "gate_median_cache_interval",
             "checkpoint_include_points",
         ):
             if k in kwargs and kwargs[k] is not None:
