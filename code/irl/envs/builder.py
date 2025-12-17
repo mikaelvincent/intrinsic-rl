@@ -16,6 +16,7 @@ def make_env(
     car_action_set: object | None = None,
     render_mode: str | None = None,
     async_vector: bool = False,
+    deterministic: bool = False,
     make_kwargs: dict[str, Any] | None = None,
 ) -> Any:
     manager = EnvManager(
@@ -28,6 +29,7 @@ def make_env(
         car_action_set=car_action_set,
         render_mode=render_mode,
         async_vector=bool(async_vector),
+        deterministic=bool(deterministic),
         make_kwargs=None if make_kwargs is None else dict(make_kwargs),
     )
     return manager.make()
