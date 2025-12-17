@@ -100,11 +100,12 @@ def ppo_update(
             policy_loss = -torch.min(surr1, surr2).mean()
             entropy = dist.entropy().mean()
 
-            approx_kl = ((ratio - 1.0) - logratio).mean().detach()
+            approx_kl_for_loss = ((ratio - 1.0) - logratio).mean()
+            approx_kl = approx_kl_for_loss.detach()
 
             pol_total = policy_loss - ent_coef * entropy
             if kl_penalty_coef > 0.0:
-                pol_total = pol_total + float(kl_penalty_coef) * approx_kl
+                pol_total = pol_total + float(kl_penalty_coef) * approx_kl_for_loss
 
             pol_opt.zero_grad(set_to_none=True)
             pol_total.backward()
