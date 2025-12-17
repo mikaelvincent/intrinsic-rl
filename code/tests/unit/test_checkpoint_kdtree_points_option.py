@@ -25,6 +25,13 @@ def _save_state_dict(sd: dict, path: Path) -> int:
     return int(path.stat().st_size)
 
 
+def _torch_load_any(path: Path) -> dict:
+    try:
+        return torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location="cpu")
+
+
 def test_glpe_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
@@ -64,7 +71,7 @@ def test_glpe_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
         gating_enabled=False,
         checkpoint_include_points=False,
     )
-    sd_no_points = torch.load(p_without, map_location="cpu")
+    sd_no_points = _torch_load_any(p_without)
     mod2.load_state_dict(sd_no_points, strict=True)
 
     assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
@@ -106,7 +113,7 @@ def test_riac_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
         depth_max=12,
         checkpoint_include_points=False,
     )
-    sd_no_points = torch.load(p_without, map_location="cpu")
+    sd_no_points = _torch_load_any(p_without)
     mod2.load_state_dict(sd_no_points, strict=True)
 
     assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
