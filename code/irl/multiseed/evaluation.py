@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from .results import (
-    RunResult,
-    _aggregate,
-    _read_summary_raw,
-    _values_for_method,
-    _write_raw_csv,
-    _write_summary_csv,
-)
+from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
+
+from .results import _read_summary_raw, _values_for_method
 from .run_discovery import (
     _find_latest_ckpt,
     _collect_ckpts_from_runs,
