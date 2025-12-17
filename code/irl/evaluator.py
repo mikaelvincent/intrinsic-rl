@@ -6,7 +6,7 @@ from typing import Sequence
 import numpy as np
 import torch
 
-from irl.envs import EnvManager
+from irl.envs.builder import make_env
 from irl.intrinsic.factory import create_intrinsic_module
 from irl.models import PolicyNetwork
 from irl.trainer.build import single_spaces
@@ -60,7 +60,7 @@ def evaluate(
     discrete_actions = bool(env_cfg.get("discrete_actions", True))
     car_action_set = env_cfg.get("car_discrete_action_set", None)
 
-    manager = EnvManager(
+    e = make_env(
         env_id=env,
         num_envs=1,
         seed=seed_eval_base,
@@ -69,7 +69,6 @@ def evaluate(
         discrete_actions=discrete_actions,
         car_action_set=car_action_set,
     )
-    e = manager.make()
     obs_space, act_space = single_spaces(e)
 
     policy = PolicyNetwork(obs_space, act_space).to(device)
