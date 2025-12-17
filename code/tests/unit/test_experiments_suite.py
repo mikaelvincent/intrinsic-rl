@@ -41,13 +41,41 @@ exp:
   total_steps: 24
 """,
     )
+    _write_cfg(
+        configs_dir,
+        "det_sync.yaml",
+        """
+seed: 7
+device: "cpu"
+method: "vanilla"
+env:
+  id: "MountainCar-v0"
+  vec_envs: 2
+ppo:
+  steps_per_update: 8
+  minibatches: 2
+  epochs: 1
+logging:
+  csv_interval: 1
+  checkpoint_interval: 100000
+exp:
+  deterministic: true
+  total_steps: 8
+""",
+    )
 
-    captured: dict[str, int] = {}
+    captured: list[dict[str, int | bool]] = []
 
     import irl.experiments.training as training_module
 
     def fake_run_train(cfg, *args, **kwargs):
-        captured["total_steps"] = int(kwargs["total_steps"])
+        captured.append(
+            {
+                "vec_envs": int(cfg.env.vec_envs),
+                "async_vector": bool(getattr(cfg.env, "async_vector", False)),
+                "total_steps": int(kwargs["total_steps"]),
+            }
+        )
 
     monkeypatch.setattr(training_module, "run_train", fake_run_train)
 
@@ -60,9 +88,13 @@ exp:
         seeds=[1],
         device="cpu",
         resume=False,
+        auto_async=True,
     )
 
-    assert captured["total_steps"] == 24
+    by_vec = {int(r["vec_envs"]): r for r in captured}
+    assert by_vec[1]["total_steps"] == 24
+    assert by_vec[2]["total_steps"] == 8
+    assert by_vec[2]["async_vector"] is False
 
 
 def test_aggregate_runs_dedups_steps_and_falls_back(tmp_path: Path):
