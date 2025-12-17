@@ -5,8 +5,9 @@ from typing import Dict, List, Optional, Tuple
 
 import typer
 
-from irl.plot import _parse_run_name, plot_normalized_summary
+from irl.plot import plot_normalized_summary
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.runs import parse_run_name
 from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
 from irl.visualization.data import _read_scalars
 from .plot_helpers import (
@@ -108,7 +109,7 @@ def run_plots_suite(
             skipped_runs[rd] = "logs/scalars.csv has no data rows"
             continue
 
-        info = _parse_run_name(rd)
+        info = parse_run_name(rd)
         method = info.get("method")
         env = info.get("env")
 
