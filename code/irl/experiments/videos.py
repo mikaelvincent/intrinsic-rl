@@ -5,6 +5,7 @@ from typing import Iterable, Sequence
 
 import typer
 
+from irl.cli.common import validate_policy_mode
 from irl.utils.runs import discover_runs_by_checkpoints, list_step_ckpts
 from irl.video import render_rollout_video
 
@@ -32,9 +33,7 @@ def run_video_suite(
     fps: int = 30,
     overwrite: bool = False,
 ) -> None:
-    pm = str(policy_mode).strip().lower()
-    if pm not in {"mode", "sample"}:
-        raise typer.BadParameter("--policy must be one of: mode, sample")
+    pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
 
     root = Path(runs_root).resolve()
     if not root.exists():
