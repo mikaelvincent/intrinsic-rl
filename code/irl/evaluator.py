@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from irl.envs.builder import make_env
+from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.factory import create_intrinsic_module
 from irl.models import PolicyNetwork
 from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
@@ -71,27 +72,12 @@ def evaluate(
     if save_traj and "intrinsic" in payload:
         try:
             intr_state = payload["intrinsic"]
-            int_cfg = cfg.get("intrinsic", {}) if isinstance(cfg, dict) else {}
-            gate_cfg = int_cfg.get("gate", {}) if isinstance(int_cfg, dict) else {}
             intrinsic_module = create_intrinsic_module(
                 method,
                 obs_space,
                 act_space,
                 device=device,
-                bin_size=float(int_cfg.get("bin_size", 0.25)),
-                alpha_impact=float(int_cfg.get("alpha_impact", 1.0)),
-                alpha_lp=float(int_cfg.get("alpha_lp", 0.5)),
-                region_capacity=int(int_cfg.get("region_capacity", 200)),
-                depth_max=int(int_cfg.get("depth_max", 12)),
-                ema_beta_long=float(int_cfg.get("ema_beta_long", 0.995)),
-                ema_beta_short=float(int_cfg.get("ema_beta_short", 0.9)),
-                gate_tau_lp_mult=float(gate_cfg.get("tau_lp_mult", 0.01)),
-                gate_tau_s=float(gate_cfg.get("tau_s", 2.0)),
-                gate_hysteresis_up_mult=float(gate_cfg.get("hysteresis_up_mult", 2.0)),
-                gate_min_consec_to_gate=int(gate_cfg.get("min_consec_to_gate", 5)),
-                gate_min_regions_for_gating=int(gate_cfg.get("min_regions_for_gating", 3)),
-                normalize_inside=bool(int_cfg.get("normalize_inside", True)),
-                gating_enabled=bool(gate_cfg.get("enabled", True)),
+                **build_intrinsic_kwargs(cfg),
             )
             if isinstance(intr_state, dict) and "state_dict" in intr_state:
                 intrinsic_module.load_state_dict(intr_state["state_dict"])
