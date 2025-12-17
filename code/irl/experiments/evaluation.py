@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 import typer
 
+from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
 from irl.plot import _parse_run_name
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
@@ -238,9 +239,7 @@ def run_eval_suite(
     strict_coverage: bool = False,
     strict_step_parity: bool = False,
 ) -> None:
-    pm = str(policy_mode).strip().lower()
-    if pm not in {"mode", "sample"}:
-        raise typer.BadParameter("--policy must be one of: mode, sample")
+    pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
 
     root = runs_root.resolve()
     if not root.exists():
