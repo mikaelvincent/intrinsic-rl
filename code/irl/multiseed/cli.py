@@ -5,14 +5,13 @@ from typing import List, Optional
 
 import typer
 
+from irl.cli.common import QUICK_EPISODES, validate_policy_mode
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.stats_utils import bootstrap_ci, mannwhitney_u
 from .results import _read_summary_raw, _values_for_method
 from .run_discovery import _evaluate_ckpt, _normalize_inputs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
-
-_QUICK_EPISODES = 5
 
 
 @app.command("eval-many")
@@ -39,13 +38,11 @@ def cli_eval_many(
     ),
     run_patterns: List[str] = typer.Argument([]),
 ) -> None:
-    policy_mode = str(policy).strip().lower()
-    if policy_mode not in {"mode", "sample"}:
-        raise typer.BadParameter("--policy must be one of: mode, sample")
+    policy_mode = validate_policy_mode(policy, allowed=("mode", "sample"))
 
     n_eps = int(episodes)
     if quick:
-        n_eps = min(n_eps, _QUICK_EPISODES)
+        n_eps = min(n_eps, QUICK_EPISODES)
 
     all_run_patterns: List[str] = []
     if runs:
