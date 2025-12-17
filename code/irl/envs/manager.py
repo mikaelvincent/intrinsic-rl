@@ -63,6 +63,7 @@ class EnvManager:
     car_action_set: Optional[object] = None
     render_mode: Optional[str] = None
     async_vector: bool = False
+    deterministic: bool = False
     make_kwargs: Optional[Dict[str, Any]] = None
 
     def make(self):
@@ -71,6 +72,12 @@ class EnvManager:
             return thunks[0]()
 
         if self.async_vector:
+            if self.deterministic:
+                _LOG.warning(
+                    "AsyncVectorEnv enabled with deterministic=True for env_id=%s; "
+                    "parallel stepping can be nondeterministic.",
+                    self.env_id,
+                )
             try:
                 return _make_vector_env(AsyncVectorEnv, thunks, copy=True)
             except Exception as exc:
