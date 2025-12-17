@@ -6,6 +6,7 @@ from typing import List, Optional
 import torch
 import typer
 
+from irl.cli.common import QUICK_EPISODES
 from .evaluation import run_eval_suite
 from .plotting import run_plots_suite
 from .training import run_training_suite
@@ -13,8 +14,6 @@ from .validation import run_validate_results
 from .videos import run_video_suite
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
-
-_QUICK_EPISODES = 5
 
 
 @app.command("train")
@@ -70,7 +69,7 @@ def cli_eval(
 ) -> None:
     n_eps = int(episodes)
     if quick:
-        n_eps = min(n_eps, _QUICK_EPISODES)
+        n_eps = min(n_eps, QUICK_EPISODES)
 
     run_eval_suite(
         runs_root=runs_root,
@@ -208,7 +207,7 @@ def cli_full(
 
     n_eps = int(episodes)
     if quick:
-        n_eps = min(n_eps, _QUICK_EPISODES)
+        n_eps = min(n_eps, QUICK_EPISODES)
 
     run_eval_suite(
         runs_root=runs_root,
