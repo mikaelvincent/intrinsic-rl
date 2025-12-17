@@ -9,8 +9,7 @@ from irl.plot import _parse_run_name, plot_normalized_summary
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
 from irl.visualization.data import _read_scalars
-
-from .plot_helpers import (
+from irl.visualization.suite_figures import (
     _generate_comparison_plot,
     _generate_component_plot,
     _generate_gating_plot,
