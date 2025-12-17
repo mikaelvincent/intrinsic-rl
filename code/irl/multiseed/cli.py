@@ -157,7 +157,7 @@ def cli_stats(
     )
     typer.echo(
         f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
-        f"(Δ={res.median_x - res.mean_y:+.3f})"
+        f"(Δ={res.median_x - res.median_y:+.3f})"
     )
     typer.echo(
         f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)"
