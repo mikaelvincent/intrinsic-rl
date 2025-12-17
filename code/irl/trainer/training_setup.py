@@ -12,6 +12,7 @@ import irl.utils.checkpoint_schema as ckpt_schema
 from irl.cfg import Config, to_dict
 from irl.envs.builder import make_env
 from irl.intrinsic import RunningRMS, create_intrinsic_module, is_intrinsic_method
+from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.checkpoint import CheckpointManager, compute_cfg_hash
 from irl.utils.determinism import seed_everything
@@ -176,26 +177,15 @@ def _build_intrinsic(
     if is_intrinsic_method(method_l):
         fail_on_intrinsic_error = bool(getattr(cfg.intrinsic, "fail_on_error", True))
         try:
+            intrinsic_kwargs = build_intrinsic_kwargs(cfg)
+            intrinsic_kwargs["checkpoint_include_points"] = bool(checkpoint_include_points)
+
             intrinsic_module = create_intrinsic_module(
                 method_l,
                 obs_space,
                 act_space,
                 device=device,
-                bin_size=float(cfg.intrinsic.bin_size),
-                alpha_impact=float(cfg.intrinsic.alpha_impact),
-                alpha_lp=float(cfg.intrinsic.alpha_lp),
-                region_capacity=int(cfg.intrinsic.region_capacity),
-                depth_max=int(cfg.intrinsic.depth_max),
-                ema_beta_long=float(cfg.intrinsic.ema_beta_long),
-                ema_beta_short=float(cfg.intrinsic.ema_beta_short),
-                gate_tau_lp_mult=float(cfg.intrinsic.gate.tau_lp_mult),
-                gate_tau_s=float(cfg.intrinsic.gate.tau_s),
-                gate_hysteresis_up_mult=float(cfg.intrinsic.gate.hysteresis_up_mult),
-                gate_min_consec_to_gate=int(cfg.intrinsic.gate.min_consec_to_gate),
-                gate_min_regions_for_gating=int(cfg.intrinsic.gate.min_regions_for_gating),
-                normalize_inside=bool(cfg.intrinsic.normalize_inside),
-                gating_enabled=bool(cfg.intrinsic.gate.enabled),
-                checkpoint_include_points=bool(checkpoint_include_points),
+                **intrinsic_kwargs,
             )
             if intrinsic_module is not None and hasattr(intrinsic_module, "checkpoint_include_points"):
                 try:
