@@ -84,6 +84,7 @@ class LoggingConfig:
 class ExperimentConfig:
     deterministic: bool = True
     total_steps: int | None = None
+    profile_cuda_sync: bool = False
 
 
 MethodLiteral = Literal[
