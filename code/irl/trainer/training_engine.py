@@ -19,6 +19,20 @@ from .runtime_utils import _apply_final_observation, _ensure_time_major_np
 from .training_setup import TrainingSession
 
 
+# CUDA kernels launch asynchronously; synchronize only for timing/profiling.
+def _maybe_cuda_sync(device: torch.device, enabled: bool) -> None:
+    if not enabled:
+        return
+    if device.type != "cuda":
+        return
+    if not torch.cuda.is_available():
+        return
+    try:
+        torch.cuda.synchronize()
+    except Exception:
+        pass
+
+
 def _try_float(x: Any) -> float | None:
     try:
         return float(x)
@@ -243,6 +257,12 @@ def run_training_loop(
     ml = session.metric_logger
     device = session.device
     ckpt = session.ckpt
+
+    profile_cuda_sync = False
+    try:
+        profile_cuda_sync = bool(getattr(getattr(cfg, "exp", None), "profile_cuda_sync", False))
+    except Exception:
+        profile_cuda_sync = False
 
     obs = session.obs
     global_step = int(session.global_step)
@@ -481,11 +501,7 @@ def run_training_loop(
             if method_l == "ride":
                 r_int_raw_flat = r_int_raw_seq.reshape(T * B).astype(np.float32)
             else:
-                if device.type != "cpu":
-                    try:
-                        torch.cuda.synchronize()
-                    except Exception:
-                        pass
+                _maybe_cuda_sync(device, profile_cuda_sync)
 
                 obs_flat = obs_seq_final.reshape((T * B,) + obs_shape)
                 next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
@@ -513,11 +529,7 @@ def run_training_loop(
                 r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
                 r_int_scaled_flat = eta * np.clip(r_int_norm_flat, -r_clip, r_clip)
 
-            if device.type != "cpu":
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
+            _maybe_cuda_sync(device, profile_cuda_sync)
             t_intrinsic_compute = time.perf_counter() - intrinsic_compute_t0
 
             intrinsic_update_t0 = time.perf_counter()
@@ -527,11 +539,7 @@ def run_training_loop(
                     next_obs_flat = next_obs_seq_final.reshape((T * B,) + obs_shape)
                     acts_flat = acts_seq.reshape(T * B) if is_discrete else acts_seq.reshape(T * B, -1)
 
-                if device.type != "cpu":
-                    try:
-                        torch.cuda.synchronize()
-                    except Exception:
-                        pass
+                _maybe_cuda_sync(device, profile_cuda_sync)
 
                 mod_metrics = update_module(
                     intrinsic_module,
@@ -541,11 +549,7 @@ def run_training_loop(
                     acts_flat,
                 )
 
-                if device.type != "cpu":
-                    try:
-                        torch.cuda.synchronize()
-                    except Exception:
-                        pass
+                _maybe_cuda_sync(device, profile_cuda_sync)
             except Exception:
                 mod_metrics = {}
             t_intrinsic_update = time.perf_counter() - intrinsic_update_t0
@@ -563,11 +567,7 @@ def run_training_loop(
             "truncations": truncs_seq,
         }
         gae_t0 = time.perf_counter()
-        if device.type != "cpu":
-            try:
-                torch.cuda.synchronize()
-            except Exception:
-                pass
+        _maybe_cuda_sync(device, profile_cuda_sync)
         adv, v_targets = compute_gae(
             gae_batch,
             value,
@@ -575,11 +575,7 @@ def run_training_loop(
             lam=float(cfg.ppo.gae_lambda),
             bootstrap_on_timeouts=True,
         )
-        if device.type != "cpu":
-            try:
-                torch.cuda.synchronize()
-            except Exception:
-                pass
+        _maybe_cuda_sync(device, profile_cuda_sync)
         t_gae = time.perf_counter() - gae_t0
 
         obs_flat_for_ppo = (
@@ -596,11 +592,7 @@ def run_training_loop(
         }
 
         ppo_t0 = time.perf_counter()
-        if device.type != "cpu":
-            try:
-                torch.cuda.synchronize()
-            except Exception:
-                pass
+        _maybe_cuda_sync(device, profile_cuda_sync)
         ppo_stats = ppo_update(
             policy,
             value,
@@ -611,11 +603,7 @@ def run_training_loop(
             optimizers=(pol_opt, val_opt),
             return_stats=True,
         )
-        if device.type != "cpu":
-            try:
-                torch.cuda.synchronize()
-            except Exception:
-                pass
+        _maybe_cuda_sync(device, profile_cuda_sync)
         t_ppo = time.perf_counter() - ppo_t0
 
         update_idx += 1
