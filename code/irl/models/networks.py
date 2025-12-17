@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 
 from irl.utils.image import ImagePreprocessConfig, preprocess_image
+from irl.utils.images import infer_channels_hw
 
 from .cnn import ConvEncoder, ConvEncoderConfig
 from .distributions import CategoricalDist, DiagGaussianDist
@@ -24,17 +25,6 @@ def _space_dims(space: gym.Space) -> int:
 
 def _is_image_space(space: gym.Space) -> bool:
     return isinstance(space, gym.spaces.Box) and len(space.shape) >= 2
-
-
-def _infer_c_hw(shape: tuple[int, ...]) -> Tuple[int, Tuple[int, int]]:
-    if len(shape) != 3:
-        return shape[-1], (shape[0], shape[1]) if len(shape) >= 2 else (0, 0)
-
-    c0 = shape[0]
-    c2 = shape[-1]
-    if c0 in (1, 3, 4) and c2 not in (1, 3, 4):
-        return c0, (shape[1], shape[2])
-    return c2, (shape[0], shape[1])
 
 
 def _to_tensor(x: Tensor | object, device: torch.device, dtype: torch.dtype = torch.float32) -> Tensor:
@@ -96,7 +86,7 @@ class PolicyNetwork(nn.Module):
         self.is_discrete = isinstance(action_space, gym.spaces.Discrete)
 
         if self.is_image:
-            in_ch, in_hw = _infer_c_hw(tuple(int(s) for s in obs_space.shape))
+            in_ch, in_hw = infer_channels_hw(tuple(int(s) for s in obs_space.shape))
             cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
             if int(cfg.in_channels) != int(in_ch):
                 cfg = replace(cfg, in_channels=int(in_ch))
@@ -159,7 +149,7 @@ class ValueNetwork(nn.Module):
 
         self.is_image = _is_image_space(obs_space)
         if self.is_image:
-            in_ch, in_hw = _infer_c_hw(tuple(int(s) for s in obs_space.shape))
+            in_ch, in_hw = infer_channels_hw(tuple(int(s) for s in obs_space.shape))
             cfg = cnn_cfg if cnn_cfg is not None else ConvEncoderConfig(in_channels=in_ch)
             if int(cfg.in_channels) != int(in_ch):
                 cfg = replace(cfg, in_channels=int(in_ch))
