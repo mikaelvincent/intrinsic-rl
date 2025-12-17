@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median, pstdev
@@ -14,7 +13,8 @@ from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
 from irl.pipelines.eval import cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_ckpt_to_run_result
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
-from irl.utils.checkpoint import atomic_replace, load_checkpoint
+from irl.utils.checkpoint import load_checkpoint
+from irl.utils.io import atomic_write_csv
 from irl.utils.runs import parse_run_name
 
 
@@ -38,24 +38,11 @@ _COVERAGE_COLS: list[str] = [
 
 
 def _write_coverage_csv(rows: list[dict[str, object]], path: Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(_COVERAGE_COLS))
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in _COVERAGE_COLS})
-        f.flush()
-        try:
-            import os
-
-            os.fsync(f.fileno())
-        except Exception:
-            pass
-
-    atomic_replace(tmp, path)
+    atomic_write_csv(
+        path,
+        _COVERAGE_COLS,
+        ({k: r.get(k, "") for k in _COVERAGE_COLS} for r in rows),
+    )
 
 
 def _coverage_from_results(
