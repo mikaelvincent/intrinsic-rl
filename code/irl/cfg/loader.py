@@ -251,7 +251,7 @@ def to_dict(cfg: Config) -> dict:
 
 
 def _from_mapping(cls: Type[Any], data: Mapping[str, Any], path: str) -> Any:
-    if/npm is_dataclass(cls):
+    if not is_dataclass(cls):
         raise ConfigError(f"Internal error: target {cls!r} is not a dataclass")
 
     allowed = {f.name for f in fields(cls)}
@@ -343,22 +343,16 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
 
     if typ is int:
         if isinstance(value, bool):
-            raise ConfigError(f"Expected int at {path}, got bool")
+            raise ConfigError("Expected int at {path}, got bool")
         if isinstance(value, int):
-            return int(value)
+            return value
         if isinstance(value, float) and float(value).is_integer():
             return int(value)
         if isinstance(value, str):
-            s = value.strip()
             try:
-                return int(s)
+                return int(value)
             except ValueError:
-                try:
-                    f = float(s)
-                except ValueError:
-                    f = None
-                if f is not None and float(f).is_integer():
-                    return int(f)
+                pass
         raise ConfigError(f"Expected int at {path}, got {value!r}")
 
     if typ is float:
