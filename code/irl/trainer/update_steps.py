@@ -14,6 +14,30 @@ from irl.intrinsic import compute_intrinsic_batch, update_module
 from .rollout import RolloutBatch
 
 
+def _canonical_intrinsic_method(method_l: str) -> str:
+    m = str(method_l).strip().lower()
+    return "glpe" if m.startswith("glpe_") else m
+
+
+def _expected_intrinsic_update_keys(method_l: str) -> tuple[str, ...]:
+    m = _canonical_intrinsic_method(method_l)
+    if m in {"icm", "ride", "riac", "glpe"}:
+        return ("loss_total", "loss_forward", "loss_inverse", "intrinsic_mean")
+    if m == "rnd":
+        return ("loss_total", "loss_intrinsic_mean", "rms")
+    return ()
+
+
+def _coerce_metrics_to_floats(metrics: dict[str, Any]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for k, v in metrics.items():
+        try:
+            out[str(k)] = float(v)
+        except Exception:
+            out[str(k)] = float("nan")
+    return out
+
+
 @dataclass(frozen=True)
 class IntrinsicRewards:
     rewards_total_seq: np.ndarray
@@ -99,7 +123,7 @@ def compute_intrinsic_rewards(
         intrinsic_update_t0 = time.perf_counter()
         try:
             maybe_cuda_sync(device, bool(profile_cuda_sync))
-            mod_metrics = dict(
+            raw_metrics = dict(
                 update_module(
                     intrinsic_module,
                     str(method_l),
@@ -109,8 +133,16 @@ def compute_intrinsic_rewards(
                 )
             )
             maybe_cuda_sync(device, bool(profile_cuda_sync))
+            mod_metrics = _coerce_metrics_to_floats(raw_metrics)
         except Exception:
             mod_metrics = {}
+
+        expected = _expected_intrinsic_update_keys(str(method_l))
+        if expected:
+            for k in expected:
+                if k not in mod_metrics:
+                    mod_metrics[k] = float("nan")
+
         t_intrinsic_update = time.perf_counter() - intrinsic_update_t0
 
     if r_int_scaled_flat is not None:
