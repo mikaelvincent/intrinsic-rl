@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 from irl.cli.validators import normalize_policy_mode
 from irl.envs.builder import make_env
 from irl.models import PolicyNetwork
+from irl.pipelines.policy_rollout import iter_policy_rollout
 from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
@@ -125,11 +126,11 @@ def render_rollout_video(
             mean_arr, std_arr = norm
             return (x - mean_arr) / std_arr
 
-        policy = PolicyNetwork(obs_space, act_space).to(device)
-        policy.load_state_dict(payload["policy"])
-        policy.eval()
+        policy_torch = PolicyNetwork(obs_space, act_space).to(device)
+        policy_torch.load_state_dict(payload["policy"])
+        policy_torch.eval()
 
-        obs, _ = env.reset(seed=int(seed))
+        obs0, _ = env.reset(seed=int(seed))
 
         frames: list[np.ndarray] = []
         blank_frames = 0
@@ -140,28 +141,19 @@ def render_rollout_video(
         label0 = f"{env_id} | {method} | step={ckpt_step} | {pm} | eval_seed={seed}"
         frames.append(_add_label(f0, label0, score=ret))
 
-        done = False
-        for _ in range(int(max_steps)):
-            if done:
-                break
+        dev = torch.device(device)
 
-            x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs)
-            x_in = _norm_obs(x_raw) if not is_image else x_raw
-
-            with torch.no_grad():
-                obs_t = torch.as_tensor(x_in, dtype=torch.float32, device=device)
-                dist = policy.distribution(obs_t)
-                act = dist.mode() if pm == "mode" else dist.sample()
-                a_np = act.detach().cpu().numpy()
-
-            if hasattr(act_space, "n"):
-                action_for_env = int(a_np.item())
-            else:
-                action_for_env = a_np.reshape(-1)
-
-            obs, r, term, trunc, _ = env.step(action_for_env)
-            ret += float(r)
-            done = bool(term) or bool(trunc)
+        for step_rec in iter_policy_rollout(
+            env=env,
+            policy=policy_torch,
+            obs0=obs0,
+            act_space=act_space,
+            device=dev,
+            policy_mode=pm,
+            normalize_obs=_norm_obs,
+            max_steps=int(max_steps),
+        ):
+            ret += float(step_rec.reward)
 
             fr = _render_frame(env)
             blank_frames += 1 if _is_blank_frame(fr) else 0
