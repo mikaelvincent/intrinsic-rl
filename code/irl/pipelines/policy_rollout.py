@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterator
 import numpy as np
 import torch
 
+from irl.cli.validators import normalize_policy_mode
 
 NormalizeFn = Callable[[np.ndarray], np.ndarray]
 
@@ -40,9 +41,7 @@ def iter_policy_rollout(
     normalize_obs: NormalizeFn | None = None,
     max_steps: int | None = None,
 ) -> Iterator[PolicyRolloutStep]:
-    mode = str(policy_mode).strip().lower()
-    if mode not in {"mode", "sample"}:
-        raise ValueError("policy_mode must be 'mode' or 'sample'")
+    mode = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
 
     if max_steps is not None and int(max_steps) < 0:
         raise ValueError("max_steps must be >= 0 or None")
