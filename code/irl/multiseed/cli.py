@@ -5,15 +5,9 @@ from typing import List, Optional
 
 import typer
 
+from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.stats_utils import bootstrap_ci, mannwhitney_u
-from .results import (
-    RunResult,
-    _aggregate,
-    _read_summary_raw,
-    _values_for_method,
-    _write_raw_csv,
-    _write_summary_csv,
-)
+from .results import _read_summary_raw, _values_for_method
 from .run_discovery import _evaluate_ckpt, _normalize_inputs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -168,7 +162,3 @@ def cli_stats(
         typer.echo(f"\nBootstrap {boot}× percentile CIs (two-sided 95%):")
         typer.echo(f"  Δ mean   : {mean_pt:+.3f}  CI [{mean_lo:+.3f}, {mean_hi:+.3f}]")
         typer.echo(f"  Δ median : {med_pt:+.3f}  CI [{med_lo:+.3f}, {med_hi:+.3f}]")
-
-
-def main() -> None:
-    app()
