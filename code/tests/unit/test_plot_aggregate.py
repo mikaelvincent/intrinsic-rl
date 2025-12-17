@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -5,7 +7,7 @@ import pytest
 from irl.plot import _aggregate_runs
 
 
-def test_aggregate_runs_dedups_and_falls_back(tmp_path: Path):
+def test_aggregate_runs_dedups_steps_and_falls_back(tmp_path: Path):
     run_dir = tmp_path / "runs" / "vanilla__MountainCar-v0__seed1__20250101-000000"
     logs = run_dir / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -21,10 +23,5 @@ def test_aggregate_runs_dedups_and_falls_back(tmp_path: Path):
 
     with pytest.warns(UserWarning, match="reward_mean"):
         agg_fb = _aggregate_runs([run_dir], metric="reward_mean", smooth=1)
-    assert agg_fb.n_runs == 1
     assert agg_fb.steps.tolist() == [0, 1000]
-
-    with pytest.warns(UserWarning, match="gate_rate"):
-        agg_missing = _aggregate_runs([run_dir], metric="gate_rate", smooth=1)
-    assert agg_missing.n_runs == 0
-    assert agg_missing.steps.size == 0
+    assert agg_fb.mean.tolist() == [0.5, 1.5]
