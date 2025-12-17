@@ -4,6 +4,8 @@ from typing import Any
 
 import typer
 
+from .validators import normalize_policy_mode
+
 QUICK_EPISODES = 5
 
 
@@ -13,12 +15,10 @@ def validate_policy_mode(
     allowed: tuple[str, ...] = ("mode", "sample"),
     option: str = "--policy",
 ) -> str:
-    pm = str(policy).strip().lower()
-    allowed_norm = {str(a).strip().lower() for a in allowed}
-    if pm not in allowed_norm:
-        allowed_s = ", ".join(str(a).strip().lower() for a in allowed)
-        raise typer.BadParameter(f"{option} must be one of: {allowed_s}")
-    return pm
+    try:
+        return normalize_policy_mode(policy, allowed=allowed, name=option)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def resolve_default_method_for_entrypoint(
