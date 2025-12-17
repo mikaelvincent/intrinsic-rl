@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 
 import gymnasium as gym
 import numpy as np
-import pytest
 import torch
 
 from irl.intrinsic.glpe import GLPE
@@ -90,28 +89,26 @@ def _make_riac(obs_space: gym.Space, act_space: gym.Space, *, include_points: bo
     )
 
 
-@pytest.mark.parametrize(
-    "make_module, method_tag",
-    [(_make_glpe, "glpe"), (_make_riac, "riac")],
-)
-def test_state_dict_can_omit_kdtree_points(tmp_path: Path, make_module, method_tag: str) -> None:
+def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
     obs_space, act_space = _make_spaces()
-    mod = make_module(obs_space, act_space, include_points=True)
-    _fill_store(mod, n_points=5000, seed=0)
 
-    p_with = tmp_path / f"{method_tag}_with_points.pt"
-    size_with = _save_state_dict(mod.state_dict(), p_with)
+    for make_module, method_tag in ((_make_glpe, "glpe"), (_make_riac, "riac")):
+        mod = make_module(obs_space, act_space, include_points=True)
+        _fill_store(mod, n_points=5000, seed=0)
 
-    mod.checkpoint_include_points = False
-    p_without = tmp_path / f"{method_tag}_without_points.pt"
-    size_without = _save_state_dict(mod.state_dict(), p_without)
+        p_with = tmp_path / f"{method_tag}_with_points.pt"
+        size_with = _save_state_dict(mod.state_dict(), p_with)
 
-    assert size_without < size_with
-    assert size_without <= int(size_with * 0.4)
+        mod.checkpoint_include_points = False
+        p_without = tmp_path / f"{method_tag}_without_points.pt"
+        size_without = _save_state_dict(mod.state_dict(), p_without)
 
-    mod2 = make_module(obs_space, act_space, include_points=False)
-    sd_no_points = _torch_load_any(p_without)
-    mod2.load_state_dict(sd_no_points, strict=True)
+        assert size_without < size_with
+        assert size_without <= int(size_with * 0.4)
 
-    assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
-    assert int(mod2.store.depth_max) == 0
+        mod2 = make_module(obs_space, act_space, include_points=False)
+        sd_no_points = _torch_load_any(p_without)
+        mod2.load_state_dict(sd_no_points, strict=True)
+
+        assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
+        assert int(mod2.store.depth_max) == 0
