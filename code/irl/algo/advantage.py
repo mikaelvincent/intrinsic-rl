@@ -151,14 +151,24 @@ def compute_gae(
     if trunc_raw is not None:
         trunc_t = _coerce_mask_to_TB(_to_tensor(trunc_raw, device), T, B, done_t)
 
-    if term_t is None and trunc_t is None:
-        done_eff = done_t
+    has_term = term_t is not None
+    has_trunc = trunc_t is not None
+
+    if not has_term and not has_trunc:
+        done_rec = done_t
+        term = None
+        trunc = None
     else:
-        term = term_t if term_t is not None else torch.zeros_like(done_t)
-        if trunc_t is None:
-            done_eff = term
+        trunc = trunc_t if trunc_t is not None else torch.zeros_like(done_t)
+        if term_t is not None:
+            term = term_t
         else:
-            done_eff = term if bootstrap_on_timeouts else torch.clamp(term + trunc_t, max=1.0)
+            term = torch.zeros_like(done_t)
+            if dones_any is not None and trunc_t is not None:
+                # If callers provide `dones` + `truncations` but omit `terminals`, infer terminals as
+                # done - trunc to preserve episode boundaries without leaking across timeouts.
+                term = torch.clamp(done_t - trunc, min=0.0, max=1.0)
+        done_rec = torch.clamp(term + trunc, max=1.0)
 
     with torch.no_grad():
         v_t = value_fn(obs_t).view(T, B)
@@ -171,11 +181,17 @@ def compute_gae(
                 v_tp1[:-1] = v_t[1:]
             v_tp1[-1] = 0.0
 
+        rew_eff = rew_t
+        if bootstrap_on_timeouts and trunc_t is not None and trunc is not None:
+            term_eff = term if term is not None else torch.zeros_like(done_t)
+            trunc_boot = trunc * (1.0 - term_eff)
+            rew_eff = rew_t + float(gamma) * trunc_boot * v_tp1
+
         adv = torch.zeros_like(v_t)
         last_adv = torch.zeros(B, device=device)
         for t in reversed(range(T)):
-            delta = rew_t[t] + gamma * (1.0 - done_eff[t]) * v_tp1[t] - v_t[t]
-            last_adv = delta + gamma * lam * (1.0 - done_eff[t]) * last_adv
+            delta = rew_eff[t] + gamma * (1.0 - done_rec[t]) * v_tp1[t] - v_t[t]
+            last_adv = delta + gamma * lam * (1.0 - done_rec[t]) * last_adv
             adv[t] = last_adv
 
         v_targets = adv + v_t
