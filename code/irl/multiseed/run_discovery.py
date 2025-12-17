@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import glob
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from irl.evaluator import evaluate
+from irl.pipelines.discovery import collect_ckpts_from_patterns
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.runs import find_latest_ckpt as _find_latest_ckpt_impl
 
@@ -16,43 +16,11 @@ def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
 
 
 def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
-    out: list[Path] = []
-    for pattern in run_globs:
-        for p in glob.glob(pattern):
-            rd = Path(p)
-            if rd.is_file():
-                if rd.name.startswith("ckpt_") and rd.suffix == ".pt":
-                    out.append(rd.resolve())
-                continue
-            ck = _find_latest_ckpt(rd)
-            if ck is not None:
-                out.append(ck.resolve())
-
-    seen = set()
-    unique: list[Path] = []
-    for p in out:
-        if p not in seen:
-            unique.append(p)
-            seen.add(p)
-    return unique
+    return collect_ckpts_from_patterns(list(run_globs), None)
 
 
 def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) -> List[Path]:
-    paths: list[Path] = []
-    if runs:
-        paths.extend(_collect_ckpts_from_runs(runs))
-    if ckpts:
-        for c in ckpts:
-            if c.exists() and c.is_file():
-                paths.append(c.resolve())
-
-    uniq: list[Path] = []
-    seen = set()
-    for p in paths:
-        if p not in seen:
-            uniq.append(p)
-            seen.add(p)
-    return uniq
+    return collect_ckpts_from_patterns(runs, ckpts)
 
 
 def _evaluate_ckpt(ckpt: Path, episodes: int, device: str, policy_mode: str = "mode") -> RunResult:
