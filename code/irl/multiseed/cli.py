@@ -115,8 +115,12 @@ def cli_stats(
     if not raw:
         raise typer.BadParameter(f"No rows parsed from {summary_raw}")
 
-    x = _values_for_method(raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed)
-    y = _values_for_method(raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed)
+    x = _values_for_method(
+        raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed
+    )
+    y = _values_for_method(
+        raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed
+    )
 
     if not x:
         raise typer.BadParameter(f"No rows for env={env!r}, method={method_a!r}")
@@ -130,6 +134,7 @@ def cli_stats(
 
     def diff_median(a, b):
         import numpy as _np
+
         return float(_np.median(a) - _np.median(b))
 
     mean_pt, mean_lo, mean_hi = (
@@ -146,7 +151,8 @@ def cli_stats(
     typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
     typer.echo(f"Groups: {method_a} (n={res.n_x}) vs {method_b} (n={res.n_y})")
     typer.echo(
-        f"U1={res.U1:.3f}, U2={res.U2:.3f}, U_used={res.U:.3f}, z={res.z:.3f}, p={res.p_value:.6g}  (alt={alt})"
+        f"U1={res.U1:.3f}, U2={res.U2:.3f}, U_used={res.U:.3f}, z={res.z:.3f}, "
+        f"p={res.p_value:.6g}  (alt={alt})"
     )
     typer.echo(
         f"Means   : {method_a}={res.mean_x:.3f}, {method_b}={res.mean_y:.3f}  "
@@ -154,11 +160,17 @@ def cli_stats(
     )
     typer.echo(
         f"Medians : {method_a}={res.median_x:.3f}, {method_b}={res.median_y:.3f}  "
-        f"(Δ={res.median_x - res.median_y:+.3f})"
+        f"(Δ={res.median_x - res.mean_y:+.3f})"
     )
-    typer.echo(f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)")
+    typer.echo(
+        f"Effect sizes: CLES={res.cles:.3f}  Cliff's δ={res.cliffs_delta:+.3f}  (δ=2*cles-1)"
+    )
 
     if boot > 0:
         typer.echo(f"\nBootstrap {boot}× percentile CIs (two-sided 95%):")
         typer.echo(f"  Δ mean   : {mean_pt:+.3f}  CI [{mean_lo:+.3f}, {mean_hi:+.3f}]")
         typer.echo(f"  Δ median : {med_pt:+.3f}  CI [{med_lo:+.3f}, {med_hi:+.3f}]")
+
+
+def main() -> None:
+    app()
