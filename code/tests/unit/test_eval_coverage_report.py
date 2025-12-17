@@ -71,6 +71,10 @@ def test_eval_suite_writes_coverage_for_nested_runs(tmp_path: Path, monkeypatch:
     assert len(glpe_rows) == 1
     assert glpe_rows[0]["missing_seeds"] == "2"
 
+    raw_path = results_dir / "summary_raw.csv"
+    cols = {c.strip() for c in raw_path.read_text(encoding="utf-8").splitlines()[0].split(",")}
+    assert {"policy_mode", "seed_offset", "episode_seeds_hash"} <= cols
+
 
 def test_eval_suite_strict_coverage_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runs_root = tmp_path / "runs_suite"
