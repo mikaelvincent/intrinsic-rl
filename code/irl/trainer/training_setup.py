@@ -472,9 +472,6 @@ def build_training_session(
     B = int(getattr(env, "num_envs", 1))
 
     obs_norm = None if is_image else RunningObsNorm(shape=int(obs_space.shape[0]))
-    if not is_image and obs_norm is not None:
-        first_batch = obs if B > 1 else obs[None, :]
-        obs_norm.update(first_batch)
 
     global_step, update_idx = _restore_from_checkpoint(
         resume_payload=resume_payload,
