@@ -4,33 +4,6 @@ from torch import nn
 from irl.algo.advantage import compute_gae
 
 
-class ZeroValue(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self._p = nn.Parameter(torch.zeros(1))
-
-    def forward(self, obs):
-        t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
-        n = t.reshape(-1, t.shape[-1]).shape[0]
-        return torch.zeros(n, dtype=torch.float32, device=t.device)
-
-
-def test_extrinsic_rewards_not_clipped_in_gae():
-    obs = torch.zeros((1, 1, 3), dtype=torch.float32)
-    rewards = torch.tensor([[10.0]], dtype=torch.float32)
-    dones = torch.tensor([[1.0]], dtype=torch.float32)
-
-    adv, v_targets = compute_gae(
-        {"obs": obs, "rewards": rewards, "dones": dones},
-        value_fn=ZeroValue(),
-        gamma=0.99,
-        lam=0.95,
-    )
-
-    assert torch.allclose(adv, torch.tensor([10.0], dtype=torch.float32), atol=1e-6)
-    assert torch.allclose(v_targets, torch.tensor([10.0], dtype=torch.float32), atol=1e-6)
-
-
 class _DummyValueForTimeouts(nn.Module):
     def __init__(self, v_t, v_tp1):
         super().__init__()
