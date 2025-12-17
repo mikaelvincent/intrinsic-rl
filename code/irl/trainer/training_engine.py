@@ -390,7 +390,6 @@ def run_training_loop(
 
             next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
             if not is_image:
-                obs_norm.update(next_obs_b)
                 next_obs_b_norm = obs_norm.normalize(next_obs_b)
             else:
                 next_obs_b_norm = next_obs_b
