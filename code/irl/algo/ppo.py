@@ -6,20 +6,8 @@ import torch
 from torch import Tensor, nn
 from torch.optim import Adam
 
-
-def _pick(m: Mapping[str, Any], *keys: str, default: Any | None = None) -> Any:
-    for k in keys:
-        if k in m:
-            return m[k]
-    return default
-
-
-def _to_tensor(x: Any, device: torch.device, dtype: torch.dtype | None = None) -> Tensor:
-    if torch.is_tensor(x):
-        return x.to(device=device, dtype=dtype or x.dtype)
-    if dtype is None:
-        return torch.as_tensor(x, device=device)
-    return torch.as_tensor(x, device=device, dtype=dtype)
+from irl.utils.collections import pick as _pick
+from irl.utils.tensors import to_tensor as _to_tensor
 
 
 def ppo_update(
