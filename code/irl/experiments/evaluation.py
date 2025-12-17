@@ -12,9 +12,9 @@ from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
 from irl.pipelines.eval import evaluate_ckpt_to_run_result
-from irl.plot import _parse_run_name
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
+from irl.utils.runs import parse_run_name
 
 
 def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
@@ -241,7 +241,7 @@ def run_eval_suite(
 
             cfg_env_id, cfg_method, cfg_seed = _cfg_fields(payload)
 
-            info = _parse_run_name(rd)
+            info = parse_run_name(rd)
             run_env_tag = info.get("env")
             run_method = info.get("method")
             run_seed = None
