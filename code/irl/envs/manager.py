@@ -85,10 +85,6 @@ class EnvManager:
 
             if self.seed is not None:
                 try:
-                    env.reset(seed=int(self.seed) + rank)
-                except Exception:
-                    pass
-                try:
                     env.action_space.seed(int(self.seed) + 17 * rank + 13)
                 except Exception:
                     pass
