@@ -124,7 +124,11 @@ class EnvManager:
                     action_set = self._build_carracing_action_set()
                     env = CarRacingDiscreteActionWrapper(env, action_set=action_set)
                 except Exception:
-                    pass
+                    _LOG.exception(
+                        "CarRacingDiscreteActionWrapper failed for env_id=%s.",
+                        self.env_id,
+                    )
+                    raise
 
             if self.frame_skip and self.frame_skip > 1:
                 env = FrameSkip(env, skip=self.frame_skip)
