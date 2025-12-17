@@ -7,10 +7,7 @@ from irl.cli.common import resolve_default_method_for_entrypoint
 from irl.cfg import Config, load_config, validate_config
 from irl.trainer import train as run_train
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
-
-@app.command("train")
 def cli_train(
     config: Path | None = typer.Option(
         None, "--config", "-c", exists=True, dir_okay=False, readable=True
@@ -42,8 +39,10 @@ def cli_train(
     typer.echo(f"[green]Training finished[/green]\nRun dir: {out_dir}")
 
 
-def main() -> None:
-    app()
+def main(argv: list[str] | None = None) -> None:
+    from irl.cli.app import dispatch
+
+    dispatch("train", argv, prog_name="irl-train")
 
 
 if __name__ == "__main__":
