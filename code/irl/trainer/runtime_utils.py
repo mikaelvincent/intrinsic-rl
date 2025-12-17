@@ -6,9 +6,11 @@ import numpy as np
 import torch
 from torch.optim import Adam
 
+from irl.utils.spaces import is_image_space
+
 
 def _is_image_space(space) -> bool:
-    return hasattr(space, "shape") and len(space.shape) >= 2
+    return bool(is_image_space(space))
 
 
 def _move_optimizer_state_to_device(opt: Adam, device: torch.device) -> None:
