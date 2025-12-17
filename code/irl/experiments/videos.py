@@ -6,7 +6,8 @@ from typing import Iterable, Sequence
 import typer
 
 from irl.cli.common import validate_policy_mode
-from irl.utils.runs import discover_runs_by_checkpoints, list_step_ckpts
+from irl.pipelines.discovery import discover_run_dirs_with_step_ckpts
+from irl.utils.runs import list_step_ckpts
 from irl.video import render_rollout_video
 
 
@@ -40,7 +41,7 @@ def run_video_suite(
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    run_dirs = discover_runs_by_checkpoints(root)
+    run_dirs = discover_run_dirs_with_step_ckpts(root)
     if not run_dirs:
         typer.echo(f"[suite] No run directories with checkpoints under {root}")
         return
