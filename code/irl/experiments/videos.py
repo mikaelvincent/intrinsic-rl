@@ -1,65 +1,12 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import typer
 
+from irl.utils.runs import discover_runs_by_checkpoints, list_step_ckpts
 from irl.video import render_rollout_video
-
-_CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
-
-
-def _discover_run_dirs_with_checkpoints(runs_root: Path) -> list[Path]:
-    root = Path(runs_root).resolve()
-    if not root.exists():
-        return []
-
-    seen: set[Path] = set()
-    out: list[Path] = []
-
-    for ckpt_dir in root.rglob("checkpoints"):
-        if not ckpt_dir.is_dir():
-            continue
-        try:
-            has_any = any(
-                p.is_file() and _CKPT_RE.match(p.name) for p in ckpt_dir.iterdir()
-            )
-        except Exception:
-            has_any = False
-
-        if not has_any:
-            continue
-
-        run_dir = ckpt_dir.parent.resolve()
-        if run_dir not in seen:
-            seen.add(run_dir)
-            out.append(run_dir)
-
-    return sorted(out, key=lambda p: str(p))
-
-
-def _list_step_checkpoints(run_dir: Path) -> list[tuple[int, Path]]:
-    ckpt_dir = Path(run_dir) / "checkpoints"
-    if not ckpt_dir.exists():
-        return []
-
-    out: list[tuple[int, Path]] = []
-    for p in ckpt_dir.iterdir():
-        if not p.is_file():
-            continue
-        m = _CKPT_RE.match(p.name)
-        if not m:
-            continue
-        try:
-            step = int(m.group(1))
-        except Exception:
-            continue
-        out.append((step, p))
-
-    out.sort(key=lambda t: (t[0], str(t[1])))
-    return out
 
 
 def _normalize_seeds(seeds: Iterable[int] | None) -> list[int]:
@@ -94,7 +41,7 @@ def run_video_suite(
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    run_dirs = _discover_run_dirs_with_checkpoints(root)
+    run_dirs = discover_runs_by_checkpoints(root)
     if not run_dirs:
         typer.echo(f"[suite] No run directories with checkpoints under {root}")
         return
@@ -110,7 +57,7 @@ def run_video_suite(
     )
 
     for rd in run_dirs:
-        ckpts = _list_step_checkpoints(rd)
+        ckpts = list_step_ckpts(rd)
         if not ckpts:
             typer.echo(f"[suite]    - {rd.name}: no step checkpoints found, skipping")
             continue
