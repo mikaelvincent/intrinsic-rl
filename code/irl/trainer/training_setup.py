@@ -24,10 +24,11 @@ from irl.utils.loggers import (
     log_resume_optimizer_warning,
     log_resume_state_restored,
 )
+from irl.utils.spaces import is_image_space
 
 from .build import default_run_dir, ensure_mujoco_gl, single_spaces
 from .obs_norm import RunningObsNorm
-from .runtime_utils import _is_image_space, _move_optimizer_state_to_device
+from .runtime_utils import _move_optimizer_state_to_device
 
 
 @dataclass
@@ -451,7 +452,7 @@ def build_training_session(
     env = _build_env(cfg, logger=logger)
     obs_space, act_space = single_spaces(env)
 
-    is_image = _is_image_space(obs_space)
+    is_image = bool(is_image_space(obs_space))
 
     policy = PolicyNetwork(obs_space, act_space).to(device)
     value = ValueNetwork(obs_space).to(device)
