@@ -239,8 +239,10 @@ def cli_full(
     )
 
 
-def main() -> None:
-    app()
+def main(argv: list[str] | None = None) -> None:
+    from irl.cli.app import dispatch
+
+    dispatch("suite", argv, prog_name="irl-suite")
 
 
 if __name__ == "__main__":
