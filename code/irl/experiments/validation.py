@@ -7,6 +7,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.runs import parse_run_name as _parse_run_name
 
 
 def _csv_header(path: Path) -> list[str] | None:
@@ -37,10 +38,10 @@ def _run_name_from_scalars_path(scalars_csv: Path) -> str:
 
 
 def _method_from_run_name(run_name: str) -> str:
-    parts = str(run_name).split("__")
-    if not parts:
-        return "unknown"
-    return (parts[0] or "unknown").strip().lower()
+    info = _parse_run_name(str(run_name))
+    method = info.get("method")
+    m = (str(method) if method is not None else "").strip().lower()
+    return m or "unknown"
 
 
 def _read_csv_rows(path: Path) -> tuple[list[dict[str, str]], list[str] | None]:
