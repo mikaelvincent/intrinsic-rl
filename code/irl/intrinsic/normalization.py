@@ -22,6 +22,11 @@ class RunningRMS:
         r2_mean = float(np.mean(np.square(arr, dtype=np.float64)))
         self._r2_ema = float(self.beta) * self._r2_ema + (1.0 - float(self.beta)) * r2_mean
 
+    def update_scalar(self, x: float) -> None:
+        v = float(x)
+        r2_mean = float(v * v)
+        self._r2_ema = float(self.beta) * self._r2_ema + (1.0 - float(self.beta)) * r2_mean
+
     @property
     def rms(self) -> float:
         return float(np.sqrt(self._r2_ema + float(self.eps)))
@@ -32,6 +37,13 @@ class RunningRMS:
         if not np.isfinite(denom) or denom <= 0.0:
             denom = 1.0
         return arr / denom
+
+    def normalize_scalar(self, x: float) -> float:
+        v = float(x)
+        denom = self.rms
+        if not np.isfinite(denom) or denom <= 0.0:
+            denom = 1.0
+        return float(v) / float(denom)
 
     def state_dict(self) -> dict:
         return {"r2_ema": float(self._r2_ema), "beta": float(self.beta), "eps": float(self.eps)}
