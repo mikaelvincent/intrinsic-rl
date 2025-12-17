@@ -10,27 +10,23 @@ from PIL import Image, ImageDraw, ImageFont
 
 from irl.envs import EnvManager
 from irl.models import PolicyNetwork
-from irl.trainer.build import single_spaces
+from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything
 
 
-def _load_policy_for_eval(ckpt_path: Path, device: str) -> tuple[PolicyNetwork, dict]:
-    payload = load_checkpoint(ckpt_path, map_location=device)
-    cfg = payload.get("cfg", {}) or {}
-    env_id = str((cfg.get("env") or {}).get("id", "MountainCar-v0"))
+def _is_image_space(space) -> bool:
+    return hasattr(space, "shape") and len(space.shape) >= 2
 
-    manager = EnvManager(env_id=env_id, num_envs=1)
-    env = manager.make()
-    try:
-        obs_space, act_space = single_spaces(env)
-    finally:
-        env.close()
 
-    policy = PolicyNetwork(obs_space, act_space).to(device)
-    policy.load_state_dict(payload["policy"])
-    policy.eval()
-    return policy, cfg
+def _build_normalizer(payload) -> tuple[np.ndarray, np.ndarray] | None:
+    on = payload.get("obs_norm")
+    if on is None:
+        return None
+    mean_arr = np.asarray(on.get("mean"), dtype=np.float64)
+    var_arr = np.asarray(on.get("var"), dtype=np.float64)
+    std_arr = np.sqrt(var_arr + 1e-8)
+    return mean_arr, std_arr
 
 
 def _render_frame(env: gym.Env) -> np.ndarray:
@@ -44,19 +40,39 @@ def _render_frame(env: gym.Env) -> np.ndarray:
 
     if isinstance(rgb, list):
         rgb = np.array(rgb)
-    return rgb.astype(np.uint8)
+
+    arr = np.asarray(rgb)
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    if arr.ndim == 3 and arr.shape[-1] == 4:
+        arr = arr[..., :3]
+    if arr.ndim != 3 or arr.shape[-1] != 3:
+        return np.zeros((240, 320, 3), dtype=np.uint8)
+
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8, copy=False)
+    return arr
 
 
-def _add_label(
-    frame: np.ndarray,
-    label: str,
-    score: float | None = None,
-    color: tuple[int, int, int] = (255, 255, 255),
-) -> np.ndarray:
+def _is_blank_frame(frame: np.ndarray) -> bool:
+    try:
+        f = np.asarray(frame)
+        if f.size == 0:
+            return True
+        if f.ndim != 3:
+            return True
+        mn = int(f.min())
+        mx = int(f.max())
+        return mn == mx
+    except Exception:
+        return True
+
+
+def _add_label(frame: np.ndarray, label: str, score: float | None = None) -> np.ndarray:
     pil_img = Image.fromarray(frame)
     draw = ImageDraw.Draw(pil_img)
     try:
-        font = ImageFont.truetype("arial.ttf", 20)
+        font = ImageFont.truetype("arial.ttf", 18)
     except OSError:
         font = ImageFont.load_default()
 
@@ -65,101 +81,114 @@ def _add_label(
 
     for ox, oy in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
         draw.text((x + ox, y + oy), text, font=font, fill=(0, 0, 0))
-    draw.text((x, y), text, font=font, fill=color)
+    draw.text((x, y), text, font=font, fill=(255, 255, 255))
 
     return np.array(pil_img)
 
 
-def render_side_by_side(
-    env_id: str,
-    ckpt_left: Path,
-    ckpt_right: Path,
+def render_rollout_video(
+    *,
+    ckpt_path: Path,
     out_path: Path,
-    max_steps: int = 1000,
     seed: int = 42,
+    max_steps: int = 1000,
     device: str = "cpu",
-    label_left: str = "Baseline",
-    label_right: str = "Gated Learning-Progress Exploration (GLPE)",
+    policy_mode: str = "mode",
+    fps: int = 30,
 ) -> None:
-    seed_everything(seed, deterministic=True)
+    pm = str(policy_mode).strip().lower()
+    if pm not in {"mode", "sample"}:
+        raise ValueError("policy_mode must be 'mode' or 'sample'")
 
-    pol_l, cfg_l = _load_policy_for_eval(ckpt_left, device)
-    pol_r, _ = _load_policy_for_eval(ckpt_right, device)
-    env_cfg = cfg_l.get("env", {})
+    payload = load_checkpoint(Path(ckpt_path), map_location=device)
+    cfg = payload.get("cfg", {}) or {}
 
-    def make_env(rank: int):
-        return EnvManager(
-            env_id=env_id,
-            num_envs=1,
-            seed=seed + rank,
-            frame_skip=int(env_cfg.get("frame_skip", 1)),
-            discrete_actions=bool(env_cfg.get("discrete_actions", True)),
-            car_action_set=env_cfg.get("car_discrete_action_set", None),
-            render_mode="rgb_array",
-        ).make()
+    env_cfg = (cfg.get("env") or {}) if isinstance(cfg, dict) else {}
+    env_id = str(env_cfg.get("id") or "MountainCar-v0")
+    method = str(cfg.get("method", "vanilla"))
+    ckpt_step = int(payload.get("step", -1))
 
-    env_l = make_env(0)
-    env_l.reset(seed=seed)
+    ensure_mujoco_gl(env_id)
+    seed_everything(int(seed), deterministic=True)
 
-    env_r = make_env(0)
-    env_r.reset(seed=seed)
+    frame_skip = int(env_cfg.get("frame_skip", 1))
+    discrete_actions = bool(env_cfg.get("discrete_actions", True))
+    car_action_set = env_cfg.get("car_discrete_action_set", None)
 
-    obs_l, _ = env_l.reset(seed=seed)
-    obs_r, _ = env_r.reset(seed=seed)
+    manager = EnvManager(
+        env_id=env_id,
+        num_envs=1,
+        seed=int(seed),
+        frame_skip=frame_skip,
+        domain_randomization=False,
+        discrete_actions=discrete_actions,
+        car_action_set=car_action_set,
+        render_mode="rgb_array",
+    )
+    env = manager.make()
 
-    done_l = False
-    done_r = False
-    ret_l = 0.0
-    ret_r = 0.0
-    frames: list[np.ndarray] = []
+    try:
+        obs_space, act_space = single_spaces(env)
+        is_image = _is_image_space(obs_space)
+        norm = None if is_image else _build_normalizer(payload)
 
-    for _ in range(int(max_steps)):
-        if done_l and done_r:
-            break
+        def _norm_obs(x: np.ndarray) -> np.ndarray:
+            if norm is None:
+                return x
+            mean_arr, std_arr = norm
+            return (x - mean_arr) / std_arr
 
-        if not done_l:
+        policy = PolicyNetwork(obs_space, act_space).to(device)
+        policy.load_state_dict(payload["policy"])
+        policy.eval()
+
+        obs, _ = env.reset(seed=int(seed))
+
+        frames: list[np.ndarray] = []
+        blank_frames = 0
+        ret = 0.0
+
+        f0 = _render_frame(env)
+        blank_frames += 1 if _is_blank_frame(f0) else 0
+        label0 = f"{env_id} | {method} | step={ckpt_step} | {pm} | eval_seed={seed}"
+        frames.append(_add_label(f0, label0, score=ret))
+
+        done = False
+        for _ in range(int(max_steps)):
+            if done:
+                break
+
+            x_raw = obs if isinstance(obs, np.ndarray) else np.asarray(obs)
+            x_in = _norm_obs(x_raw) if not is_image else x_raw
+
             with torch.no_grad():
-                a_t, _ = pol_l.act(obs_l)
-                act_l = a_t.cpu().numpy()
+                obs_t = torch.as_tensor(x_in, dtype=torch.float32, device=device)
+                dist = policy.distribution(obs_t)
+                act = dist.mode() if pm == "mode" else dist.sample()
+                a_np = act.detach().cpu().numpy()
 
-            act_l_env = int(act_l.item()) if env_l.action_space.shape == () else act_l.reshape(-1)
-            obs_l, r, term, trunc, _ = env_l.step(act_l_env)
-            ret_l += float(r)
-            done_l = bool(term) or bool(trunc)
-            frame_l = _render_frame(env_l)
-        else:
-            if "frame_l" not in locals():
-                frame_l = _render_frame(env_l)
+            if hasattr(act_space, "n"):
+                action_for_env = int(a_np.item())
+            else:
+                action_for_env = a_np.reshape(-1)
 
-        if not done_r:
-            with torch.no_grad():
-                a_t, _ = pol_r.act(obs_r)
-                act_r = a_t.cpu().numpy()
+            obs, r, term, trunc, _ = env.step(action_for_env)
+            ret += float(r)
+            done = bool(term) or bool(trunc)
 
-            act_r_env = int(act_r.item()) if env_r.action_space.shape == () else act_r.reshape(-1)
-            obs_r, r, term, trunc, _ = env_r.step(act_r_env)
-            ret_r += float(r)
-            done_r = bool(term) or bool(trunc)
-            frame_r = _render_frame(env_r)
-        else:
-            if "frame_r" not in locals():
-                frame_r = _render_frame(env_r)
+            fr = _render_frame(env)
+            blank_frames += 1 if _is_blank_frame(fr) else 0
+            frames.append(_add_label(fr, label0, score=ret))
 
-        labeled_l = _add_label(frame_l, label_left, ret_l, color=(200, 200, 255))
-        labeled_r = _add_label(frame_r, label_right, ret_r, color=(255, 200, 200))
+        if not frames:
+            raise RuntimeError("No frames captured.")
 
-        h_l = int(labeled_l.shape[0])
-        h_r = int(labeled_r.shape[0])
-        w_r = int(labeled_r.shape[1])
-        if h_l != h_r:
-            pil_r = Image.fromarray(labeled_r).resize((int(w_r * h_l / h_r), h_l))
-            labeled_r = np.array(pil_r)
+        blank_ratio = float(blank_frames) / float(len(frames))
+        if len(frames) >= 10 and blank_ratio > 0.9:
+            raise RuntimeError(f"Render appears blank (blank_ratio={blank_ratio:.2f}).")
 
-        frames.append(np.concatenate([labeled_l, labeled_r], axis=1))
-
-    env_l.close()
-    env_r.close()
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if frames:
-        imageio.mimsave(str(out_path), frames, fps=30)
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        imageio.mimsave(str(out_path), frames, fps=int(fps))
+    finally:
+        env.close()
