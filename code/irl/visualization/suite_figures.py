@@ -15,6 +15,13 @@ from irl.visualization.data import _aggregate_runs
 from irl.visualization.figures import plot_trajectory_heatmap
 
 
+def _meta_tags(*, smooth: int, align: str) -> tuple[str, str, str]:
+    a = str(align).strip().lower() or "interpolate"
+    title_tag = f"smooth={int(smooth)}, align={a}"
+    file_tag = f"smooth{int(smooth)}__align{a}"
+    return a, title_tag, file_tag
+
+
 def _generate_comparison_plot(
     groups_by_env: Dict[str, Dict[str, List[Path]]],
     methods_to_plot: List[str],
@@ -24,7 +31,11 @@ def _generate_comparison_plot(
     title: str,
     filename_suffix: str,
     plots_root: Path,
+    *,
+    align: str = "interpolate",
 ) -> None:
+    align_mode, meta_title, meta_file = _meta_tags(smooth=int(smooth), align=str(align))
+
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         relevant_methods = [m for m in methods_to_plot if m in by_method]
         if not relevant_methods:
@@ -36,7 +47,7 @@ def _generate_comparison_plot(
         for method in relevant_methods:
             dirs = by_method[method]
             try:
-                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth))
+                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth), align=align_mode)
             except Exception:
                 continue
 
@@ -80,12 +91,12 @@ def _generate_comparison_plot(
 
         ax.set_xlabel("Environment steps")
         ax.set_ylabel(metric.replace("_", " "))
-        ax.set_title(f"{env_id} — {title}")
+        ax.set_title(f"{env_id} — {title} ({meta_title})")
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
 
         env_tag = env_id.replace("/", "-")
-        out = plots_root / f"{env_tag}__{filename_suffix}.png"
+        out = plots_root / f"{env_tag}__{filename_suffix}__{meta_file}.png"
         tmp = out.with_suffix(out.suffix + ".tmp")
         fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format="png")
         atomic_replace(tmp, out)
@@ -97,7 +108,11 @@ def _generate_gating_plot(
     groups_by_env: Dict[str, Dict[str, List[Path]]],
     plots_root: Path,
     smooth: int = 25,
+    *,
+    align: str = "interpolate",
 ) -> None:
+    align_mode, meta_title, meta_file = _meta_tags(smooth=int(smooth), align=str(align))
+
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         runs = by_method.get("glpe")
         if not runs:
@@ -109,10 +124,12 @@ def _generate_gating_plot(
             continue
 
         try:
-            agg_rew = _aggregate_runs(runs, metric="reward_mean", smooth=smooth)
-            agg_gate = _aggregate_runs(runs, metric="gate_rate", smooth=smooth)
+            agg_rew = _aggregate_runs(runs, metric="reward_mean", smooth=smooth, align=align_mode)
+            agg_gate = _aggregate_runs(runs, metric="gate_rate", smooth=smooth, align=align_mode)
             if agg_gate.n_runs == 0:
-                agg_gate = _aggregate_runs(runs, metric="gate_rate_pct", smooth=smooth)
+                agg_gate = _aggregate_runs(
+                    runs, metric="gate_rate_pct", smooth=smooth, align=align_mode
+                )
         except Exception:
             continue
 
@@ -145,11 +162,11 @@ def _generate_gating_plot(
         )
         ax2.tick_params(axis="y", labelcolor=color2)
 
-        ax1.set_title(f"{env_id} — Gating Dynamics (GLPE)")
+        ax1.set_title(f"{env_id} — Gating Dynamics (GLPE) ({meta_title})")
         ax1.grid(True, alpha=0.3)
 
         env_tag = env_id.replace("/", "-")
-        out = plots_root / f"{env_tag}__gating_dynamics.png"
+        out = plots_root / f"{env_tag}__gating_dynamics__{meta_file}.png"
         tmp = out.with_suffix(out.suffix + ".tmp")
         fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format="png")
         atomic_replace(tmp, out)
@@ -161,7 +178,11 @@ def _generate_component_plot(
     groups_by_env: Dict[str, Dict[str, List[Path]]],
     plots_root: Path,
     smooth: int = 25,
+    *,
+    align: str = "interpolate",
 ) -> None:
+    align_mode, meta_title, meta_file = _meta_tags(smooth=int(smooth), align=str(align))
+
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         runs = by_method.get("glpe")
         if not runs:
@@ -173,8 +194,8 @@ def _generate_component_plot(
             continue
 
         try:
-            agg_imp = _aggregate_runs(runs, metric="impact_rms", smooth=smooth)
-            agg_lp = _aggregate_runs(runs, metric="lp_rms", smooth=smooth)
+            agg_imp = _aggregate_runs(runs, metric="impact_rms", smooth=smooth, align=align_mode)
+            agg_lp = _aggregate_runs(runs, metric="lp_rms", smooth=smooth, align=align_mode)
         except Exception:
             continue
 
@@ -201,12 +222,12 @@ def _generate_component_plot(
 
         ax.set_xlabel("Environment steps")
         ax.set_ylabel("Running RMS (Signal Magnitude)")
-        ax.set_title(f"{env_id} — Intrinsic Component Evolution (GLPE)")
+        ax.set_title(f"{env_id} — Intrinsic Component Evolution (GLPE) ({meta_title})")
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
 
         env_tag = env_id.replace("/", "-")
-        out = plots_root / f"{env_tag}__component_evolution.png"
+        out = plots_root / f"{env_tag}__component_evolution__{meta_file}.png"
         tmp = out.with_suffix(out.suffix + ".tmp")
         fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format="png")
         atomic_replace(tmp, out)
