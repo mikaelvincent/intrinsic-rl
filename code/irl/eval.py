@@ -7,8 +7,6 @@ from irl.cli.common import QUICK_EPISODES, validate_policy_mode
 from irl.evaluator import evaluate as run_evaluate
 from irl.utils.checkpoint import atomic_write_text
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
-
 
 def _print_summary(label: str, summary: dict) -> None:
     prefix = f"{label} " if label else ""
@@ -25,7 +23,6 @@ def _print_summary(label: str, summary: dict) -> None:
     )
 
 
-@app.command("eval")
 def cli_eval(
     env: str = typer.Option(..., "--env", "-e"),
     ckpt: Path = typer.Option(..., "--ckpt", "-k", exists=True),
@@ -55,8 +52,10 @@ def cli_eval(
         typer.echo(f"Saved summary to {out}")
 
 
-def main() -> None:
-    app()
+def main(argv: list[str] | None = None) -> None:
+    from irl.cli.app import dispatch
+
+    dispatch("eval", argv, prog_name="irl-eval")
 
 
 if __name__ == "__main__":
