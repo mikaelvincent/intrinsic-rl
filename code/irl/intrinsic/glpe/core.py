@@ -38,6 +38,7 @@ class GLPE(nn.Module):
         gate_hysteresis_up_mult: float = 2.0,
         gate_min_consec_to_gate: int = 5,
         gate_min_regions_for_gating: int = 3,
+        gate_median_cache_interval: int = 1,
         normalize_inside: bool = True,
         gating_enabled: bool = True,
         checkpoint_include_points: bool = True,
@@ -85,7 +86,38 @@ class GLPE(nn.Module):
         )
         self.outputs_normalized = bool(self._normalize_inside)
 
+        self._gate_median_cache_interval: int = 1
+        self._gate_median_update_count: int = 0
+        self._gate_median_cache_last_update: int = -1
+        self._gate_median_cache_regions: int = -1
+        self._gate_median_cache_lp: float = 0.0
+        self._gate_median_cache_err: float = 0.0
+        self.gate_median_cache_interval = int(gate_median_cache_interval)
+
         self.to(self.device)
+
+    @property
+    def gate_median_cache_interval(self) -> int:
+        return int(self._gate_median_cache_interval)
+
+    @gate_median_cache_interval.setter
+    def gate_median_cache_interval(self, v: int) -> None:
+        iv = int(v)
+        if iv < 1:
+            iv = 1
+        self._gate_median_cache_interval = iv
+        self._reset_gate_median_cache()
+
+    def _invalidate_gate_median_cache(self) -> None:
+        self._gate_median_cache_last_update = -1
+        self._gate_median_cache_regions = -1
+
+    def _reset_gate_median_cache(self) -> None:
+        self._gate_median_update_count = 0
+        self._gate_median_cache_last_update = -1
+        self._gate_median_cache_regions = -1
+        self._gate_median_cache_lp = 0.0
+        self._gate_median_cache_err = 0.0
 
     def _ensure_stats_capacity(self, rid: int) -> None:
         need = int(rid) + 1
@@ -113,14 +145,20 @@ class GLPE(nn.Module):
             self._stats_ema_long = np.zeros((0,), dtype=np.float64)
             self._stats_ema_short = np.zeros((0,), dtype=np.float64)
             self._stats_count = np.zeros((0,), dtype=np.int64)
+            self._reset_gate_median_cache()
             return
 
-        keys = [int(k) for k in self._stats.keys() if isinstance(k, (int, float)) or str(k).lstrip("-").isdigit()]
+        keys = [
+            int(k)
+            for k in self._stats.keys()
+            if isinstance(k, (int, float)) or str(k).lstrip("-").isdigit()
+        ]
         if not keys:
             self._regions_with_stats = 0
             self._stats_ema_long = np.zeros((0,), dtype=np.float64)
             self._stats_ema_short = np.zeros((0,), dtype=np.float64)
             self._stats_count = np.zeros((0,), dtype=np.int64)
+            self._reset_gate_median_cache()
             return
 
         max_rid = max(int(k) for k in keys if int(k) >= 0) if any(int(k) >= 0 for k in keys) else -1
@@ -129,6 +167,7 @@ class GLPE(nn.Module):
             self._stats_ema_long = np.zeros((0,), dtype=np.float64)
             self._stats_ema_short = np.zeros((0,), dtype=np.float64)
             self._stats_count = np.zeros((0,), dtype=np.int64)
+            self._reset_gate_median_cache()
             return
 
         n = int(max_rid) + 1
@@ -153,6 +192,7 @@ class GLPE(nn.Module):
                 regions += 1
 
         self._regions_with_stats = int(regions)
+        self._reset_gate_median_cache()
 
     def get_extra_state(self) -> dict:
         store_state = self.store.state_dict(include_points=bool(self.checkpoint_include_points))
@@ -234,6 +274,7 @@ class GLPE(nn.Module):
         rid_i = int(rid)
         self._ensure_stats_capacity(rid_i)
 
+        invalidate = False
         st = self._stats.get(rid_i)
         if st is None or st.count == 0:
             prev_count = int(self._stats_count[rid_i]) if rid_i < int(self._stats_count.size) else 0
@@ -243,6 +284,13 @@ class GLPE(nn.Module):
             self._stats_count[rid_i] = 1
             if prev_count <= 0:
                 self._regions_with_stats += 1
+                invalidate = True
+            else:
+                invalidate = True
+
+            self._gate_median_update_count += 1
+            if invalidate:
+                self._invalidate_gate_median_cache()
             return 0.0
 
         st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * error
@@ -252,6 +300,8 @@ class GLPE(nn.Module):
         self._stats_ema_long[rid_i] = float(st.ema_long)
         self._stats_ema_short[rid_i] = float(st.ema_short)
         self._stats_count[rid_i] = int(st.count)
+
+        self._gate_median_update_count += 1
 
         return max(0.0, st.ema_long - st.ema_short)
 
@@ -275,6 +325,31 @@ class GLPE(nn.Module):
         med_err = float(np.median(ema_s)) if ema_s.size > 0 else 0.0
         return med_lp, med_err
 
+    def _cached_global_medians(self) -> Tuple[float, float]:
+        interval = int(self._gate_median_cache_interval)
+        if interval <= 1:
+            return self._global_medians()
+
+        if (
+            self._gate_median_cache_last_update < 0
+            or int(self._gate_median_cache_regions) != int(self._regions_with_stats)
+        ):
+            med_lp, med_err = self._global_medians()
+            self._gate_median_cache_lp = float(med_lp)
+            self._gate_median_cache_err = float(med_err)
+            self._gate_median_cache_last_update = int(self._gate_median_update_count)
+            self._gate_median_cache_regions = int(self._regions_with_stats)
+            return float(med_lp), float(med_err)
+
+        if (int(self._gate_median_update_count) - int(self._gate_median_cache_last_update)) >= interval:
+            med_lp, med_err = self._global_medians()
+            self._gate_median_cache_lp = float(med_lp)
+            self._gate_median_cache_err = float(med_err)
+            self._gate_median_cache_last_update = int(self._gate_median_update_count)
+            self._gate_median_cache_regions = int(self._regions_with_stats)
+
+        return float(self._gate_median_cache_lp), float(self._gate_median_cache_err)
+
     def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
         st = self._stats.get(rid)
         if st is None:
@@ -287,7 +362,8 @@ class GLPE(nn.Module):
             st.gate = 1
             return st.gate
 
-        med_lp, med_err = self._global_medians()
+        # Caching changes gating decisions when interval>1 by using slightly stale global medians.
+        med_lp, med_err = self._cached_global_medians()
         tau_lp = self.tau_lp_mult * med_lp
 
         return update_region_gate(
