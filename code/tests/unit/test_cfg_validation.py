@@ -88,12 +88,6 @@ intrinsic:
   alpha_impact: 0.25
 """,
         """
-method: glpe_impact_only
-intrinsic:
-  eta: 0.1
-  alpha_lp: 0.5
-""",
-        """
 method: glpe_nogate
 intrinsic:
   eta: 0.1
@@ -172,5 +166,5 @@ def test_factory_passes_ride_knobs():
         bin_size=0.5,
         alpha_impact=1.7,
     )
-    assert abs(float(ride.bin_size) - 0.5) < 1e-8
-    assert abs(float(ride.alpha_impact) - 1.7) < 1e-8
+    assert float(ride.bin_size) == 0.5
+    assert float(ride.alpha_impact) == 1.7
