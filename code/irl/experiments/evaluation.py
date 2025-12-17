@@ -11,6 +11,7 @@ import typer
 from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
+from irl.pipelines.eval import evaluate_ckpt_to_run_result
 from irl.plot import _parse_run_name
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import atomic_replace, load_checkpoint
@@ -237,7 +238,6 @@ def run_eval_suite(
     for rd, ckpt in runs:
         try:
             payload = load_checkpoint(ckpt, map_location="cpu")
-            step = int(payload.get("step", -1))
 
             cfg_env_id, cfg_method, cfg_seed = _cfg_fields(payload)
 
@@ -287,34 +287,20 @@ def run_eval_suite(
             traj_out_dir = traj_root / rd.name
             traj_out_dir.mkdir(parents=True, exist_ok=True)
 
-            summary = evaluate(
+            rr = evaluate_ckpt_to_run_result(
+                ckpt,
+                payload=payload,
                 env=str(env_for_eval),
-                ckpt=ckpt,
-                episodes=episodes,
-                device=device,
+                method=(cfg_method or run_method or "unknown"),
+                seed=int(cfg_seed) if cfg_seed is not None else None,
+                episodes=int(episodes),
+                device=str(device),
+                policy_mode=pm,
                 save_traj=True,
                 traj_out_dir=traj_out_dir,
-                policy_mode=pm,
-                strict_coverage=bool(strict_coverage),
-                strict_step_parity=bool(strict_step_parity),
+                evaluate_fn=evaluate,
             )
-
-            results.append(
-                RunResult(
-                    method=(cfg_method or run_method or "unknown"),
-                    env_id=str(summary["env_id"]),
-                    seed=int(cfg_seed if cfg_seed is not None else summary.get("seed", run_seed or 0)),
-                    ckpt_path=ckpt,
-                    ckpt_step=step,
-                    episodes=int(summary["episodes"]),
-                    mean_return=float(summary["mean_return"]),
-                    std_return=float(summary["std_return"]),
-                    min_return=float(summary["min_return"]),
-                    max_return=float(summary["max_return"]),
-                    mean_length=float(summary["mean_length"]),
-                    std_length=float(summary["std_length"]),
-                )
-            )
+            results.append(rr)
         except Exception as exc:
             typer.echo(f"[suite]          ! evaluation failed: {exc}")
 
