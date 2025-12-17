@@ -197,6 +197,10 @@ def validate_config(cfg: Config) -> None:
                 raise ConfigError(
                     "intrinsic.gate.min_regions_for_gating must be > 0 for method 'glpe'"
                 )
+            if cfg.intrinsic.gate.median_cache_interval <= 0:
+                raise ConfigError(
+                    "intrinsic.gate.median_cache_interval must be >= 1 for method 'glpe'"
+                )
         else:
             if method != "glpe_nogate":
                 warnings.warn(
