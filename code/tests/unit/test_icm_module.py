@@ -1,6 +1,5 @@
 import gymnasium as gym
 import numpy as np
-import pytest
 import torch
 
 from irl.intrinsic.icm import ICM, ICMConfig
@@ -21,29 +20,26 @@ def _rand_batch(obs_dim: int, act_space: gym.Space, B: int, seed: int):
     return obs, next_obs, acts
 
 
-@pytest.mark.parametrize(
-    "act_space",
-    [
+def test_icm_compute_batch_matches_loss_mean():
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
+
+    for act_space in (
         gym.spaces.Discrete(3),
         gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
-    ],
-    ids=["discrete", "continuous"],
-)
-def test_icm_compute_batch_matches_loss_mean(act_space):
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
-    icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
+    ):
+        icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
 
-    B = 32
-    obs, next_obs, acts = _rand_batch(5, act_space, B=B, seed=1)
+        B = 32
+        obs, next_obs, acts = _rand_batch(5, act_space, B=B, seed=1)
 
-    r = icm.compute_batch(obs, next_obs, acts, reduction="none")
-    assert r.shape == (B,)
-    assert torch.isfinite(r).all()
+        r = icm.compute_batch(obs, next_obs, acts, reduction="none")
+        assert r.shape == (B,)
+        assert torch.isfinite(r).all()
 
-    losses = icm.loss(obs, next_obs, acts)
-    assert torch.isfinite(losses["total"])
-    assert torch.allclose(losses["intrinsic_mean"], r.mean(), atol=1e-5)
+        losses = icm.loss(obs, next_obs, acts)
+        assert torch.isfinite(losses["total"])
+        assert torch.allclose(losses["intrinsic_mean"], r.mean(), atol=1e-5)
 
-    metrics = icm.update(obs, next_obs, acts, steps=1)
-    for k in ("loss_total", "loss_forward", "loss_inverse", "intrinsic_mean"):
-        assert np.isfinite(float(metrics[k]))
+        metrics = icm.update(obs, next_obs, acts, steps=1)
+        for k in ("loss_total", "loss_forward", "loss_inverse", "intrinsic_mean"):
+            assert np.isfinite(float(metrics[k]))
