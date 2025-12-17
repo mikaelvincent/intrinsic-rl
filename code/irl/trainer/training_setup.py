@@ -165,6 +165,12 @@ def _build_intrinsic(
     intrinsic_norm_mode = "none"
     intrinsic_outputs_normalized_flag: Optional[bool] = None
 
+    checkpoint_include_points = True
+    try:
+        checkpoint_include_points = bool(getattr(cfg.intrinsic, "checkpoint_include_points", True))
+    except Exception:
+        checkpoint_include_points = True
+
     if is_intrinsic_method(method_l):
         fail_on_intrinsic_error = bool(getattr(cfg.intrinsic, "fail_on_error", True))
         try:
@@ -187,7 +193,18 @@ def _build_intrinsic(
                 gate_min_regions_for_gating=int(cfg.intrinsic.gate.min_regions_for_gating),
                 normalize_inside=bool(cfg.intrinsic.normalize_inside),
                 gating_enabled=bool(cfg.intrinsic.gate.enabled),
+                checkpoint_include_points=bool(checkpoint_include_points),
             )
+            if intrinsic_module is not None and hasattr(intrinsic_module, "checkpoint_include_points"):
+                try:
+                    setattr(
+                        intrinsic_module,
+                        "checkpoint_include_points",
+                        bool(checkpoint_include_points),
+                    )
+                except Exception:
+                    pass
+
             if not use_intrinsic:
                 logger.warning(
                     "Method %r selected but intrinsic.eta=%.3g; intrinsic rewards disabled (eta=0).",
