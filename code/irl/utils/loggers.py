@@ -112,13 +112,16 @@ class CSVLogger:
         self._writer: Optional[csv.DictWriter] = None
         self._fieldnames: Optional[list[str]] = None
         self._wrote_header = self.path.exists() and self.path.stat().st_size > 0
+        self._dropped_keys_warned: set[str] = set()
 
     def _ensure_writer(self, row: Mapping[str, object]) -> None:
         if self._writer is not None:
             return
         keys = [k for k in row.keys() if k != "step"]
         self._fieldnames = ["step"] + sorted(keys)
-        self._writer = csv.DictWriter(self._file, fieldnames=self._fieldnames)
+        self._writer = csv.DictWriter(
+            self._file, fieldnames=self._fieldnames, extrasaction="ignore"
+        )
         if not self._wrote_header:
             self._writer.writeheader()
             self._file.flush()
@@ -133,8 +136,22 @@ class CSVLogger:
                 row[k] = v
             else:
                 row[k] = str(v)
+
         self._ensure_writer(row)
         assert self._writer is not None
+
+        if self._fieldnames is not None:
+            extra = set(row.keys()) - set(self._fieldnames)
+            if extra:
+                newly_warned = extra - self._dropped_keys_warned
+                if newly_warned:
+                    get_logger("csv").warning(
+                        "Dropping metrics not in CSV header for %s: %s",
+                        self.path,
+                        ", ".join(sorted(newly_warned)),
+                    )
+                    self._dropped_keys_warned |= newly_warned
+
         self._writer.writerow(row)
         self._file.flush()
 
