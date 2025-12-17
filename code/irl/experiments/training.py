@@ -96,13 +96,24 @@ def run_training_suite(
                 prefer_cfg=True,
             )
 
+            deterministic = False
+            try:
+                deterministic = bool(getattr(getattr(cfg_seeded, "exp", None), "deterministic", False))
+            except Exception:
+                deterministic = False
+
             if auto_async and int(cfg_seeded.env.vec_envs) > 1 and not bool(
                 getattr(cfg_seeded.env, "async_vector", False)
             ):
-                cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
-                typer.echo(
-                    f"[suite]    -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
-                )
+                if deterministic:
+                    typer.echo(
+                        f"[suite]    -> keeping SyncVectorEnv (exp.deterministic=True) for {cfg_path.name}"
+                    )
+                else:
+                    cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
+                    typer.echo(
+                        f"[suite]    -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
+                    )
 
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
 
