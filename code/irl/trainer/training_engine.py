@@ -10,10 +10,10 @@ import torch
 
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
-from irl.cfg import Config, to_dict
+from irl.cfg import Config
 from irl.intrinsic import compute_intrinsic_batch, update_module
 from irl.models import PolicyNetwork
-from irl.utils.checkpoint import compute_cfg_hash
+from irl.utils.checkpoint_schema import build_checkpoint_payload
 
 from .runtime_utils import _apply_final_observation, _ensure_time_major_np
 from .training_setup import TrainingSession
@@ -179,52 +179,6 @@ def _extract_completed_episodes(
     return returns, lengths, successes
 
 
-def _build_checkpoint_payload(
-    cfg: Config,
-    *,
-    global_step: int,
-    update_idx: int,
-    policy: Any,
-    value: Any,
-    is_image: bool,
-    obs_norm: Any,
-    int_rms: Any,
-    pol_opt: Any,
-    val_opt: Any,
-    intrinsic_module: Optional[Any],
-    method_l: str,
-) -> dict:
-    payload = {
-        "step": int(global_step),
-        "policy": policy.state_dict(),
-        "value": value.state_dict(),
-        "cfg": to_dict(cfg),
-        "cfg_hash": compute_cfg_hash(to_dict(cfg)),
-        "obs_norm": None
-        if is_image
-        else {
-            "count": obs_norm.count,
-            "mean": obs_norm.mean,
-            "var": obs_norm.var,
-        },
-        "intrinsic_norm": int_rms.state_dict(),
-        "meta": {"updates": int(update_idx)},
-        "optimizers": {
-            "policy": pol_opt.state_dict(),
-            "value": val_opt.state_dict(),
-        },
-    }
-    if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
-        try:
-            payload["intrinsic"] = {
-                "method": method_l,
-                "state_dict": intrinsic_module.state_dict(),
-            }
-        except Exception:
-            pass
-    return payload
-
-
 def run_training_loop(
     cfg: Config,
     session: TrainingSession,
@@ -285,7 +239,7 @@ def run_training_loop(
             actor_policy.load_state_dict(cpu_sd, strict=True)
 
     if int(global_step) == 0 and int(update_idx) == 0 and not ckpt.latest_path.exists():
-        payload0 = _build_checkpoint_payload(
+        payload0 = build_checkpoint_payload(
             cfg,
             global_step=0,
             update_idx=0,
@@ -812,7 +766,7 @@ def run_training_loop(
             pass
 
         if ckpt.should_save(int(global_step)):
-            payload = _build_checkpoint_payload(
+            payload = build_checkpoint_payload(
                 cfg,
                 global_step=int(global_step),
                 update_idx=int(update_idx),
@@ -829,7 +783,7 @@ def run_training_loop(
             ckpt_path = ckpt.save(step=int(global_step), payload=payload)
             logger.info("Saved checkpoint at step=%d to %s", int(global_step), ckpt_path)
 
-    payload = _build_checkpoint_payload(
+    payload = build_checkpoint_payload(
         cfg,
         global_step=int(global_step),
         update_idx=int(update_idx),
