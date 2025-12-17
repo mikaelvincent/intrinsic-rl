@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch.optim import Adam
 
+import irl.utils.checkpoint_schema as ckpt_schema
 from irl.cfg import Config, to_dict
 from irl.envs import EnvManager
 from irl.intrinsic import RunningRMS, create_intrinsic_module, is_intrinsic_method
@@ -105,9 +106,9 @@ def _maybe_load_resume_payload(
         try:
             payload_cpu, step_cpu = ckpt.load_latest(map_location="cpu")
             current_hash = compute_cfg_hash(to_dict(cfg))
-            stored_hash = payload_cpu.get("cfg_hash")
+            stored_hash = payload_cpu.get(ckpt_schema.KEY_CFG_HASH)
             if stored_hash is None:
-                stored_hash = compute_cfg_hash(payload_cpu.get("cfg", {}) or {})
+                stored_hash = compute_cfg_hash(payload_cpu.get(ckpt_schema.KEY_CFG, {}) or {})
             if str(stored_hash) != str(current_hash):
                 raise RuntimeError(
                     "Config hash mismatch when resuming:\n"
@@ -351,19 +352,23 @@ def _restore_from_checkpoint(
         return global_step, update_idx
 
     try:
-        policy.load_state_dict(resume_payload["policy"])
-        value.load_state_dict(resume_payload["value"])
+        policy.load_state_dict(resume_payload[ckpt_schema.KEY_POLICY])
+        value.load_state_dict(resume_payload[ckpt_schema.KEY_VALUE])
     except Exception:
         logger.warning("Could not load policy/value weights from checkpoint; using fresh init.")
 
     try:
-        int_rms.load_state_dict(resume_payload.get("intrinsic_norm", {}))
+        int_rms.load_state_dict(resume_payload.get(ckpt_schema.KEY_INTRINSIC_NORM, {}))
     except Exception:
         pass
 
     try:
-        if not is_image and resume_payload.get("obs_norm") is not None and obs_norm is not None:
-            on = resume_payload["obs_norm"]
+        if (
+            not is_image
+            and resume_payload.get(ckpt_schema.KEY_OBS_NORM) is not None
+            and obs_norm is not None
+        ):
+            on = resume_payload[ckpt_schema.KEY_OBS_NORM]
             import numpy as _np
 
             obs_norm.count = float(on.get("count", obs_norm.count))
@@ -373,10 +378,14 @@ def _restore_from_checkpoint(
         pass
 
     try:
-        intr = resume_payload.get("intrinsic")
-        if intrinsic_module is not None and isinstance(intr, dict) and intr.get("method") == method_l:
-            sd = intr.get("state_dict", None)
-            extra_state = intr.get("extra_state", None)
+        intr = resume_payload.get(ckpt_schema.KEY_INTRINSIC)
+        if (
+            intrinsic_module is not None
+            and isinstance(intr, dict)
+            and intr.get(ckpt_schema.INTRINSIC_METHOD) == method_l
+        ):
+            sd = intr.get(ckpt_schema.INTRINSIC_STATE_DICT, None)
+            extra_state = intr.get(ckpt_schema.INTRINSIC_EXTRA_STATE, None)
 
             if isinstance(sd, dict):
                 res = intrinsic_module.load_state_dict(sd, strict=False)
@@ -391,9 +400,9 @@ def _restore_from_checkpoint(
                     )
 
             if extra_state is None:
-                extra_state = resume_payload.get("intrinsic_extra_state", None)
+                extra_state = resume_payload.get(ckpt_schema.KEY_INTRINSIC_EXTRA_STATE_COMPAT, None)
                 if extra_state is None:
-                    extra_state = resume_payload.get("intrinsic_state", None)
+                    extra_state = resume_payload.get(ckpt_schema.KEY_INTRINSIC_STATE_COMPAT, None)
 
             if (
                 extra_state is not None
@@ -408,9 +417,9 @@ def _restore_from_checkpoint(
         log_resume_intrinsic_warning(method_l)
 
     try:
-        opt_payload = resume_payload.get("optimizers", {})
-        pol_state = opt_payload.get("policy", None)
-        val_state = opt_payload.get("value", None)
+        opt_payload = resume_payload.get(ckpt_schema.KEY_OPTIMIZERS, {})
+        pol_state = opt_payload.get(ckpt_schema.OPT_POLICY, None)
+        val_state = opt_payload.get(ckpt_schema.OPT_VALUE, None)
         if pol_state is not None:
             pol_opt.load_state_dict(pol_state)
             _move_optimizer_state_to_device(pol_opt, next(policy.parameters()).device)
@@ -422,7 +431,9 @@ def _restore_from_checkpoint(
 
     global_step = int(resume_step)
     try:
-        update_idx = int((resume_payload.get("meta") or {}).get("updates", update_idx))
+        update_idx = int(
+            (resume_payload.get(ckpt_schema.KEY_META) or {}).get(ckpt_schema.META_UPDATES, update_idx)
+        )
     except Exception:
         update_idx = update_idx
 
