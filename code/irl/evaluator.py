@@ -6,6 +6,7 @@ from typing import Sequence
 import numpy as np
 import torch
 
+from irl.cli.validators import normalize_policy_mode
 from irl.envs.builder import make_env
 from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.factory import create_intrinsic_module
@@ -154,9 +155,7 @@ def evaluate(
             raise ValueError("episode_seeds length must match episodes")
 
     def _run(action_mode: str, *, save_traj_local: bool) -> dict:
-        mode = str(action_mode).strip().lower()
-        if mode not in {"mode", "sample"}:
-            raise ValueError("policy_mode must be 'mode' or 'sample'")
+        mode = normalize_policy_mode(action_mode, allowed=("mode", "sample"), name="policy_mode")
 
         returns: list[float] = []
         lengths: list[int] = []
@@ -278,7 +277,7 @@ def evaluate(
 
         return summary
 
-    pm = str(policy_mode).strip().lower()
+    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample", "both"), name="policy_mode")
     if pm == "both":
         det = _run("mode", save_traj_local=bool(save_traj))
         stoch = _run("sample", save_traj_local=False)
