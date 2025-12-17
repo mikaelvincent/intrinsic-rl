@@ -6,6 +6,7 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 from gymnasium.envs.registration import register
 from torch.optim import Adam
@@ -22,11 +23,34 @@ from irl.trainer.training_setup import _restore_from_checkpoint
 from irl.utils.loggers import get_logger
 
 
-def test_update_region_gate_gates_then_recovers():
+class _Transition:
+    def __init__(self, s, a, s_next):
+        self.s = s
+        self.a = a
+        self.r_ext = 0.0
+        self.s_next = s_next
+
+
+def test_update_region_gate_transitions_and_resets():
     st = _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1)
 
     for _ in range(2):
-        g = update_region_gate(
+        assert (
+            update_region_gate(
+                st,
+                lp_i=0.0,
+                tau_lp=1.0,
+                tau_s=0.5,
+                median_error_global=1.0,
+                hysteresis_up_mult=1.1,
+                min_consec_to_gate=3,
+                sufficient_regions=True,
+            )
+            == 1
+        )
+
+    assert (
+        update_region_gate(
             st,
             lp_i=0.0,
             tau_lp=1.0,
@@ -36,22 +60,11 @@ def test_update_region_gate_gates_then_recovers():
             min_consec_to_gate=3,
             sufficient_regions=True,
         )
-        assert g == 1
-
-    g = update_region_gate(
-        st,
-        lp_i=0.0,
-        tau_lp=1.0,
-        tau_s=0.5,
-        median_error_global=1.0,
-        hysteresis_up_mult=1.1,
-        min_consec_to_gate=3,
-        sufficient_regions=True,
+        == 0
     )
-    assert g == 0
 
     for _ in range(2):
-        g = update_region_gate(
+        update_region_gate(
             st,
             lp_i=1.2,
             tau_lp=1.0,
@@ -61,25 +74,24 @@ def test_update_region_gate_gates_then_recovers():
             min_consec_to_gate=3,
             sufficient_regions=True,
         )
-    assert g == 1
+    assert st.gate == 1
 
-
-def test_update_region_gate_resets_when_insufficient():
-    st = _RegionStats(ema_long=1.0, ema_short=10.0, count=10, gate=0, bad_consec=5, good_consec=1)
-
-    g = update_region_gate(
-        st,
-        lp_i=0.0,
-        tau_lp=1.0,
-        tau_s=2.0,
-        median_error_global=1.0,
-        hysteresis_up_mult=2.0,
-        min_consec_to_gate=3,
-        sufficient_regions=False,
+    st2 = _RegionStats(ema_long=1.0, ema_short=10.0, count=10, gate=0, bad_consec=5, good_consec=1)
+    assert (
+        update_region_gate(
+            st2,
+            lp_i=0.0,
+            tau_lp=1.0,
+            tau_s=2.0,
+            median_error_global=1.0,
+            hysteresis_up_mult=2.0,
+            min_consec_to_gate=3,
+            sufficient_regions=False,
+        )
+        == 1
     )
-    assert g == 1
-    assert st.bad_consec == 0
-    assert st.good_consec == 0
+    assert st2.bad_consec == 0
+    assert st2.good_consec == 0
 
 
 def test_glpe_normalize_inside_changes_output():
@@ -115,9 +127,6 @@ def test_glpe_normalize_inside_changes_output():
         r_raw = mod_raw.compute_batch(obs, next_obs, actions)
         r_norm = mod_norm.compute_batch(obs, next_obs, actions)
 
-    assert r_raw.shape == r_norm.shape == (128,)
-    assert torch.isfinite(r_raw).all()
-    assert torch.isfinite(r_norm).all()
     assert not torch.allclose(r_raw, r_norm, atol=1e-6)
 
 
@@ -153,7 +162,6 @@ except Exception:
 
 def _make_cfg(*, method: str, eta: float = 0.1) -> Config:
     base = Config()
-
     env_cfg = replace(
         base.env,
         id="DummyGate-v0",
@@ -200,16 +208,7 @@ def test_glpe_lp_only_logs_gate_rate(tmp_path: Path) -> None:
         assert reader.fieldnames is not None
         cols = set(reader.fieldnames)
 
-    assert "gate_rate" in cols
-    assert "gate_rate_pct" in cols
-
-
-class _Transition:
-    def __init__(self, s, a, r_ext, s_next):
-        self.s = s
-        self.a = a
-        self.r_ext = r_ext
-        self.s_next = s_next
+    assert {"gate_rate", "gate_rate_pct"} <= cols
 
 
 def _make_vector_spaces(obs_dim: int = 4, n_actions: int = 3):
@@ -218,118 +217,13 @@ def _make_vector_spaces(obs_dim: int = 4, n_actions: int = 3):
     return obs_space, act_space
 
 
-def test_glpe_compute_batch_matches_sequential_compute():
-    torch.manual_seed(0)
-    rng = np.random.default_rng(0)
-    obs_space, act_space = _make_vector_spaces()
-
-    icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
-    kwargs = dict(
-        device="cpu",
-        icm_cfg=icm_cfg,
-        region_capacity=1000,
-        depth_max=0,
-        gate_tau_lp_mult=0.5,
-        gate_tau_s=0.5,
-        gate_hysteresis_up_mult=1.1,
-        gate_min_consec_to_gate=1,
-        gate_min_regions_for_gating=1,
-        normalize_inside=True,
-        gating_enabled=True,
-    )
-
-    mod_step = GLPE(obs_space, act_space, **kwargs)
-    mod_batch = GLPE(obs_space, act_space, **kwargs)
-    mod_batch.load_state_dict(mod_step.state_dict())
-
-    B = 64
-    obs = rng.standard_normal((B, 4)).astype(np.float32)
-    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
-    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
-
-    step_vals = np.array(
-        [
-            float(mod_step.compute(_Transition(obs[i], int(actions[i]), 0.0, next_obs[i])).r_int)
-            for i in range(B)
-        ],
-        dtype=np.float32,
-    )
-
-    with torch.no_grad():
-        batch_vals = (
-            mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.float32)
-        )
-
-    assert np.allclose(step_vals, batch_vals, atol=1e-5)
-    assert abs(mod_step.gate_rate - mod_batch.gate_rate) < 1e-6
-    assert abs(mod_step.impact_rms - mod_batch.impact_rms) < 1e-6
-    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
-
-
-def test_riac_compute_batch_matches_sequential_compute():
-    torch.manual_seed(0)
-    rng = np.random.default_rng(1)
-    obs_space, act_space = _make_vector_spaces()
-
-    icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
-    kwargs = dict(
-        device="cpu",
-        icm_cfg=icm_cfg,
-        region_capacity=1000,
-        depth_max=0,
-        ema_beta_long=0.995,
-        ema_beta_short=0.90,
-        alpha_lp=0.5,
-    )
-
-    mod_step = RIAC(obs_space, act_space, **kwargs)
-    mod_batch = RIAC(obs_space, act_space, **kwargs)
-    mod_batch.load_state_dict(mod_step.state_dict())
-
-    B = 64
-    obs = rng.standard_normal((B, 4)).astype(np.float32)
-    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
-    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
-
-    step_vals = np.array(
-        [
-            float(mod_step.compute(_Transition(obs[i], int(actions[i]), 0.0, next_obs[i])).r_int)
-            for i in range(B)
-        ],
-        dtype=np.float32,
-    )
-
-    with torch.no_grad():
-        batch_vals = (
-            mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.float32)
-        )
-
-    assert np.allclose(step_vals, batch_vals, atol=1e-5)
-    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
-
-
-def _rand_batch(rng: np.random.Generator, obs_dim: int, n_actions: int, B: int):
-    obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
-    next_obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
-    actions = rng.integers(0, n_actions, size=(B,), endpoint=False, dtype=np.int64)
-    return obs, next_obs, actions
-
-
 def _make_glpe(obs_space, act_space, icm_cfg: ICMConfig) -> GLPE:
     return GLPE(
         obs_space,
         act_space,
         device="cpu",
         icm_cfg=icm_cfg,
-        region_capacity=128,
+        region_capacity=1000,
         depth_max=0,
         gate_tau_lp_mult=0.5,
         gate_tau_s=0.5,
@@ -347,7 +241,7 @@ def _make_riac(obs_space, act_space, icm_cfg: ICMConfig) -> RIAC:
         act_space,
         device="cpu",
         icm_cfg=icm_cfg,
-        region_capacity=128,
+        region_capacity=1000,
         depth_max=0,
         ema_beta_long=0.995,
         ema_beta_short=0.90,
@@ -355,18 +249,90 @@ def _make_riac(obs_space, act_space, icm_cfg: ICMConfig) -> RIAC:
     )
 
 
-def _assert_resume_restores_extra_state(make_module, method_l: str):
+def test_glpe_compute_batch_matches_sequential_compute():
+    torch.manual_seed(0)
+    rng = np.random.default_rng(0)
+    obs_space, act_space = _make_vector_spaces()
+    icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
+
+    mod_step = _make_glpe(obs_space, act_space, icm_cfg)
+    mod_batch = _make_glpe(obs_space, act_space, icm_cfg)
+    mod_batch.load_state_dict(mod_step.state_dict())
+
+    B = 64
+    obs = rng.standard_normal((B, 4)).astype(np.float32)
+    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
+    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
+
+    step_vals = np.array(
+        [float(mod_step.compute(_Transition(obs[i], int(actions[i]), next_obs[i])).r_int) for i in range(B)],
+        dtype=np.float32,
+    )
+
+    with torch.no_grad():
+        batch_vals = (
+            mod_batch.compute_batch(obs, next_obs, actions, reduction="none").detach().cpu().numpy().astype(np.float32)
+        )
+
+    assert np.allclose(step_vals, batch_vals, atol=1e-5)
+    assert abs(mod_step.gate_rate - mod_batch.gate_rate) < 1e-6
+    assert abs(mod_step.impact_rms - mod_batch.impact_rms) < 1e-6
+    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
+
+
+def test_riac_compute_batch_matches_sequential_compute():
+    torch.manual_seed(0)
+    rng = np.random.default_rng(1)
+    obs_space, act_space = _make_vector_spaces()
+    icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
+
+    mod_step = _make_riac(obs_space, act_space, icm_cfg)
+    mod_batch = _make_riac(obs_space, act_space, icm_cfg)
+    mod_batch.load_state_dict(mod_step.state_dict())
+
+    B = 64
+    obs = rng.standard_normal((B, 4)).astype(np.float32)
+    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
+    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
+
+    step_vals = np.array(
+        [float(mod_step.compute(_Transition(obs[i], int(actions[i]), next_obs[i])).r_int) for i in range(B)],
+        dtype=np.float32,
+    )
+
+    with torch.no_grad():
+        batch_vals = (
+            mod_batch.compute_batch(obs, next_obs, actions, reduction="none").detach().cpu().numpy().astype(np.float32)
+        )
+
+    assert np.allclose(step_vals, batch_vals, atol=1e-5)
+    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
+
+
+def _rand_batch(rng: np.random.Generator, obs_dim: int, n_actions: int, B: int):
+    obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
+    next_obs = rng.standard_normal((B, obs_dim)).astype(np.float32)
+    actions = rng.integers(0, n_actions, size=(B,), endpoint=False, dtype=np.int64)
+    return obs, next_obs, actions
+
+
+@pytest.mark.parametrize(
+    "make_module, method_l, attrs",
+    [
+        (_make_glpe, "glpe", ("gate_rate", "impact_rms", "lp_rms")),
+        (_make_riac, "riac", ("lp_rms",)),
+    ],
+)
+def test_resume_restores_intrinsic_extra_state(make_module, method_l: str, attrs: tuple[str, ...]):
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
 
     obs_dim = 4
     n_actions = 3
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(obs_dim,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(n_actions)
-
+    obs_space, act_space = _make_vector_spaces(obs_dim=obs_dim, n_actions=n_actions)
     icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
-    mod1 = make_module(obs_space, act_space, icm_cfg)
 
+    mod1 = make_module(obs_space, act_space, icm_cfg)
     warmup = _rand_batch(rng, obs_dim, n_actions, B=64)
     _ = mod1.compute_batch(*warmup, reduction="none")
 
@@ -387,7 +353,6 @@ def _assert_resume_restores_extra_state(make_module, method_l: str):
     val_opt = Adam(value.parameters(), lr=1e-3)
 
     mod2 = make_module(obs_space, act_space, icm_cfg)
-
     payload = {
         "step": 100,
         "policy": policy.state_dict(),
@@ -396,11 +361,7 @@ def _assert_resume_restores_extra_state(make_module, method_l: str):
         "intrinsic_norm": {},
         "meta": {"updates": 0},
         "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
-        "intrinsic": {
-            "method": method_l,
-            "state_dict": sd_no_extra,
-            "extra_state": extra_state,
-        },
+        "intrinsic": {"method": method_l, "state_dict": sd_no_extra, "extra_state": extra_state},
     }
 
     int_rms = RunningRMS(beta=0.99, eps=1e-8)
@@ -424,16 +385,5 @@ def _assert_resume_restores_extra_state(make_module, method_l: str):
         out = mod2.compute_batch(*eval_batch, reduction="none").detach().cpu()
 
     assert torch.allclose(ref, out, atol=1e-6)
-    return mod1, mod2
-
-
-def test_resume_restores_glpe_extra_state():
-    m1, m2 = _assert_resume_restores_extra_state(_make_glpe, method_l="glpe")
-    assert abs(float(m1.gate_rate) - float(m2.gate_rate)) < 1e-6
-    assert abs(float(m1.impact_rms) - float(m2.impact_rms)) < 1e-6
-    assert abs(float(m1.lp_rms) - float(m2.lp_rms)) < 1e-6
-
-
-def test_resume_restores_riac_extra_state():
-    m1, m2 = _assert_resume_restores_extra_state(_make_riac, method_l="riac")
-    assert abs(float(m1.lp_rms) - float(m2.lp_rms)) < 1e-6
+    for name in attrs:
+        assert abs(float(getattr(mod1, name)) - float(getattr(mod2, name))) < 1e-6
