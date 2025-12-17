@@ -9,11 +9,12 @@ from irl.plot import _parse_run_name, plot_normalized_summary
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
 from irl.visualization.data import _read_scalars
-from irl.visualization.suite_figures import (
+from .plot_helpers import (
     _generate_comparison_plot,
     _generate_component_plot,
     _generate_gating_plot,
     _generate_trajectory_plots,
+    _suite_method_groups,
 )
 
 
@@ -147,23 +148,7 @@ def run_plots_suite(
             plots_root=plots_root,
         )
     else:
-        preferred = ["vanilla", "icm", "rnd", "ride", "riac"]
-        baselines: list[str] = [m for m in preferred if m in all_methods]
-        extras = [
-            m
-            for m in all_methods
-            if m not in baselines and m != "glpe" and not m.startswith("glpe_")
-        ]
-        baselines.extend(extras)
-        if "glpe" in all_methods:
-            baselines.append("glpe")
-
-        ablation_priority = ["glpe_lp_only", "glpe_impact_only", "glpe_nogate"]
-        ablations: list[str] = [m for m in ablation_priority if m in all_methods]
-        other_abls = sorted([m for m in all_methods if m.startswith("glpe_") and m not in ablations])
-        ablations.extend(other_abls)
-        if "glpe" in all_methods:
-            ablations.append("glpe")
+        baselines, ablations = _suite_method_groups(all_methods)
 
         _generate_comparison_plot(
             groups,
