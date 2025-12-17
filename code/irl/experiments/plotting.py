@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -8,6 +7,7 @@ import typer
 
 from irl.plot import _parse_run_name, plot_normalized_summary
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
 from irl.visualization.data import _read_scalars
 
 from .plot_helpers import (
@@ -16,8 +16,6 @@ from .plot_helpers import (
     _generate_gating_plot,
     _generate_trajectory_plots,
 )
-
-_CKPT_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -38,60 +36,10 @@ def _list_dirs(label: str, root: Path) -> List[Path]:
     return dirs
 
 
-def _discover_run_dirs(runs_root: Path) -> List[Path]:
-    root = runs_root.resolve()
-    if not root.exists():
-        return []
-
-    run_dirs: list[Path] = []
-    seen: set[Path] = set()
-
-    for csv_path in root.rglob("logs/scalars.csv"):
-        try:
-            run_dir = csv_path.parent.parent
-        except Exception:
-            continue
-        if not run_dir.is_dir():
-            continue
-        rd = run_dir.resolve()
-        if rd not in seen:
-            seen.add(rd)
-            run_dirs.append(rd)
-
-    return sorted(run_dirs, key=lambda p: str(p))
-
-
-def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
-    ckpt_dir = run_dir / "checkpoints"
-    latest = ckpt_dir / "ckpt_latest.pt"
-    if latest.exists():
-        return latest
-
-    if not ckpt_dir.exists():
-        return None
-
-    best_step = -1
-    best_path: Optional[Path] = None
-    for p in ckpt_dir.iterdir():
-        if not p.is_file():
-            continue
-        m = _CKPT_RE.match(p.name)
-        if not m:
-            continue
-        try:
-            step = int(m.group(1))
-        except Exception:
-            continue
-        if step > best_step:
-            best_step = step
-            best_path = p
-    return best_path
-
-
 def _infer_method_env_from_checkpoint(
     run_dir: Path,
 ) -> Tuple[Optional[str], Optional[str], Optional[int]]:
-    ckpt = _find_latest_ckpt(run_dir)
+    ckpt = find_latest_ckpt(run_dir)
     if ckpt is None:
         return None, None, None
     try:
@@ -138,7 +86,7 @@ def run_plots_suite(
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    discovered_run_dirs = _discover_run_dirs(root)
+    discovered_run_dirs = discover_runs_by_logs(root)
     if not discovered_run_dirs:
         typer.echo(f"[suite] No run directories with logs/scalars.csv under {root}")
         return
