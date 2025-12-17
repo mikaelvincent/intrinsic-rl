@@ -96,6 +96,15 @@ def run_training_suite(
                 prefer_cfg=True,
             )
 
+            vec_envs = 1
+            try:
+                vec_envs = int(getattr(cfg_seeded.env, "vec_envs", 1) or 1)
+            except Exception:
+                vec_envs = 1
+
+            if vec_envs > 1:
+                target_steps = (int(target_steps) // int(vec_envs)) * int(vec_envs)
+
             deterministic = False
             try:
                 deterministic = bool(getattr(getattr(cfg_seeded, "exp", None), "deterministic", False))
