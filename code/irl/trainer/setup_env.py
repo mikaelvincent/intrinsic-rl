@@ -9,6 +9,13 @@ from irl.utils.loggers import log_domain_randomization, log_intrinsic_norm_hint
 
 def _build_env(cfg: Config, *, logger) -> Any:
     async_vector = bool(getattr(cfg.env, "async_vector", False))
+
+    deterministic = False
+    try:
+        deterministic = bool(getattr(getattr(cfg, "exp", None), "deterministic", False))
+    except Exception:
+        deterministic = False
+
     env = make_env(
         env_id=cfg.env.id,
         num_envs=cfg.env.vec_envs,
@@ -19,6 +26,7 @@ def _build_env(cfg: Config, *, logger) -> Any:
         car_action_set=cfg.env.car_discrete_action_set,
         render_mode=None,
         async_vector=async_vector,
+        deterministic=deterministic,
         make_kwargs=None,
     )
     if int(cfg.env.vec_envs) > 1:
