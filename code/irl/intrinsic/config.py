@@ -116,6 +116,10 @@ def build_intrinsic_kwargs(cfg_like: Any) -> dict[str, Any]:
             _get(gate, "min_regions_for_gating", gate_defaults.min_regions_for_gating),
             gate_defaults.min_regions_for_gating,
         ),
+        "gate_median_cache_interval": _as_int(
+            _get(gate, "median_cache_interval", gate_defaults.median_cache_interval),
+            gate_defaults.median_cache_interval,
+        ),
         "normalize_inside": _as_bool(
             _get(intrinsic, "normalize_inside", intrinsic_defaults.normalize_inside),
             intrinsic_defaults.normalize_inside,
