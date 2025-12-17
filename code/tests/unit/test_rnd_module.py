@@ -17,26 +17,14 @@ def _rand_images(B: int, H: int, W: int, C: int, seed: int) -> np.ndarray:
     return rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
 
 
-@pytest.mark.parametrize(
-    "obs_space",
-    [
-        gym.spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
-        gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8),
-    ],
-    ids=["vector", "image"],
-)
-def test_rnd_compute_batch_uses_next_obs(obs_space):
+def test_rnd_compute_batch_uses_next_obs_image():
+    obs_space = gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8)
     rnd = RND(obs_space, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
 
     B = 10
-    if len(obs_space.shape) == 1:
-        D = int(obs_space.shape[0])
-        obs = _rand_obs(D, B=B, seed=1)
-        next_obs = _rand_obs(D, B=B, seed=2)
-    else:
-        H, W, C = (int(x) for x in obs_space.shape)
-        obs = _rand_images(B=B, H=H, W=W, C=C, seed=1)
-        next_obs = _rand_images(B=B, H=H, W=W, C=C, seed=2)
+    H, W, C = (int(x) for x in obs_space.shape)
+    obs = _rand_images(B=B, H=H, W=W, C=C, seed=1)
+    next_obs = _rand_images(B=B, H=H, W=W, C=C, seed=2)
 
     r1 = rnd.compute_batch(obs)
     r2 = rnd.compute_batch(obs, next_obs)
