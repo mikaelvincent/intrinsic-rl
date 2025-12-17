@@ -3,12 +3,11 @@ from pathlib import Path
 
 import typer
 
+from irl.cli.common import QUICK_EPISODES, validate_policy_mode
 from irl.evaluator import evaluate as run_evaluate
 from irl.utils.checkpoint import atomic_write_text
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
-
-_QUICK_EPISODES = 5
 
 
 def _print_summary(label: str, summary: dict) -> None:
@@ -36,13 +35,11 @@ def cli_eval(
     quick: bool = typer.Option(False, "--quick/--no-quick"),
     out: Path | None = typer.Option(None, "--out", "-o", dir_okay=False),
 ) -> None:
-    policy_mode = str(policy).strip().lower()
-    if policy_mode not in {"mode", "sample", "both"}:
-        raise typer.BadParameter("--policy must be one of: mode, sample, both")
+    policy_mode = validate_policy_mode(policy, allowed=("mode", "sample", "both"))
 
     n_eps = int(episodes)
     if quick:
-        n_eps = min(n_eps, _QUICK_EPISODES)
+        n_eps = min(n_eps, QUICK_EPISODES)
 
     summary = run_evaluate(env=env, ckpt=ckpt, episodes=n_eps, device=device, policy_mode=policy_mode)
 
