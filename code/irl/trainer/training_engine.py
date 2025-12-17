@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from math import ceil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -132,10 +131,10 @@ def run_training_loop(
 
         _sync_actor_from_learner()
 
-        per_env_steps = min(
-            int(cfg.ppo.steps_per_update),
-            max(1, ceil((int(total_steps) - int(global_step)) / B)),
-        )
+        remaining_steps = int(total_steps) - int(global_step)
+        per_env_steps = min(int(cfg.ppo.steps_per_update), remaining_steps // B)
+        if per_env_steps <= 0:
+            break
 
         rollout: RolloutBatch = collect_rollout(
             env=env,
