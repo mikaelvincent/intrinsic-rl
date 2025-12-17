@@ -40,6 +40,7 @@ class GLPE(nn.Module):
         gate_min_regions_for_gating: int = 3,
         normalize_inside: bool = True,
         gating_enabled: bool = True,
+        checkpoint_include_points: bool = True,
     ) -> None:
         super().__init__()
         if not isinstance(obs_space, gym.spaces.Box):
@@ -72,6 +73,7 @@ class GLPE(nn.Module):
 
         self.gating_enabled = bool(gating_enabled)
         self._normalize_inside = bool(normalize_inside)
+        self.checkpoint_include_points = bool(checkpoint_include_points)
 
         self._rms = ComponentRMS(
             impact=RunningRMS(beta=0.99, eps=1e-8), lp=RunningRMS(beta=0.99, eps=1e-8)
@@ -81,8 +83,13 @@ class GLPE(nn.Module):
         self.to(self.device)
 
     def get_extra_state(self) -> dict:
+        store_state = self.store.state_dict(include_points=bool(self.checkpoint_include_points))
+        if isinstance(store_state, dict):
+            store_state = dict(store_state)
+            store_state["include_points"] = bool(self.checkpoint_include_points)
+
         return {
-            "store": self.store.state_dict(include_points=True),
+            "store": store_state,
             "stats": {int(k): asdict(v) for k, v in self._stats.items()},
             "rms": self._rms.state_dict(),
         }
@@ -94,7 +101,11 @@ class GLPE(nn.Module):
         try:
             store_state = state.get("store")
             if isinstance(store_state, dict):
+                includes_points = bool(store_state.get("include_points", True))
                 self.store = KDTreeRegionStore.from_state_dict(store_state)
+                if not includes_points:
+                    # If points were omitted, further splits would be history-dependent.
+                    self.store.depth_max = 0
         except Exception:
             pass
 
