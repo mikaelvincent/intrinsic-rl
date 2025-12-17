@@ -214,8 +214,8 @@ def run_eval_suite(
     device: str,
     policy_mode: str = "mode",
     *,
-    strict_coverage: bool = False,
-    strict_step_parity: bool = False,
+    strict_coverage: bool = True,
+    strict_step_parity: bool = True,
 ) -> None:
     pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
 
