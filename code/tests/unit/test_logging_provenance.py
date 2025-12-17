@@ -5,7 +5,7 @@ from pathlib import Path
 
 from irl.cfg.schema import LoggingConfig
 from irl.utils.checkpoint import compute_cfg_hash
-from irl.utils.loggers import MetricLogger
+from irl.utils.loggers import CSVLogger, MetricLogger
 
 
 def test_log_hparams_writes_config_json(tmp_path: Path) -> None:
@@ -42,3 +42,14 @@ def test_log_hparams_writes_config_json(tmp_path: Path) -> None:
         assert after == before
     finally:
         ml.close()
+
+    p = tmp_path / "scalars_extra.csv"
+    log = CSVLogger(p)
+    try:
+        log.log_row(0, {"a": 1.0})
+        log.log_row(1, {"a": 2.0, "b": 3.0})
+    finally:
+        log.close()
+
+    header = p.read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert "b" not in {c.strip() for c in header}
