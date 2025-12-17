@@ -27,6 +27,9 @@ class RunResult:
     max_return: float
     mean_length: float
     std_length: float
+    policy_mode: str = "mode"
+    seed_offset: int = 0
+    episode_seeds_hash: str = ""
 
 
 def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
@@ -40,6 +43,9 @@ def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
                 "method",
                 "env_id",
                 "seed",
+                "policy_mode",
+                "seed_offset",
+                "episode_seeds_hash",
                 "ckpt_step",
                 "episodes",
                 "mean_return",
@@ -57,6 +63,9 @@ def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
                     r.method,
                     r.env_id,
                     r.seed,
+                    str(r.policy_mode),
+                    int(r.seed_offset),
+                    str(r.episode_seeds_hash or ""),
                     r.ckpt_step,
                     r.episodes,
                     f"{r.mean_return:.6f}",
