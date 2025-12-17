@@ -200,6 +200,33 @@ def _enforce_coverage_and_step_parity(
             typer.echo(msg)
 
 
+def _discover_run_dirs_with_ckpt(runs_root: Path) -> list[tuple[Path, Path]]:
+    root = Path(runs_root).resolve()
+    if not root.exists():
+        return []
+
+    seen: set[Path] = set()
+    out: list[tuple[Path, Path]] = []
+
+    for ckpt_dir in root.rglob("checkpoints"):
+        if not ckpt_dir.is_dir():
+            continue
+
+        run_dir = ckpt_dir.parent.resolve()
+        if run_dir in seen:
+            continue
+
+        ckpt = _find_latest_ckpt(run_dir)
+        if ckpt is None:
+            continue
+
+        seen.add(run_dir)
+        out.append((run_dir, ckpt))
+
+    out.sort(key=lambda t: str(t[0]))
+    return out
+
+
 def run_eval_suite(
     runs_root: Path,
     results_dir: Path,
@@ -219,23 +246,18 @@ def run_eval_suite(
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    run_dirs = sorted(p for p in root.iterdir() if p.is_dir())
-    if not run_dirs:
-        typer.echo(f"[suite] No run directories under {root}")
+    runs = _discover_run_dirs_with_ckpt(root)
+    if not runs:
+        typer.echo(f"[suite] No run directories with checkpoints under {root}")
         return
 
-    typer.echo(f"[suite] Evaluating {len(run_dirs)} run(s) from {root}")
+    typer.echo(f"[suite] Evaluating {len(runs)} run(s) from {root}")
     results: list[RunResult] = []
 
     traj_root = results_dir / "plots" / "trajectories"
     traj_root.mkdir(parents=True, exist_ok=True)
 
-    for rd in run_dirs:
-        ckpt = _find_latest_ckpt(rd)
-        if ckpt is None:
-            typer.echo(f"[suite]    - {rd.name}: no checkpoints found, skipping")
-            continue
-
+    for rd, ckpt in runs:
         try:
             payload = load_checkpoint(ckpt, map_location="cpu")
             step = int(payload.get("step", -1))
