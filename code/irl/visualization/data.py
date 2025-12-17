@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import glob
-import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +7,8 @@ from typing import Iterable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+from irl.utils.runs import expand_runs_from_patterns, parse_run_name
 
 _REWARD_METRIC_FALLBACKS: dict[str, tuple[str, ...]] = {
     "reward_mean": ("reward_total_mean",),
@@ -28,31 +28,11 @@ def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 def _expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
-    dirs: list[Path] = []
-    for pat in patterns:
-        for hit in glob.glob(pat):
-            p = Path(hit)
-            if p.is_file() and p.name == "scalars.csv" and p.parent.name == "logs":
-                dirs.append(p.parent.parent)
-            elif p.is_dir():
-                if (p / "logs" / "scalars.csv").exists():
-                    dirs.append(p)
-    return _dedup_paths(dirs)
+    return _dedup_paths(expand_runs_from_patterns(list(patterns)))
 
 
 def _parse_run_name(run_dir: Path) -> dict[str, str]:
-    info: dict[str, str] = {}
-    name = run_dir.name
-    parts = name.split("__")
-    if len(parts) >= 1:
-        info["method"] = parts[0]
-    if len(parts) >= 2:
-        info["env"] = parts[1]
-    if len(parts) >= 3:
-        m = re.match(r"seed(\d+)", parts[2])
-        if m:
-            info["seed"] = m.group(1)
-    return info
+    return parse_run_name(run_dir.name)
 
 
 def _read_scalars(run_dir: Path) -> pd.DataFrame:
