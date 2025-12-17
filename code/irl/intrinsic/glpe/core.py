@@ -59,6 +59,11 @@ class GLPE(nn.Module):
         )
         self._stats: dict[int, _RegionStats] = {}
 
+        self._regions_with_stats: int = 0
+        self._stats_ema_long = np.zeros((0,), dtype=np.float64)
+        self._stats_ema_short = np.zeros((0,), dtype=np.float64)
+        self._stats_count = np.zeros((0,), dtype=np.int64)
+
         self.alpha_impact = float(alpha_impact)
         self.alpha_lp = float(alpha_lp)
         self.beta_long = float(ema_beta_long)
@@ -82,6 +87,73 @@ class GLPE(nn.Module):
 
         self.to(self.device)
 
+    def _ensure_stats_capacity(self, rid: int) -> None:
+        need = int(rid) + 1
+        n = int(self._stats_count.size)
+        if n >= need:
+            return
+
+        new_n = max(need, max(16, n * 2))
+        ema_l = np.zeros((new_n,), dtype=np.float64)
+        ema_s = np.zeros((new_n,), dtype=np.float64)
+        cnt = np.zeros((new_n,), dtype=np.int64)
+
+        if n:
+            ema_l[:n] = self._stats_ema_long
+            ema_s[:n] = self._stats_ema_short
+            cnt[:n] = self._stats_count
+
+        self._stats_ema_long = ema_l
+        self._stats_ema_short = ema_s
+        self._stats_count = cnt
+
+    def _rebuild_stats_cache(self) -> None:
+        if not self._stats:
+            self._regions_with_stats = 0
+            self._stats_ema_long = np.zeros((0,), dtype=np.float64)
+            self._stats_ema_short = np.zeros((0,), dtype=np.float64)
+            self._stats_count = np.zeros((0,), dtype=np.int64)
+            return
+
+        keys = [int(k) for k in self._stats.keys() if isinstance(k, (int, float)) or str(k).lstrip("-").isdigit()]
+        if not keys:
+            self._regions_with_stats = 0
+            self._stats_ema_long = np.zeros((0,), dtype=np.float64)
+            self._stats_ema_short = np.zeros((0,), dtype=np.float64)
+            self._stats_count = np.zeros((0,), dtype=np.int64)
+            return
+
+        max_rid = max(int(k) for k in keys if int(k) >= 0) if any(int(k) >= 0 for k in keys) else -1
+        if max_rid < 0:
+            self._regions_with_stats = 0
+            self._stats_ema_long = np.zeros((0,), dtype=np.float64)
+            self._stats_ema_short = np.zeros((0,), dtype=np.float64)
+            self._stats_count = np.zeros((0,), dtype=np.int64)
+            return
+
+        n = int(max_rid) + 1
+        self._stats_ema_long = np.zeros((n,), dtype=np.float64)
+        self._stats_ema_short = np.zeros((n,), dtype=np.float64)
+        self._stats_count = np.zeros((n,), dtype=np.int64)
+
+        regions = 0
+        for rid, st in self._stats.items():
+            try:
+                r = int(rid)
+            except Exception:
+                continue
+            if r < 0 or r >= n:
+                continue
+
+            c = int(getattr(st, "count", 0))
+            self._stats_ema_long[r] = float(getattr(st, "ema_long", 0.0))
+            self._stats_ema_short[r] = float(getattr(st, "ema_short", 0.0))
+            self._stats_count[r] = c
+            if c > 0:
+                regions += 1
+
+        self._regions_with_stats = int(regions)
+
     def get_extra_state(self) -> dict:
         store_state = self.store.state_dict(include_points=bool(self.checkpoint_include_points))
         if isinstance(store_state, dict):
@@ -104,7 +176,6 @@ class GLPE(nn.Module):
                 includes_points = bool(store_state.get("include_points", True))
                 self.store = KDTreeRegionStore.from_state_dict(store_state)
                 if not includes_points:
-                    # If points were omitted, further splits would be history-dependent.
                     self.store.depth_max = 0
         except Exception:
             pass
@@ -132,6 +203,7 @@ class GLPE(nn.Module):
                                     pass
                         restored[rid] = st
                 self._stats = restored
+                self._rebuild_stats_cache()
         except Exception:
             pass
 
@@ -159,34 +231,56 @@ class GLPE(nn.Module):
         return per_dim.mean(dim=-1), phi_t
 
     def _update_region(self, rid: int, error: float) -> float:
-        st = self._stats.get(rid)
+        rid_i = int(rid)
+        self._ensure_stats_capacity(rid_i)
+
+        st = self._stats.get(rid_i)
         if st is None or st.count == 0:
-            self._stats[rid] = _RegionStats(ema_long=error, ema_short=error, count=1)
+            prev_count = int(self._stats_count[rid_i]) if rid_i < int(self._stats_count.size) else 0
+            self._stats[rid_i] = _RegionStats(ema_long=error, ema_short=error, count=1)
+            self._stats_ema_long[rid_i] = float(error)
+            self._stats_ema_short[rid_i] = float(error)
+            self._stats_count[rid_i] = 1
+            if prev_count <= 0:
+                self._regions_with_stats += 1
             return 0.0
+
         st.ema_long = self.beta_long * st.ema_long + (1.0 - self.beta_long) * error
         st.ema_short = self.beta_short * st.ema_short + (1.0 - self.beta_short) * error
         st.count += 1
+
+        self._stats_ema_long[rid_i] = float(st.ema_long)
+        self._stats_ema_short[rid_i] = float(st.ema_short)
+        self._stats_count[rid_i] = int(st.count)
+
         return max(0.0, st.ema_long - st.ema_short)
 
     def _global_medians(self) -> Tuple[float, float]:
-        lps: list[float] = []
-        errs: list[float] = []
-        for st in self._stats.values():
-            if st.count > 0:
-                lps.append(max(0.0, float(st.ema_long - st.ema_short)))
-                errs.append(float(st.ema_short))
-        if not errs:
+        if int(self._regions_with_stats) <= 0:
             return 0.0, 0.0
-        return float(np.median(lps) if lps else 0.0), float(np.median(errs))
+
+        cnt = self._stats_count
+        if cnt.size == 0:
+            return 0.0, 0.0
+
+        mask = cnt > 0
+        if not bool(np.any(mask)):
+            return 0.0, 0.0
+
+        ema_s = self._stats_ema_short[mask]
+        ema_l = self._stats_ema_long[mask]
+        lp = np.maximum(0.0, ema_l - ema_s)
+
+        med_lp = float(np.median(lp)) if lp.size > 0 else 0.0
+        med_err = float(np.median(ema_s)) if ema_s.size > 0 else 0.0
+        return med_lp, med_err
 
     def _maybe_update_gate(self, rid: int, lp_i: float) -> int:
         st = self._stats.get(rid)
         if st is None:
             return 1
 
-        sufficient = sum(1 for s in self._stats.values() if s.count > 0) >= int(
-            self.min_regions_for_gating
-        )
+        sufficient = int(self._regions_with_stats) >= int(self.min_regions_for_gating)
         if not sufficient:
             st.bad_consec = 0
             st.good_consec = 0
@@ -225,14 +319,9 @@ class GLPE(nn.Module):
             gate = self._maybe_update_gate(rid, float(lp_raw)) if self.gating_enabled else 1
 
             if self._normalize_inside:
-                self._rms.update([impact_raw], [lp_raw])
-                impact_n, lp_n = self._rms.normalize(
-                    np.asarray([impact_raw], dtype=np.float32),
-                    np.asarray([lp_raw], dtype=np.float32),
-                )
-                r = float(gate) * (
-                    self.alpha_impact * float(impact_n[0]) + self.alpha_lp * float(lp_n[0])
-                )
+                self._rms.update_scalar(impact_raw, lp_raw)
+                impact_n, lp_n = self._rms.normalize_scalar(impact_raw, lp_raw)
+                r = float(gate) * (self.alpha_impact * float(impact_n) + self.alpha_lp * float(lp_n))
             else:
                 r = float(gate) * (self.alpha_impact * impact_raw + self.alpha_lp * lp_raw)
 
@@ -261,12 +350,10 @@ class GLPE(nn.Module):
                 gate = int(self._maybe_update_gate(rid, float(lp_raw)))
 
             if self._normalize_inside:
-                self._rms.update([float(imp_np[i])], [lp_raw])
-                imp_norm, lp_norm = self._rms.normalize(
-                    np.asarray([imp_np[i]], dtype=np.float32),
-                    np.asarray([lp_raw], dtype=np.float32),
-                )
-                combined = self.alpha_impact * float(imp_norm[0]) + self.alpha_lp * float(lp_norm[0])
+                imp_i = float(imp_np[i])
+                self._rms.update_scalar(imp_i, lp_raw)
+                imp_norm, lp_norm = self._rms.normalize_scalar(imp_i, lp_raw)
+                combined = self.alpha_impact * float(imp_norm) + self.alpha_lp * float(lp_norm)
             else:
                 combined = self.alpha_impact * float(imp_np[i]) + self.alpha_lp * float(lp_raw)
 
