@@ -7,6 +7,7 @@ from typing import Optional, Sequence
 
 import typer
 
+from irl.cli.common import resolve_total_steps
 from irl.cfg import load_config
 from irl.cfg.schema import Config
 from irl.trainer import train as run_train
@@ -89,8 +90,11 @@ def run_training_suite(
             if device is not None:
                 cfg_seeded = replace(cfg_seeded, device=str(device))
 
-            steps_from_cfg = getattr(getattr(cfg_seeded, "exp", object()), "total_steps", None)
-            target_steps = int(steps_from_cfg) if steps_from_cfg is not None else int(total_steps)
+            target_steps = resolve_total_steps(
+                cfg_seeded,
+                int(total_steps),
+                prefer_cfg=True,
+            )
 
             if auto_async and int(cfg_seeded.env.vec_envs) > 1 and not bool(
                 getattr(cfg_seeded.env, "async_vector", False)
