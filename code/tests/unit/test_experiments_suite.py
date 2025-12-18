@@ -6,7 +6,7 @@ import pytest
 
 from irl.experiments import run_training_suite
 from irl.experiments.validation import _validate_plot_metrics
-from irl.plot import _aggregate_runs
+from irl.visualization import aggregate_runs
 
 
 def _write_cfg(configs_dir: Path, filename: str, text: str) -> Path:
@@ -108,12 +108,12 @@ def test_aggregate_runs_dedups_steps_and_falls_back(tmp_path: Path):
         encoding="utf-8",
     )
 
-    agg = _aggregate_runs([run_dir], metric="reward_total_mean", smooth=1)
+    agg = aggregate_runs([run_dir], metric="reward_total_mean", smooth=1)
     assert agg.steps.tolist() == [0, 1000]
     assert agg.mean.tolist() == [0.5, 1.5]
 
     with pytest.warns(UserWarning, match="reward_mean"):
-        agg_fb = _aggregate_runs([run_dir], metric="reward_mean", smooth=1)
+        agg_fb = aggregate_runs([run_dir], metric="reward_mean", smooth=1)
     assert agg_fb.steps.tolist() == [0, 1000]
     assert agg_fb.mean.tolist() == [0.5, 1.5]
 
