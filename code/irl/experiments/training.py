@@ -7,11 +7,11 @@ from typing import Optional, Sequence
 
 import typer
 
-from irl.cli.common import resolve_total_steps
 from irl.cfg import load_config
 from irl.cfg.schema import Config
 from irl.trainer import train as run_train
 from irl.utils.checkpoint import load_checkpoint
+from irl.utils.steps import resolve_total_steps as _resolve_total_steps
 
 
 def _discover_configs(
@@ -90,20 +90,13 @@ def run_training_suite(
             if device is not None:
                 cfg_seeded = replace(cfg_seeded, device=str(device))
 
-            target_steps = resolve_total_steps(
+            target_steps = _resolve_total_steps(
                 cfg_seeded,
                 int(total_steps),
+                default_total_steps=10_000,
                 prefer_cfg=True,
+                align_to_vec_envs=True,
             )
-
-            vec_envs = 1
-            try:
-                vec_envs = int(getattr(cfg_seeded.env, "vec_envs", 1) or 1)
-            except Exception:
-                vec_envs = 1
-
-            if vec_envs > 1:
-                target_steps = (int(target_steps) // int(vec_envs)) * int(vec_envs)
 
             deterministic = False
             try:
