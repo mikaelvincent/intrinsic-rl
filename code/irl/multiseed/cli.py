@@ -6,10 +6,11 @@ from typing import List, Optional
 import typer
 
 from irl.cli.common import QUICK_EPISODES, validate_policy_mode
+from irl.pipelines.eval import EvalCheckpoint, evaluate_checkpoints
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.stats_utils import bootstrap_ci, mannwhitney_u
 from .results import _read_summary_raw, _values_for_method
-from .run_discovery import _evaluate_ckpt, _normalize_inputs
+from .run_discovery import _normalize_inputs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -56,13 +57,23 @@ def cli_eval_many(
 
     typer.echo(f"[info] Found {len(ckpts)} checkpoint(s). Starting evaluation...")
 
-    results: list[RunResult] = []
-    for i, c in enumerate(ckpts, start=1):
-        typer.echo(f"  [{i}/{len(ckpts)}] {c}")
-        try:
-            results.append(_evaluate_ckpt(c, episodes=n_eps, device=device, policy_mode=policy_mode))
-        except Exception as exc:
-            typer.echo(f"[warning] Failed to evaluate {c}: {exc}")
+    specs = [EvalCheckpoint(ckpt=Path(c)) for c in ckpts]
+
+    def _on_start(i: int, n: int, spec: EvalCheckpoint) -> None:
+        typer.echo(f"  [{i}/{n}] {spec.ckpt}")
+
+    def _on_error(_i: int, _n: int, spec: EvalCheckpoint, exc: Exception) -> None:
+        typer.echo(f"[warning] Failed to evaluate {spec.ckpt}: {exc}")
+
+    results = evaluate_checkpoints(
+        specs,
+        episodes=int(n_eps),
+        device=str(device),
+        policy_mode=str(policy_mode),
+        on_start=_on_start,
+        on_error=_on_error,
+        skip_failures=True,
+    )
 
     if not results:
         raise typer.Exit(code=1)
