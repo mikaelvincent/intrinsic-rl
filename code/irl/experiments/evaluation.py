@@ -10,8 +10,8 @@ import typer
 from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
-from irl.pipelines.eval import cfg_fields_from_payload as _cfg_fields_from_payload
-from irl.pipelines.eval import evaluate_ckpt_to_run_result
+from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
+from irl.pipelines.eval import evaluate_checkpoints
 from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.io import atomic_write_csv
@@ -200,15 +200,15 @@ def run_eval_suite(
         return
 
     typer.echo(f"[suite] Evaluating {len(runs)} run(s) from {root}")
-    results: list[RunResult] = []
 
     traj_root = results_dir / "plots" / "trajectories"
     traj_root.mkdir(parents=True, exist_ok=True)
 
+    specs: list[EvalCheckpoint] = []
+
     for rd, ckpt in runs:
         try:
             payload = load_checkpoint(ckpt, map_location="cpu")
-
             cfg_env_id, cfg_method, cfg_seed = _cfg_fields(payload)
 
             info = parse_run_name(rd)
@@ -221,8 +221,10 @@ def run_eval_suite(
             except Exception:
                 run_seed = None
 
+            notes: list[str] = []
+
             if cfg_env_id is None:
-                typer.echo(
+                notes.append(
                     f"[suite]    ! {rd.name}: cfg.env.id missing in checkpoint; "
                     f"falling back to run dir label {run_env_tag!r}."
                 )
@@ -232,47 +234,65 @@ def run_eval_suite(
             if cfg_env_id is not None and run_env_tag is not None:
                 expected_tag = str(cfg_env_id).replace("/", "-")
                 if str(run_env_tag) != expected_tag:
-                    typer.echo(
+                    notes.append(
                         f"[suite]    ! {rd.name}: run dir env tag {run_env_tag!r} "
                         f"!= cfg.env.id {cfg_env_id!r}; using cfg.env.id."
                     )
 
             if cfg_method is not None and run_method is not None:
                 if str(cfg_method).strip().lower() != str(run_method).strip().lower():
-                    typer.echo(
+                    notes.append(
                         f"[suite]    ! {rd.name}: run dir method {run_method!r} "
                         f"!= cfg.method {cfg_method!r}; using cfg.method."
                     )
 
             if cfg_seed is not None and run_seed is not None and int(cfg_seed) != int(run_seed):
-                typer.echo(
+                notes.append(
                     f"[suite]    ! {rd.name}: run dir seed {run_seed} "
                     f"!= cfg.seed {cfg_seed}; using cfg.seed."
                 )
 
-            typer.echo(
-                f"[suite]    - {rd.name}: ckpt={ckpt.name}, env={env_for_eval}, episodes={episodes}"
-            )
-
             traj_out_dir = traj_root / rd.name
             traj_out_dir.mkdir(parents=True, exist_ok=True)
 
-            rr = evaluate_ckpt_to_run_result(
-                ckpt,
-                payload=payload,
-                env=str(env_for_eval),
-                method=(cfg_method or run_method or "unknown"),
-                seed=int(cfg_seed) if cfg_seed is not None else None,
-                episodes=int(episodes),
-                device=str(device),
-                policy_mode=pm,
-                save_traj=True,
-                traj_out_dir=traj_out_dir,
-                evaluate_fn=evaluate,
+            specs.append(
+                EvalCheckpoint(
+                    ckpt=ckpt,
+                    env=str(env_for_eval),
+                    method=str(cfg_method or run_method or "unknown"),
+                    seed=int(cfg_seed) if cfg_seed is not None else None,
+                    save_traj=True,
+                    traj_out_dir=traj_out_dir,
+                    payload=payload,
+                    notes=tuple(notes),
+                    label=str(rd.name),
+                )
             )
-            results.append(rr)
         except Exception as exc:
             typer.echo(f"[suite]          ! evaluation failed: {exc}")
+
+    def _on_start(_i: int, _n: int, spec: EvalCheckpoint) -> None:
+        for msg in spec.notes:
+            typer.echo(msg)
+        name = spec.label or spec.ckpt.name
+        env_disp = spec.env if spec.env is not None else "UnknownEnv"
+        typer.echo(
+            f"[suite]    - {name}: ckpt={spec.ckpt.name}, env={env_disp}, episodes={episodes}"
+        )
+
+    def _on_error(_i: int, _n: int, _spec: EvalCheckpoint, exc: Exception) -> None:
+        typer.echo(f"[suite]          ! evaluation failed: {exc}")
+
+    results = evaluate_checkpoints(
+        specs,
+        episodes=int(episodes),
+        device=str(device),
+        policy_mode=str(pm),
+        evaluate_fn=evaluate,
+        on_start=_on_start,
+        on_error=_on_error,
+        skip_failures=True,
+    )
 
     if not results:
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
