@@ -58,6 +58,24 @@ def _format_steps(step: int) -> str:
     return str(step)
 
 
+def _normalize_seed_list(seed_like: object) -> list[int]:
+    if seed_like is None:
+        return []
+    if isinstance(seed_like, (list, tuple)):
+        raw = [int(s) for s in seed_like]
+    else:
+        raw = [int(seed_like)]
+
+    out: list[int] = []
+    seen: set[int] = set()
+    for s in raw:
+        if s in seen:
+            continue
+        out.append(int(s))
+        seen.add(int(s))
+    return out
+
+
 def run_training_suite(
     configs_dir: Path,
     include: Sequence[str],
@@ -84,7 +102,7 @@ def run_training_suite(
             typer.echo(f"[suite] Skipping {cfg_path}: failed to load config ({exc})")
             continue
 
-        seed_list = list(seeds) if seeds else [int(cfg.seed)]
+        seed_list = _normalize_seed_list(seeds) if seeds else _normalize_seed_list(getattr(cfg, "seed", 1))
         for seed_val in seed_list:
             cfg_seeded = replace(cfg, seed=int(seed_val))
             if device is not None:
