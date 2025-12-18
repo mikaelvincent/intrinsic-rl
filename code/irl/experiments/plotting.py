@@ -5,11 +5,11 @@ from typing import Dict, List, Optional, Tuple
 
 import typer
 
-from irl.plot import plot_normalized_summary
+from irl.visualization import plot_normalized_summary
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.runs import parse_run_name
 from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
-from irl.visualization.data import _read_scalars
+from irl.visualization.data import read_scalars
 from .plot_helpers import (
     _generate_comparison_plot,
     _generate_component_plot,
@@ -100,7 +100,7 @@ def run_plots_suite(
 
     for rd in discovered_run_dirs:
         try:
-            df = _read_scalars(rd)
+            df = read_scalars(rd)
         except Exception as exc:
             skipped_runs[rd] = f"Unreadable logs/scalars.csv ({type(exc).__name__}: {exc})"
             continue
