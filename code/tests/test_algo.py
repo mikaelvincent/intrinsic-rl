@@ -101,6 +101,44 @@ def test_compute_gae_does_not_leak_across_truncation() -> None:
     assert torch.allclose(v_targets, expected, atol=1e-6)
 
 
+def test_compute_gae_accepts_batch_major_obs() -> None:
+    T, B = 3, 2
+    obs_tb = torch.zeros((T, B, 1), dtype=torch.float32)
+    next_obs_tb = torch.zeros((T, B, 1), dtype=torch.float32)
+    obs_bt = obs_tb.transpose(0, 1)
+    next_obs_bt = next_obs_tb.transpose(0, 1)
+
+    rewards = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float32)
+    dones = torch.zeros((T, B), dtype=torch.float32)
+    dones[-1] = 1.0
+
+    v_t = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    v_tp1 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+    vf_time_major = _ValueSequence(v_t, v_tp1)
+    adv_tb, vt_tb = compute_gae(
+        {"obs": obs_tb, "next_observations": next_obs_tb, "rewards": rewards, "dones": dones},
+        value_fn=vf_time_major,
+        gamma=0.99,
+        lam=0.95,
+        bootstrap_on_timeouts=False,
+    )
+
+    vf_batch_major = _ValueSequence(v_t, v_tp1)
+    adv_bt, vt_bt = compute_gae(
+        {"obs": obs_bt, "next_observations": next_obs_bt, "rewards": rewards, "dones": dones},
+        value_fn=vf_batch_major,
+        gamma=0.99,
+        lam=0.95,
+        bootstrap_on_timeouts=False,
+    )
+
+    assert adv_tb.shape == adv_bt.shape == (T * B,)
+    assert vt_tb.shape == vt_bt.shape == (T * B,)
+    assert torch.allclose(adv_tb, adv_bt, atol=1e-6)
+    assert torch.allclose(vt_tb, vt_bt, atol=1e-6)
+
+
 def _flat_params(model: nn.Module) -> torch.Tensor:
     return torch.cat([p.detach().cpu().view(-1) for p in model.parameters()])
 
