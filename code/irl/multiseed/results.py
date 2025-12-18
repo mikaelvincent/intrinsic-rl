@@ -3,19 +3,13 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
-
 __all__ = [
-    "RunResult",
-    "_aggregate",
-    "_write_raw_csv",
-    "_write_summary_csv",
-    "_read_summary_raw",
-    "_values_for_method",
+    "read_summary_raw",
+    "values_for_method",
 ]
 
 
-def _read_summary_raw(path: Path) -> list[dict]:
+def read_summary_raw(path: Path) -> list[dict]:
     rows: list[dict] = []
     with path.open("r", newline="", encoding="utf-8") as f:
         r = csv.DictReader(f)
@@ -42,7 +36,7 @@ def _read_summary_raw(path: Path) -> list[dict]:
     return rows
 
 
-def _values_for_method(
+def values_for_method(
     raw: list[dict],
     *,
     env: str,
