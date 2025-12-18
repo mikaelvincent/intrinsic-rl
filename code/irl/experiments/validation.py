@@ -6,6 +6,11 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from irl.trainer.metrics_schema import (
+    GLPE_GATE_ANY_COLS,
+    GLPE_REQUIRED_COMPONENT_COLS,
+    SCALARS_REQUIRED_COMMON_COLS,
+)
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.runs import parse_run_name as _parse_run_name
 
@@ -133,9 +138,9 @@ def _validate_plot_metrics(runs_root: Path) -> tuple[list[str], list[str]]:
         errors.append(f"No logs/scalars.csv found under runs_root: {Path(runs_root).resolve()}")
         return errors, warnings
 
-    required_common = {"step", "reward_mean", "reward_total_mean", "episode_return_mean"}
-    required_glpe_components = {"impact_rms", "lp_rms"}
-    glpe_gate_any = {"gate_rate", "gate_rate_pct"}
+    required_common = set(SCALARS_REQUIRED_COMMON_COLS)
+    required_glpe_components = set(GLPE_REQUIRED_COMPONENT_COLS)
+    glpe_gate_any = set(GLPE_GATE_ANY_COLS)
 
     for sp in scalars_paths:
         run_name = _run_name_from_scalars_path(sp)
@@ -318,12 +323,16 @@ def _validate_summary_tables(
         try:
             seeds_int = [int(s) for s in seeds_list]
         except Exception:
-            errors.append(f"summary.csv seeds not parseable for env={env_id} method={method}: {seeds_s!r}")
+            errors.append(
+                f"summary.csv seeds not parseable for env={env_id} method={method}: {seeds_s!r}"
+            )
             continue
 
         uniq = sorted(set(seeds_int))
         if len(uniq) != len(seeds_int):
-            errors.append(f"summary.csv has duplicate seeds for env={env_id} method={method}: {seeds_s!r}")
+            errors.append(
+                f"summary.csv has duplicate seeds for env={env_id} method={method}: {seeds_s!r}"
+            )
         if len(uniq) != int(n_seeds):
             errors.append(
                 f"summary.csv n_seeds mismatch env={env_id} method={method}: n_seeds={n_seeds} seeds={uniq}"
@@ -339,12 +348,16 @@ def _validate_summary_tables(
         ):
             v = _as_float(row.get(k))
             if v is None or not np.isfinite(v):
-                errors.append(f"summary.csv invalid {k} env={env_id} method={method}: {row.get(k)!r}")
+                errors.append(
+                    f"summary.csv invalid {k} env={env_id} method={method}: {row.get(k)!r}"
+                )
 
         lo = _as_float(row.get("mean_return_ci95_lo"))
         hi = _as_float(row.get("mean_return_ci95_hi"))
         if lo is not None and hi is not None and lo > hi:
-            errors.append(f"summary.csv mean_return CI inverted env={env_id} method={method}: {lo} > {hi}")
+            errors.append(
+                f"summary.csv mean_return CI inverted env={env_id} method={method}: {lo} > {hi}"
+            )
 
         expected = raw_seeds.get((env_id, method))
         if expected is not None and set(uniq) != set(expected):
