@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Any, Optional
 
 import numpy as np
 import torch
 
 from irl.cfg import Config
-from irl.models import PolicyNetwork
-from irl.utils.checkpoint_schema import build_checkpoint_payload
 
+from .actor_sync import ActorPolicySync
+from .checkpointing import (
+    maybe_save_baseline_checkpoint,
+    maybe_save_periodic_checkpoint,
+    save_final_checkpoint,
+)
+from .diagnostics import maybe_export_intrinsic_diagnostics
 from .metrics import build_log_payload
-from .rollout import RolloutBatch, collect_rollout
+from .rollout import collect_rollout
+from .telemetry import ProgressLogger
 from .training_setup import TrainingSession
 from .update_steps import compute_advantages, compute_intrinsic_rewards, ppo_step
 
@@ -74,52 +78,34 @@ def run_training_loop(
     global_step = int(session.global_step)
     update_idx = int(session.update_idx)
 
-    actor_policy: Optional[PolicyNetwork] = None
-    if device.type != "cpu":
-        actor_policy = PolicyNetwork(obs_space, act_space).to(torch.device("cpu"))
-        actor_policy.eval()
-        for p in actor_policy.parameters():
-            p.requires_grad = False
-        logger.info("Using CPU actor policy for env stepping; syncing each PPO update.")
+    actor_sync = ActorPolicySync.maybe_create(
+        obs_space=obs_space,
+        act_space=act_space,
+        device=device,
+        logger=logger,
+    )
 
-    def _sync_actor_from_learner() -> None:
-        if actor_policy is None:
-            return
-        with torch.no_grad():
-            sd = policy.state_dict()
-            cpu_sd = {k: v.detach().to("cpu") for k, v in sd.items()}
-            actor_policy.load_state_dict(cpu_sd, strict=True)
+    maybe_save_baseline_checkpoint(
+        cfg,
+        ckpt=ckpt,
+        policy=policy,
+        value=value,
+        is_image=bool(is_image),
+        obs_norm=obs_norm,
+        int_rms=int_rms,
+        pol_opt=pol_opt,
+        val_opt=val_opt,
+        intrinsic_module=intrinsic_module,
+        method_l=method_l,
+        global_step=int(global_step),
+        update_idx=int(update_idx),
+        logger=logger,
+    )
 
-    if int(global_step) == 0 and int(update_idx) == 0 and not ckpt.latest_path.exists():
-        payload0 = build_checkpoint_payload(
-            cfg,
-            global_step=0,
-            update_idx=0,
-            policy=policy,
-            value=value,
-            is_image=is_image,
-            obs_norm=obs_norm,
-            int_rms=int_rms,
-            pol_opt=pol_opt,
-            val_opt=val_opt,
-            intrinsic_module=intrinsic_module,
-            method_l=method_l,
-        )
-        ckpt_path0 = ckpt.save(step=0, payload=payload0)
-        logger.info("Saved baseline checkpoint at step=0 to %s", ckpt_path0)
-
-    start_wall = time.time()
-    last_log_time = start_wall
-    last_log_step = global_step
+    progress = ProgressLogger.start(initial_step=int(global_step))
 
     while global_step < int(total_steps):
         t_update_start = time.perf_counter()
-
-        t_rollout_total = 0.0
-        t_rollout_policy = 0.0
-        t_rollout_env_step = 0.0
-        t_rollout_intrinsic_step = 0.0
-        t_rollout_other = 0.0
 
         t_intrinsic_compute = 0.0
         t_intrinsic_update = 0.0
@@ -129,17 +115,17 @@ def run_training_loop(
         t_logging_compute = 0.0
         t_ml_log = 0.0
 
-        _sync_actor_from_learner()
+        actor_sync.sync_from(policy)
 
         remaining_steps = int(total_steps) - int(global_step)
         per_env_steps = min(int(cfg.ppo.steps_per_update), remaining_steps // B)
         if per_env_steps <= 0:
             break
 
-        rollout: RolloutBatch = collect_rollout(
+        rollout = collect_rollout(
             env=env,
             policy=policy,
-            actor_policy=actor_policy,
+            actor_policy=actor_sync.actor_policy,
             obs=obs,
             obs_space=obs_space,
             act_space=act_space,
@@ -261,109 +247,69 @@ def run_training_loop(
 
         t_update_total = time.perf_counter() - t_update_start
 
-        if update_idx % int(log_every_updates) == 0 or global_step >= int(total_steps):
-            now = time.time()
-            elapsed = max(now - start_wall, 1e-6)
-            avg_sps = float(global_step) / elapsed if global_step > 0 else 0.0
-            delta_steps = int(global_step - last_log_step)
-            delta_t = max(now - last_log_time, 1e-6)
-            recent_sps = float(delta_steps) / delta_t if delta_steps > 0 else 0.0
+        progress.maybe_log(
+            logger=logger,
+            update_idx=int(update_idx),
+            global_step=int(global_step),
+            total_steps=int(total_steps),
+            log_every_updates=int(log_every_updates),
+            log_payload=log_payload,
+            t_update_total=float(t_update_total),
+            t_rollout_total=float(t_rollout_total),
+            t_rollout_policy=float(t_rollout_policy),
+            t_rollout_env_step=float(t_rollout_env_step),
+            t_rollout_intrinsic_step=float(t_rollout_intrinsic_step),
+            t_rollout_other=float(t_rollout_other),
+            t_intrinsic_compute=float(t_intrinsic_compute),
+            t_intrinsic_update=float(t_intrinsic_update),
+            t_gae=float(t_gae),
+            t_ppo=float(t_ppo),
+            t_logging_compute=float(t_logging_compute),
+            t_ml_log=float(t_ml_log),
+        )
 
-            approx_kl = float(log_payload.get("approx_kl", float("nan")))
-            clip_frac = float(log_payload.get("clip_frac", float("nan")))
-            r_total = float(log_payload.get("reward_total_mean", float("nan")))
-            r_int_mean = (
-                float(log_payload.get("r_int_mean", 0.0)) if "r_int_mean" in log_payload else 0.0
-            )
+        maybe_export_intrinsic_diagnostics(
+            run_dir=run_dir,
+            intrinsic_module=intrinsic_module,
+            method_l=str(method_l),
+            use_intrinsic=bool(use_intrinsic),
+            step=int(global_step),
+            csv_interval=int(cfg.logging.csv_interval),
+        )
 
-            logger.info(
-                "Train progress: step=%d update=%d avg_sps=%.1f recent_sps=%.1f "
-                "reward_total_mean=%.3f r_int_mean=%.3f approx_kl=%.4f clip_frac=%.3f",
-                int(global_step),
-                int(update_idx),
-                avg_sps,
-                recent_sps,
-                r_total,
-                r_int_mean,
-                approx_kl,
-                clip_frac,
-            )
+        maybe_save_periodic_checkpoint(
+            cfg,
+            ckpt=ckpt,
+            policy=policy,
+            value=value,
+            is_image=bool(is_image),
+            obs_norm=obs_norm,
+            int_rms=int_rms,
+            pol_opt=pol_opt,
+            val_opt=val_opt,
+            intrinsic_module=intrinsic_module,
+            method_l=method_l,
+            global_step=int(global_step),
+            update_idx=int(update_idx),
+            logger=logger,
+        )
 
-            intrinsic_total = float(
-                t_rollout_intrinsic_step + t_intrinsic_compute + t_intrinsic_update
-            )
-            logging_total = float(t_logging_compute + t_ml_log)
-            logger.info(
-                "Timings (s) update=%d: total=%.3f | rollout=%.3f (policy=%.3f, env_step=%.3f, "
-                "intr_step=%.3f, other=%.3f) | intrinsic_total=%.3f (batch_compute=%.3f, update=%.3f) | "
-                "gae=%.3f | ppo=%.3f | logging=%.3f (compute=%.3f, io=%.3f)",
-                int(update_idx),
-                float(t_update_total),
-                float(t_rollout_total),
-                float(t_rollout_policy),
-                float(t_rollout_env_step),
-                float(t_rollout_intrinsic_step),
-                float(t_rollout_other),
-                intrinsic_total,
-                float(t_intrinsic_compute),
-                float(t_intrinsic_update),
-                float(t_gae),
-                float(t_ppo),
-                logging_total,
-                float(t_logging_compute),
-                float(t_ml_log),
-            )
-
-            last_log_time = now
-            last_log_step = global_step
-
-        try:
-            if (
-                intrinsic_module is not None
-                and bool(use_intrinsic)
-                and str(method_l) == "riac"
-                and int(global_step) % int(cfg.logging.csv_interval) == 0
-                and hasattr(intrinsic_module, "export_diagnostics")
-            ):
-                diag_dir = Path(run_dir) / "diagnostics"
-                intrinsic_module.export_diagnostics(diag_dir, step=int(global_step))
-        except Exception:
-            pass
-
-        if ckpt.should_save(int(global_step)):
-            payload = build_checkpoint_payload(
-                cfg,
-                global_step=int(global_step),
-                update_idx=int(update_idx),
-                policy=policy,
-                value=value,
-                is_image=is_image,
-                obs_norm=obs_norm,
-                int_rms=int_rms,
-                pol_opt=pol_opt,
-                val_opt=val_opt,
-                intrinsic_module=intrinsic_module,
-                method_l=method_l,
-            )
-            ckpt_path = ckpt.save(step=int(global_step), payload=payload)
-            logger.info("Saved checkpoint at step=%d to %s", int(global_step), ckpt_path)
-
-    payload = build_checkpoint_payload(
+    save_final_checkpoint(
         cfg,
-        global_step=int(global_step),
-        update_idx=int(update_idx),
+        ckpt=ckpt,
         policy=policy,
         value=value,
-        is_image=is_image,
+        is_image=bool(is_image),
         obs_norm=obs_norm,
         int_rms=int_rms,
         pol_opt=pol_opt,
         val_opt=val_opt,
         intrinsic_module=intrinsic_module,
         method_l=method_l,
+        global_step=int(global_step),
+        update_idx=int(update_idx),
+        logger=logger,
     )
-    final_ckpt_path = ckpt.save(step=int(global_step), payload=payload)
-    logger.info("Saved final checkpoint at step=%d to %s", int(global_step), final_ckpt_path)
 
     session.obs = obs
     session.global_step = int(global_step)
