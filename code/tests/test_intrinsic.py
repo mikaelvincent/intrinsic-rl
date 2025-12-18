@@ -9,14 +9,18 @@ import numpy as np
 import pytest
 import torch
 from gymnasium.envs.registration import register
+from torch.nn import functional as F
 from torch.optim import Adam
 
 from irl.cfg import Config, validate_config
 from irl.intrinsic import RunningRMS
+from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.glpe.gating import _RegionStats, update_region_gate
 from irl.intrinsic.icm import ICMConfig
 from irl.intrinsic.riac import RIAC
+from irl.intrinsic.ride import RIDE
+from irl.intrinsic.rnd import RND, RNDConfig
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.trainer import train as run_train
 from irl.trainer.training_setup import _restore_from_checkpoint
@@ -31,7 +35,7 @@ class _Transition:
         self.s_next = s_next
 
 
-def test_update_region_gate_transitions_and_resets():
+def test_update_region_gate_transitions_and_resets() -> None:
     st = _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1)
 
     for _ in range(2):
@@ -213,7 +217,7 @@ def _make_riac(obs_space, act_space, icm_cfg: ICMConfig) -> RIAC:
     )
 
 
-def test_glpe_compute_batch_matches_sequential_compute():
+def test_glpe_compute_batch_matches_sequential_compute() -> None:
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
     obs_space, act_space = _make_vector_spaces()
@@ -251,7 +255,7 @@ def test_glpe_compute_batch_matches_sequential_compute():
     assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
 
 
-def test_riac_compute_batch_matches_sequential_compute():
+def test_riac_compute_batch_matches_sequential_compute() -> None:
     torch.manual_seed(0)
     rng = np.random.default_rng(1)
     obs_space, act_space = _make_vector_spaces()
@@ -365,3 +369,110 @@ def test_resume_restores_intrinsic_extra_state(make_module, method_l: str, attrs
     assert torch.allclose(ref, out, atol=1e-6)
     for name in attrs:
         assert abs(float(getattr(mod1, name)) - float(getattr(mod2, name))) < 1e-6
+
+
+def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
+    def _save_state_dict(sd: dict, path: Path) -> int:
+        torch.save(sd, path)
+        return int(path.stat().st_size)
+
+    def _torch_load_any(path: Path) -> dict:
+        try:
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except TypeError:
+            return torch.load(path, map_location="cpu")
+
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+    act_space = gym.spaces.Discrete(3)
+
+    def _fill_store(mod: object, *, n_points: int, seed: int) -> None:
+        rng = np.random.default_rng(int(seed))
+        dim = int(getattr(mod, "phi_dim"))
+        pts = rng.standard_normal((int(n_points), dim)).astype(np.float32)
+        getattr(mod, "store").bulk_insert(pts)
+
+    def _make_glpe_points(*, include_points: bool) -> GLPE:
+        icm_cfg = ICMConfig(phi_dim=32, hidden=(32, 32))
+        return GLPE(
+            obs_space,
+            act_space,
+            device="cpu",
+            icm_cfg=icm_cfg,
+            region_capacity=100_000,
+            depth_max=12,
+            normalize_inside=False,
+            gating_enabled=False,
+            checkpoint_include_points=bool(include_points),
+        )
+
+    def _make_riac_points(*, include_points: bool) -> RIAC:
+        icm_cfg = ICMConfig(phi_dim=32, hidden=(32, 32))
+        return RIAC(
+            obs_space,
+            act_space,
+            device="cpu",
+            icm_cfg=icm_cfg,
+            region_capacity=100_000,
+            depth_max=12,
+            checkpoint_include_points=bool(include_points),
+        )
+
+    for make_module, tag in ((_make_glpe_points, "glpe"), (_make_riac_points, "riac")):
+        mod = make_module(include_points=True)
+        _fill_store(mod, n_points=5000, seed=0)
+
+        p_with = tmp_path / f"{tag}_with_points.pt"
+        size_with = _save_state_dict(mod.state_dict(), p_with)
+
+        mod.checkpoint_include_points = False
+        p_without = tmp_path / f"{tag}_without_points.pt"
+        size_without = _save_state_dict(mod.state_dict(), p_without)
+
+        assert size_without < size_with
+        assert size_without <= int(size_with * 0.6)
+
+        mod2 = make_module(include_points=False)
+        mod2.load_state_dict(_torch_load_any(p_without), strict=True)
+
+        assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
+        assert int(mod2.store.depth_max) == 0
+
+
+def test_build_intrinsic_kwargs_glpe_nogate_forces_disabled() -> None:
+    kw = build_intrinsic_kwargs({"method": "glpe_nogate", "intrinsic": {"gate": {"enabled": True}}})
+    assert kw["gating_enabled"] is False
+
+
+def test_rnd_next_obs_and_rms_update() -> None:
+    obs_space_img = gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8)
+    rnd_img = RND(obs_space_img, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
+
+    rng = np.random.default_rng(1)
+    B = 10
+    H, W, C = (int(x) for x in obs_space_img.shape)
+    obs = rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
+    next_obs = rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
+
+    r2 = rnd_img.compute_batch(obs, next_obs)
+    r3 = rnd_img.compute_batch(next_obs)
+
+    assert r2.shape == r3.shape == (B,)
+    assert torch.isfinite(r2).all()
+    assert torch.isfinite(r3).all()
+    assert torch.allclose(r2, r3, atol=1e-6)
+
+    obs_space_vec = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
+    cfg = RNDConfig(feature_dim=16, hidden=(32, 32), rms_beta=0.0, normalize_intrinsic=True)
+    rnd = RND(obs_space_vec, device="cpu", cfg=cfg)
+
+    obs2 = rng.standard_normal((64, 5)).astype(np.float32)
+
+    with torch.no_grad():
+        x = torch.as_tensor(obs2, dtype=torch.float32)
+        p = rnd.predictor(x)
+        tgt = rnd.target(x)
+        per = F.mse_loss(p, tgt, reduction="none").mean(dim=-1)
+        expected_rms = float(torch.sqrt((per**2).mean() + float(cfg.rms_eps)).item())
+
+    _ = rnd.compute_batch(obs2)
+    assert abs(float(rnd.rms) - expected_rms) < 1e-6
