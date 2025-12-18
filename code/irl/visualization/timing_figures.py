@@ -102,6 +102,7 @@ def _method_order(methods: Sequence[str]) -> list[str]:
         "glpe_lp_only",
         "glpe_impact_only",
         "glpe_nogate",
+        "glpe_cache",
         "glpe",
     ]
     idx = {m: i for i, m in enumerate(order)}
