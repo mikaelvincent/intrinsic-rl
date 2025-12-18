@@ -5,12 +5,14 @@ from collections.abc import Sequence
 import typer
 from typer.main import get_command
 
+from irl.benchmarks.cli import cli_bench
 from irl.eval import cli_eval
 from irl.train import cli_train
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 app.command("train")(cli_train)
 app.command("eval")(cli_eval)
+app.command("bench")(cli_bench)
 
 from irl.experiments import app as suite_app
 from irl.multiseed.cli import app as sweep_app
