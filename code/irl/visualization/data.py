@@ -8,12 +8,8 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from irl.trainer.metrics_schema import REWARD_METRIC_FALLBACKS
 from irl.utils.runs import expand_runs_from_patterns, parse_run_name as _parse_run_name
-
-_REWARD_METRIC_FALLBACKS: dict[str, tuple[str, ...]] = {
-    "reward_mean": ("reward_total_mean",),
-    "reward_total_mean": ("reward_mean",),
-}
 
 
 def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
@@ -82,7 +78,7 @@ def _resolve_metric_for_run(
         return metric
 
     fallback = None
-    for cand in _REWARD_METRIC_FALLBACKS.get(metric, ()):
+    for cand in REWARD_METRIC_FALLBACKS.get(metric, ()):
         if cand in cols:
             fallback = cand
             break
@@ -207,7 +203,9 @@ def _aggregate_runs(
     grid_set.add(int(start))
     grid_set.add(int(end))
 
-    steps = np.asarray(sorted(v for v in grid_set if int(start) <= int(v) <= int(end)), dtype=np.int64)
+    steps = np.asarray(
+        sorted(v for v in grid_set if int(start) <= int(v) <= int(end)), dtype=np.int64
+    )
     if steps.size == 0:
         return AggregateResult(np.array([]), np.array([]), np.array([]), 0, method_hint, env_hint)
 
