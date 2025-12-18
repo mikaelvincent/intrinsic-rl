@@ -103,7 +103,7 @@ MethodLiteral = Literal[
 
 @dataclass(frozen=True)
 class Config:
-    seed: int = 1
+    seed: int | list[int] = 1
     device: str = "cpu"
     method: MethodLiteral = "glpe"
 
