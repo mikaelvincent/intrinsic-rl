@@ -12,7 +12,7 @@ import pandas as pd
 import typer
 
 from irl.utils.checkpoint import atomic_replace
-from .data import _aggregate_runs, _ensure_parent, _expand_run_dirs
+from .data import aggregate_runs, ensure_parent, expand_run_dirs
 from .figures import plot_normalized_summary
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
@@ -27,11 +27,11 @@ def cli_curves(
     label: Optional[str] = typer.Option(None, "--label", "-l"),
     out: Path = typer.Option(Path("results/curve.png"), "--out", "-o", dir_okay=False),
 ) -> None:
-    run_dirs = _expand_run_dirs(runs)
+    run_dirs = expand_run_dirs(runs)
     if not run_dirs:
         raise typer.BadParameter("No matching run directories found for --runs.")
 
-    agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+    agg = aggregate_runs(run_dirs, metric=metric, smooth=smooth)
     if agg.n_runs == 0:
         typer.echo("[warn] No valid data found for metric in specified runs.")
         return
@@ -68,7 +68,7 @@ def cli_curves(
     ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
 
-    _ensure_parent(out)
+    ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
     fmt = out.suffix.lstrip(".").lower() or "png"
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
@@ -95,12 +95,12 @@ def cli_overlay(
 
     for i, spec in enumerate(group):
         patterns = [p.strip() for p in spec.split(",") if p.strip()]
-        run_dirs = _expand_run_dirs(patterns)
+        run_dirs = expand_run_dirs(patterns)
         if not run_dirs:
             typer.echo(f"[warn] No runs found for group {i+1} spec: {spec!r}, skipping.")
             continue
 
-        agg = _aggregate_runs(run_dirs, metric=metric, smooth=smooth)
+        agg = aggregate_runs(run_dirs, metric=metric, smooth=smooth)
         if agg.n_runs == 0:
             continue
 
@@ -125,7 +125,7 @@ def cli_overlay(
     ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
 
-    _ensure_parent(out)
+    ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
     fmt = out.suffix.lstrip(".").lower() or "png"
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
@@ -183,7 +183,7 @@ def cli_bars(
         axes[-1, 0].set_xlabel("Method")
         fig.tight_layout()
 
-    _ensure_parent(out)
+    ensure_parent(out)
     tmp = out.with_suffix(out.suffix + ".tmp")
     fmt = out.suffix.lstrip(".").lower() or "png"
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
