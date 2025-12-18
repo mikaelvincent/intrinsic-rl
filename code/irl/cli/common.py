@@ -4,6 +4,8 @@ from typing import Any
 
 import typer
 
+from irl.utils.steps import resolve_total_steps as _resolve_total_steps
+
 from .validators import normalize_policy_mode
 
 QUICK_EPISODES = 5
@@ -34,17 +36,6 @@ def resolve_default_method_for_entrypoint(
     return None
 
 
-def _cfg_total_steps(cfg: Any) -> int | None:
-    try:
-        exp = getattr(cfg, "exp", None)
-        ts = getattr(exp, "total_steps", None) if exp is not None else None
-        if ts is None:
-            return None
-        return int(ts)
-    except Exception:
-        return None
-
-
 def resolve_total_steps(
     cfg: Any,
     cli_total_steps: int | None,
@@ -52,11 +43,10 @@ def resolve_total_steps(
     default_total_steps: int = 10_000,
     prefer_cfg: bool = False,
 ) -> int:
-    cfg_steps = _cfg_total_steps(cfg)
-    if bool(prefer_cfg) and cfg_steps is not None:
-        return int(cfg_steps)
-    if cli_total_steps is not None:
-        return int(cli_total_steps)
-    if cfg_steps is not None:
-        return int(cfg_steps)
-    return int(default_total_steps)
+    return _resolve_total_steps(
+        cfg,
+        cli_total_steps,
+        default_total_steps=int(default_total_steps),
+        prefer_cfg=bool(prefer_cfg),
+        align_to_vec_envs=False,
+    )
