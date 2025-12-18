@@ -31,7 +31,7 @@ class RunResult:
     episode_seeds_hash: str = ""
 
 
-def _write_raw_csv(rows: List[RunResult], path: Path) -> None:
+def write_raw_csv(rows: List[RunResult], path: Path) -> None:
     cols = [
         "method",
         "env_id",
@@ -140,7 +140,7 @@ def _step_stats(steps: Sequence[int]) -> tuple[int, int, int]:
     return int(min(ok)), int(max(ok)), int(round(mean(ok)))
 
 
-def _aggregate(
+def aggregate_results(
     rows: List[RunResult],
     *,
     per_seed_policy: Literal["latest_ckpt"] = "latest_ckpt",
@@ -210,7 +210,7 @@ def _aggregate(
     return out
 
 
-def _write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
+def write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
     cols = [
         "method",
         "env_id",
