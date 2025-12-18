@@ -198,6 +198,13 @@ def run_plots_suite(
         _generate_gating_plot(groups, plots_root=plots_root, smooth=25)
         _generate_component_plot(groups, plots_root=plots_root, smooth=25)
 
+        try:
+            from irl.visualization.timing_figures import plot_timing_breakdown
+
+            plot_timing_breakdown(groups, plots_root=plots_root, tail_frac=0.25)
+        except Exception as exc:
+            typer.echo(f"[suite] Timing plots skipped ({type(exc).__name__}: {exc})")
+
         summary_csv = results_root / "summary.csv"
         if summary_csv.exists():
             bar_plot_path = plots_root / "summary_normalized_bars.png"
