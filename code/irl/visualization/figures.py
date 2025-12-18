@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from irl.utils.checkpoint import atomic_replace
-from .data import _ensure_parent
+from .data import ensure_parent
 
 
 def plot_normalized_summary(
@@ -243,7 +243,7 @@ def plot_normalized_summary(
 
     fig.tight_layout()
 
-    _ensure_parent(out_path)
+    ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     fmt = out_path.suffix.lstrip(".").lower() or "png"
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
@@ -370,7 +370,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
 
-    _ensure_parent(out_path)
+    ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     fmt = out_path.suffix.lstrip(".").lower() or "png"
     fig.savefig(str(tmp), dpi=150, bbox_inches="tight", format=fmt)
