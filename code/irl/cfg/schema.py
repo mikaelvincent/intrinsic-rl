@@ -95,6 +95,7 @@ MethodLiteral = Literal[
     "ride",
     "riac",
     "glpe",
+    "glpe_cache",
     "glpe_lp_only",
     "glpe_impact_only",
     "glpe_nogate",
