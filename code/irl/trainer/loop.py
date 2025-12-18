@@ -5,6 +5,7 @@ from typing import Optional
 
 from irl.cfg import Config, validate_config
 from irl.utils.loggers import get_logger
+from irl.utils.steps import resolve_total_steps as _resolve_total_steps
 
 from .build import ensure_device
 from .training_engine import run_training_loop
@@ -30,29 +31,41 @@ def train(
     except Exception:
         cfg_steps = None
 
+    base_total_steps = _resolve_total_steps(
+        cfg,
+        total_steps,
+        default_total_steps=10_000,
+        prefer_cfg=False,
+        align_to_vec_envs=False,
+    )
+    effective_total_steps = _resolve_total_steps(
+        cfg,
+        total_steps,
+        default_total_steps=10_000,
+        prefer_cfg=False,
+        align_to_vec_envs=True,
+    )
+
     if total_steps is None:
         if cfg_steps is not None:
-            effective_total_steps = int(cfg_steps)
             _LOG.info(
                 "Training total_steps=%d (from cfg.exp.total_steps).",
-                effective_total_steps,
+                int(base_total_steps),
             )
         else:
-            effective_total_steps = 10_000
             _LOG.info(
                 "Training total_steps=%d (default; cfg.exp.total_steps is unset).",
-                effective_total_steps,
+                int(base_total_steps),
             )
     else:
-        effective_total_steps = int(total_steps)
-        if cfg_steps is not None and int(cfg_steps) != effective_total_steps:
+        if cfg_steps is not None and int(cfg_steps) != int(base_total_steps):
             _LOG.info(
                 "Training total_steps=%d (override; cfg.exp.total_steps=%d).",
-                effective_total_steps,
+                int(base_total_steps),
                 int(cfg_steps),
             )
         else:
-            _LOG.info("Training total_steps=%d.", effective_total_steps)
+            _LOG.info("Training total_steps=%d.", int(base_total_steps))
 
     vec_envs = 1
     try:
@@ -60,16 +73,13 @@ def train(
     except Exception:
         vec_envs = 1
 
-    if vec_envs > 1:
-        aligned = (int(effective_total_steps) // int(vec_envs)) * int(vec_envs)
-        if int(aligned) != int(effective_total_steps):
-            _LOG.info(
-                "Aligning total_steps=%d to %d to match vec_envs=%d.",
-                int(effective_total_steps),
-                int(aligned),
-                int(vec_envs),
-            )
-            effective_total_steps = int(aligned)
+    if int(vec_envs) > 1 and int(effective_total_steps) != int(base_total_steps):
+        _LOG.info(
+            "Aligning total_steps=%d to %d to match vec_envs=%d.",
+            int(base_total_steps),
+            int(effective_total_steps),
+            int(vec_envs),
+        )
 
     session = build_training_session(
         cfg,
