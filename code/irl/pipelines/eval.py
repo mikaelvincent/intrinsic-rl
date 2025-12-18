@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -154,3 +155,62 @@ def evaluate_ckpt_to_run_result(
         seed_offset=int(seed_offset),
         episode_seeds_hash=_episode_seeds_hash(summary),
     )
+
+
+@dataclass(frozen=True)
+class EvalCheckpoint:
+    ckpt: Path
+    env: str | None = None
+    method: str | None = None
+    seed: int | None = None
+    save_traj: bool = False
+    traj_out_dir: Path | None = None
+    seed_offset: int = 0
+    episode_seeds: Sequence[int] | None = None
+    payload: Mapping[str, Any] | None = None
+    notes: tuple[str, ...] = ()
+    label: str | None = None
+
+
+def evaluate_checkpoints(
+    ckpts: Sequence[EvalCheckpoint],
+    *,
+    episodes: int,
+    device: str,
+    policy_mode: str = "mode",
+    evaluate_fn: Callable[..., dict] | None = None,
+    on_start: Callable[[int, int, EvalCheckpoint], None] | None = None,
+    on_error: Callable[[int, int, EvalCheckpoint, Exception], None] | None = None,
+    skip_failures: bool = True,
+) -> list[RunResult]:
+    results: list[RunResult] = []
+    total = int(len(ckpts))
+
+    for i, spec in enumerate(ckpts, start=1):
+        if on_start is not None:
+            on_start(i, total, spec)
+
+        try:
+            rr = evaluate_ckpt_to_run_result(
+                spec.ckpt,
+                episodes=int(episodes),
+                device=str(device),
+                policy_mode=str(policy_mode),
+                env=spec.env,
+                method=spec.method,
+                seed=spec.seed,
+                save_traj=bool(spec.save_traj),
+                traj_out_dir=spec.traj_out_dir,
+                seed_offset=int(spec.seed_offset),
+                episode_seeds=spec.episode_seeds,
+                payload=spec.payload,
+                evaluate_fn=evaluate_fn,
+            )
+            results.append(rr)
+        except Exception as exc:
+            if on_error is not None:
+                on_error(i, total, spec, exc)
+            if not bool(skip_failures):
+                raise
+
+    return results
