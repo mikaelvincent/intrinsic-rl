@@ -7,24 +7,23 @@ from irl.cli.validators import normalize_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import collect_ckpts_from_patterns
 from irl.pipelines.eval import EvalCheckpoint, evaluate_checkpoints
+from irl.results.summary import RunResult
 from irl.utils.runs import find_latest_ckpt as _find_latest_ckpt_impl
 
-from .results import RunResult
 
-
-def _find_latest_ckpt(run_dir: Path) -> Optional[Path]:
+def find_latest_ckpt(run_dir: Path) -> Optional[Path]:
     return _find_latest_ckpt_impl(run_dir)
 
 
-def _collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
+def collect_ckpts_from_runs(run_globs: Iterable[str]) -> List[Path]:
     return collect_ckpts_from_patterns(list(run_globs), None)
 
 
-def _normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) -> List[Path]:
+def normalize_inputs(runs: Optional[List[str]], ckpts: Optional[List[Path]]) -> List[Path]:
     return collect_ckpts_from_patterns(runs, ckpts)
 
 
-def _evaluate_ckpt(ckpt: Path, episodes: int, device: str, policy_mode: str = "mode") -> RunResult:
+def evaluate_ckpt(ckpt: Path, episodes: int, device: str, policy_mode: str = "mode") -> RunResult:
     pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
     results = evaluate_checkpoints(
         [EvalCheckpoint(ckpt=Path(ckpt))],
