@@ -5,6 +5,15 @@ from typing import Any, Mapping
 import numpy as np
 import torch
 
+from .metrics_schema import (
+    COL_EPISODE_RETURN_MEAN,
+    COL_GATE_RATE,
+    COL_GATE_RATE_PCT,
+    COL_IMPACT_RMS,
+    COL_LP_RMS,
+    COL_REWARD_MEAN,
+    COL_REWARD_TOTAL_MEAN,
+)
 from .rollout import RolloutBatch
 
 
@@ -64,10 +73,10 @@ def build_log_payload(
     log_payload: dict[str, object] = {
         "entropy_last": float(ent_last),
         "entropy_update_mean": float(ent_mean_update),
-        "reward_mean": float(rollout.rewards_ext_seq.mean()),
-        "reward_total_mean": float(rewards_total_seq.mean()),
+        COL_REWARD_MEAN: float(rollout.rewards_ext_seq.mean()),
+        COL_REWARD_TOTAL_MEAN: float(rewards_total_seq.mean()),
         "episode_count": int(ep_count),
-        "episode_return_mean": float(ep_return_mean),
+        COL_EPISODE_RETURN_MEAN: float(ep_return_mean),
         "episode_return_std": float(ep_return_std),
         "episode_length_mean": float(ep_length_mean),
         "episode_length_std": float(ep_length_std),
@@ -113,8 +122,8 @@ def build_log_payload(
                 try:
                     imp_rms_val = float(getattr(intrinsic_module, "impact_rms"))
                     lp_rms_val = float(getattr(intrinsic_module, "lp_rms"))
-                    log_payload["impact_rms"] = imp_rms_val
-                    log_payload["lp_rms"] = lp_rms_val
+                    log_payload[COL_IMPACT_RMS] = imp_rms_val
+                    log_payload[COL_LP_RMS] = lp_rms_val
                     r_int_rms_val = 0.5 * (imp_rms_val + lp_rms_val)
                 except Exception:
                     pass
@@ -144,8 +153,8 @@ def build_log_payload(
     ):
         try:
             gr = float(getattr(intrinsic_module, "gate_rate"))
-            log_payload["gate_rate"] = gr
-            log_payload["gate_rate_pct"] = 100.0 * gr
+            log_payload[COL_GATE_RATE] = gr
+            log_payload[COL_GATE_RATE_PCT] = 100.0 * gr
         except Exception:
             pass
 
