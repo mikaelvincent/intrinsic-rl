@@ -92,6 +92,20 @@ def _nearest_divisor_suggestions(
 
 
 def validate_config(cfg: Config) -> None:
+    seed_val = getattr(cfg, "seed", 1)
+    if isinstance(seed_val, bool):
+        raise ConfigError("seed must be an int or list of ints")
+    if isinstance(seed_val, (list, tuple)):
+        if not seed_val:
+            raise ConfigError("seed must be a non-empty int or list of ints")
+        for i, s in enumerate(seed_val):
+            if isinstance(s, bool):
+                raise ConfigError(f"seed[{i}] must be an int, got bool")
+            try:
+                _ = int(s)
+            except Exception as exc:
+                raise ConfigError(f"seed[{i}] must be int-like, got {s!r}") from exc
+
     if cfg.env.vec_envs < 1:
         raise ConfigError("env.vec_envs must be >= 1")
     if cfg.env.frame_skip < 1:
