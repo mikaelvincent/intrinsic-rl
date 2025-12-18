@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import typer
 
 from irl.utils.checkpoint import atomic_replace
-from irl.visualization.data import _aggregate_runs
+from irl.visualization.data import aggregate_runs
 from irl.visualization.figures import plot_trajectory_heatmap
 
 
@@ -47,7 +47,7 @@ def _generate_comparison_plot(
         for method in relevant_methods:
             dirs = by_method[method]
             try:
-                agg = _aggregate_runs(dirs, metric=metric, smooth=int(smooth), align=align_mode)
+                agg = aggregate_runs(dirs, metric=metric, smooth=int(smooth), align=align_mode)
             except Exception:
                 continue
 
@@ -124,10 +124,10 @@ def _generate_gating_plot(
             continue
 
         try:
-            agg_rew = _aggregate_runs(runs, metric="reward_mean", smooth=smooth, align=align_mode)
-            agg_gate = _aggregate_runs(runs, metric="gate_rate", smooth=smooth, align=align_mode)
+            agg_rew = aggregate_runs(runs, metric="reward_mean", smooth=smooth, align=align_mode)
+            agg_gate = aggregate_runs(runs, metric="gate_rate", smooth=smooth, align=align_mode)
             if agg_gate.n_runs == 0:
-                agg_gate = _aggregate_runs(
+                agg_gate = aggregate_runs(
                     runs, metric="gate_rate_pct", smooth=smooth, align=align_mode
                 )
         except Exception:
@@ -194,8 +194,8 @@ def _generate_component_plot(
             continue
 
         try:
-            agg_imp = _aggregate_runs(runs, metric="impact_rms", smooth=smooth, align=align_mode)
-            agg_lp = _aggregate_runs(runs, metric="lp_rms", smooth=smooth, align=align_mode)
+            agg_imp = aggregate_runs(runs, metric="impact_rms", smooth=smooth, align=align_mode)
+            agg_lp = aggregate_runs(runs, metric="lp_rms", smooth=smooth, align=align_mode)
         except Exception:
             continue
 
