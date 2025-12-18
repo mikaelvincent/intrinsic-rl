@@ -3,8 +3,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from irl.multiseed.results import _read_summary_raw
-from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
+from irl.multiseed.results import read_summary_raw
+from irl.results.summary import RunResult, aggregate_results, write_raw_csv, write_summary_csv
 
 
 def _read_header(path: Path) -> list[str]:
@@ -41,7 +41,7 @@ def test_summary_raw_csv_schema_is_stable(tmp_path: Path) -> None:
         _rr(tmp_path, seed=2, step=20, mean_return=2.0),
     ]
     out = tmp_path / "summary_raw.csv"
-    _write_raw_csv(rows, out)
+    write_raw_csv(rows, out)
 
     expected = [
         "method",
@@ -62,7 +62,7 @@ def test_summary_raw_csv_schema_is_stable(tmp_path: Path) -> None:
     ]
     assert _read_header(out) == expected
 
-    parsed = _read_summary_raw(out)
+    parsed = read_summary_raw(out)
     assert len(parsed) == 2
     assert set(parsed[0].keys()) == {
         "method",
@@ -86,9 +86,9 @@ def test_summary_csv_schema_is_stable(tmp_path: Path) -> None:
         _rr(tmp_path, seed=1, step=20, mean_return=3.0),
         _rr(tmp_path, seed=2, step=20, mean_return=5.0),
     ]
-    agg = _aggregate(rows, n_boot=10)
+    agg = aggregate_results(rows, n_boot=10)
     out = tmp_path / "summary.csv"
-    _write_summary_csv(agg, out)
+    write_summary_csv(agg, out)
 
     expected = [
         "method",
