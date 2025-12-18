@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from .plotting import (
     AggregateResult,
-    _aggregate_runs,
-    _parse_run_name,
+    aggregate_runs,
     plot_normalized_summary,
     plot_trajectory_heatmap,
     app,
@@ -12,8 +11,7 @@ from .plotting import (
 
 __all__ = [
     "AggregateResult",
-    "_aggregate_runs",
-    "_parse_run_name",
+    "aggregate_runs",
     "plot_normalized_summary",
     "plot_trajectory_heatmap",
     "app",
