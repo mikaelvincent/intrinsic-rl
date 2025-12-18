@@ -7,10 +7,10 @@ import typer
 
 from irl.cli.common import QUICK_EPISODES, validate_policy_mode
 from irl.pipelines.eval import EvalCheckpoint, evaluate_checkpoints
-from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
+from irl.results.summary import RunResult, aggregate_results, write_raw_csv, write_summary_csv
 from irl.stats_utils import bootstrap_ci, mannwhitney_u
-from .results import _read_summary_raw, _values_for_method
-from .run_discovery import _normalize_inputs
+from .results import read_summary_raw, values_for_method
+from .run_discovery import normalize_inputs
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -51,7 +51,7 @@ def cli_eval_many(
     if run_patterns:
         all_run_patterns.extend(run_patterns)
 
-    ckpts = _normalize_inputs(all_run_patterns or None, ckpt)
+    ckpts = normalize_inputs(all_run_patterns or None, ckpt)
     if not ckpts:
         raise typer.BadParameter("No checkpoints found. Provide --runs and/or --ckpt.")
 
@@ -79,10 +79,10 @@ def cli_eval_many(
         raise typer.Exit(code=1)
 
     raw_path = out.parent / "summary_raw.csv"
-    _write_raw_csv(results, raw_path)
+    write_raw_csv(results, raw_path)
 
-    agg = _aggregate(results)
-    _write_summary_csv(agg, out)
+    agg = aggregate_results(results)
+    write_summary_csv(agg, out)
 
     typer.echo("\n[green]Aggregation complete[/green]")
     typer.echo(f"Per-checkpoint results: {raw_path}")
@@ -119,16 +119,12 @@ def cli_stats(
     if alt not in ("two-sided", "greater", "less"):
         raise typer.BadParameter("--alt must be one of: two-sided, greater, less")
 
-    raw = _read_summary_raw(summary_raw)
+    raw = read_summary_raw(summary_raw)
     if not raw:
         raise typer.BadParameter(f"No rows parsed from {summary_raw}")
 
-    x = _values_for_method(
-        raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed
-    )
-    y = _values_for_method(
-        raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed
-    )
+    x = values_for_method(raw, env=env, method=method_a, metric=metric, latest_per_seed=latest_per_seed)
+    y = values_for_method(raw, env=env, method=method_b, metric=metric, latest_per_seed=latest_per_seed)
 
     if not x:
         raise typer.BadParameter(f"No rows for env={env!r}, method={method_a!r}")
@@ -146,14 +142,10 @@ def cli_stats(
         return float(_np.median(a) - _np.median(b))
 
     mean_pt, mean_lo, mean_hi = (
-        bootstrap_ci(x, y, diff_mean, n_boot=int(boot))
-        if boot > 0
-        else (res.mean_x - res.mean_y, float("nan"), float("nan"))
+        bootstrap_ci(x, y, diff_mean, n_boot=int(boot)) if boot > 0 else (res.mean_x - res.mean_y, float("nan"), float("nan"))
     )
     med_pt, med_lo, med_hi = (
-        bootstrap_ci(x, y, diff_median, n_boot=int(boot))
-        if boot > 0
-        else (res.median_x - res.median_y, float("nan"), float("nan"))
+        bootstrap_ci(x, y, diff_median, n_boot=int(boot)) if boot > 0 else (res.median_x - res.median_y, float("nan"), float("nan"))
     )
 
     typer.echo(f"\n[bold]Mann–Whitney U test[/bold] on {env} — metric: {metric}")
