@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from irl.multiseed.results import RunResult, _aggregate
+from irl.results.summary import RunResult, aggregate_results
 
 
 def _rr(*, seed: int, step: int, mean_return: float) -> RunResult:
@@ -29,7 +29,7 @@ def test_aggregate_dedups_to_latest_ckpt_per_seed():
         _rr(seed=2, step=20, mean_return=5.0),
     ]
 
-    agg = _aggregate(rows, n_boot=200)
+    agg = aggregate_results(rows, n_boot=200)
     assert len(agg) == 1
     r = agg[0]
 
