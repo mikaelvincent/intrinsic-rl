@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 
 from irl.trainer.metrics_schema import REWARD_METRIC_FALLBACKS
-from irl.utils.runs import expand_runs_from_patterns, parse_run_name as _parse_run_name
+from irl.utils.runs import expand_runs_from_patterns, parse_run_name
 
 
-def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
+def dedup_paths(paths: Iterable[Path]) -> list[Path]:
     out: list[Path] = []
     seen: set[Path] = set()
     for p in paths:
@@ -23,11 +23,11 @@ def _dedup_paths(paths: Iterable[Path]) -> list[Path]:
     return out
 
 
-def _expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
-    return _dedup_paths(expand_runs_from_patterns(list(patterns)))
+def expand_run_dirs(patterns: Sequence[str]) -> list[Path]:
+    return dedup_paths(expand_runs_from_patterns(list(patterns)))
 
 
-def _read_scalars(run_dir: Path) -> pd.DataFrame:
+def read_scalars(run_dir: Path) -> pd.DataFrame:
     path = run_dir / "logs" / "scalars.csv"
     if not path.exists():
         raise FileNotFoundError(f"Missing scalars.csv in {run_dir}")
@@ -46,14 +46,14 @@ def _read_scalars(run_dir: Path) -> pd.DataFrame:
     return df
 
 
-def _smooth_series(s: pd.Series, window: int) -> pd.Series:
+def smooth_series(s: pd.Series, window: int) -> pd.Series:
     w = int(max(1, window))
     if w == 1:
         return s
     return s.rolling(window=w, min_periods=1).mean()
 
 
-def _ensure_parent(path: Path) -> None:
+def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -99,7 +99,7 @@ def _resolve_metric_for_run(
     return None
 
 
-def _aggregate_runs(
+def aggregate_runs(
     run_dirs: Sequence[Path],
     metric: str,
     smooth: int = 1,
@@ -114,14 +114,14 @@ def _aggregate_runs(
 
     series_per_run: list[pd.Series] = []
     for rd in run_dirs:
-        info = _parse_run_name(rd)
+        info = parse_run_name(rd)
         if "method" in info:
             method_cand.add(info["method"])
         if "env" in info:
             env_cand.add(info["env"])
 
         try:
-            df = _read_scalars(rd)
+            df = read_scalars(rd)
         except Exception:
             continue
 
@@ -141,7 +141,7 @@ def _aggregate_runs(
         if s.index.has_duplicates:
             s = s[~s.index.duplicated(keep="last")]
         s = s.sort_index()
-        s = _smooth_series(s, smooth)
+        s = smooth_series(s, smooth)
         series_per_run.append(s)
 
     if not series_per_run:
