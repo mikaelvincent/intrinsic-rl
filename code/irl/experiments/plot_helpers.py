@@ -22,7 +22,7 @@ def _suite_method_groups(all_methods: Sequence[str]) -> tuple[list[str], list[st
     if "glpe" in all_methods:
         baselines.append("glpe")
 
-    ablation_priority = ["glpe_lp_only", "glpe_impact_only", "glpe_nogate"]
+    ablation_priority = ["glpe_lp_only", "glpe_impact_only", "glpe_nogate", "glpe_cache"]
     ablations: list[str] = [m for m in ablation_priority if m in all_methods]
     other_abls = sorted([m for m in all_methods if str(m).startswith("glpe_") and m not in ablations])
     ablations.extend(other_abls)
