@@ -5,9 +5,11 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import pytest
 from gymnasium.envs.registration import register
 
 from irl.cfg import Config, validate_config
+from irl.experiments import run_training_suite
 from irl.trainer import train as run_train
 from irl.utils.checkpoint import load_checkpoint
 
@@ -85,3 +87,54 @@ def test_total_steps_does_not_overshoot_with_vec_envs(tmp_path: Path) -> None:
     assert step == 4
     assert step <= 5
     assert step % int(cfg.env.vec_envs) == 0
+
+
+def test_suite_aligns_total_steps_to_vec_envs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    configs_dir = tmp_path / "configs"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_path = configs_dir / "budget.yaml"
+    cfg_path.write_text(
+        """
+seed: 1
+device: "cpu"
+method: "vanilla"
+env:
+  id: "StepBudget-v0"
+  vec_envs: 2
+ppo:
+  steps_per_update: 2
+  minibatches: 1
+  epochs: 1
+logging:
+  csv_interval: 1
+  checkpoint_interval: 100000
+exp:
+  total_steps: 5
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    import irl.experiments.training as training_module
+
+    captured: list[int] = []
+
+    def fake_run_train(cfg, *, total_steps: int, run_dir: Path, resume: bool):
+        _ = cfg, run_dir, resume
+        captured.append(int(total_steps))
+
+    monkeypatch.setattr(training_module, "run_train", fake_run_train)
+
+    run_training_suite(
+        configs_dir=configs_dir,
+        include=[],
+        exclude=[],
+        total_steps=999,
+        runs_root=tmp_path / "runs_suite",
+        seeds=[1],
+        device="cpu",
+        resume=False,
+        auto_async=False,
+    )
+
+    assert captured == [4]
