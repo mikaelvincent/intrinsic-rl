@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from irl.experiments import run_training_suite
+from irl.experiments.validation import _validate_plot_metrics
 from irl.plot import _aggregate_runs
 
 
@@ -115,3 +116,34 @@ def test_aggregate_runs_dedups_steps_and_falls_back(tmp_path: Path):
         agg_fb = _aggregate_runs([run_dir], metric="reward_mean", smooth=1)
     assert agg_fb.steps.tolist() == [0, 1000]
     assert agg_fb.mean.tolist() == [0.5, 1.5]
+
+
+def test_validate_plot_metrics_requires_common_cols(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    logs = run_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+
+    (logs / "scalars.csv").write_text(
+        "step,reward_total_mean\n0,0.0\n",
+        encoding="utf-8",
+    )
+
+    errors, _warnings = _validate_plot_metrics(runs_root)
+    assert any("Missing scalar columns" in e for e in errors)
+
+
+def test_validate_plot_metrics_requires_glpe_cols(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    run_dir = runs_root / "glpe__DummyEval-v0__seed1__cfgA"
+    logs = run_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+
+    (logs / "scalars.csv").write_text(
+        "step,reward_mean,reward_total_mean,episode_return_mean\n0,0.0,0.0,0.0\n",
+        encoding="utf-8",
+    )
+
+    errors, _warnings = _validate_plot_metrics(runs_root)
+    assert any("Missing GLPE gating metric" in e for e in errors)
+    assert any("Missing GLPE component metrics" in e for e in errors)
