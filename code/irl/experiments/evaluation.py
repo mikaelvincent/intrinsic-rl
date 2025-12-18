@@ -12,7 +12,7 @@ from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
 from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_checkpoints
-from irl.results.summary import RunResult, _aggregate, _write_raw_csv, _write_summary_csv
+from irl.results.summary import RunResult, aggregate_results, write_raw_csv, write_summary_csv
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.io import atomic_write_csv
 from irl.utils.runs import parse_run_name
@@ -303,9 +303,9 @@ def run_eval_suite(
     raw_path = results_root / "summary_raw.csv"
     summary_path = results_root / "summary.csv"
 
-    _write_raw_csv(results, raw_path)
-    agg_rows = _aggregate(results)
-    _write_summary_csv(agg_rows, summary_path)
+    write_raw_csv(results, raw_path)
+    agg_rows = aggregate_results(results)
+    write_summary_csv(agg_rows, summary_path)
 
     typer.echo(f"[suite] Wrote per-run results to {raw_path}")
     typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
