@@ -86,6 +86,14 @@ class RND(BaseIntrinsicModule, nn.Module):
             t = x if torch.is_tensor(x) else torch.as_tensor(x)
             if t.dim() >= 5:
                 t = t.reshape(-1, *t.shape[-3:])
+
+            if (
+                t.dim() == 3
+                and int(self.predictor.in_channels) == 1
+                and int(t.shape[-1]) not in (1, 3, 4)
+            ):
+                t = t.unsqueeze(0) if int(t.shape[0]) == 1 else t.unsqueeze(1)
+
             img = preprocess_image(t, cfg=self._img_pre_cfg, device=self.device)
             p = self.predictor(img)
             with torch.no_grad():
