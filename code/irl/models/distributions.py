@@ -107,4 +107,13 @@ class SquashedDiagGaussianDist:
         return logp_u - log_det - self._log_scale_sum
 
     def entropy(self) -> Tensor:
-        return self._normal().entropy().sum(dim=-1)
+        # Exact entropy has no closed form after tanh + affine squashing.
+        n = self._normal()
+        base = n.entropy().sum(dim=-1)
+
+        u = n.rsample()
+        y = torch.tanh(u)
+        one_minus = torch.clamp(1.0 - y.pow(2), min=float(self.eps))
+        log_det_j = torch.log(one_minus).sum(dim=-1) + self._log_scale_sum
+
+        return base + log_det_j
