@@ -204,6 +204,20 @@ def validate_config(cfg: Config) -> None:
         if method == "glpe_nogate":
             gate_enabled = False
 
+        if method == "glpe_cache":
+            if not gate_enabled:
+                raise ConfigError("intrinsic.gate.enabled must be True for method 'glpe_cache'")
+            if cfg.intrinsic.gate.median_cache_interval <= 1:
+                raise ConfigError(
+                    "intrinsic.gate.median_cache_interval must be > 1 for method 'glpe_cache'"
+                )
+        elif method.startswith("glpe"):
+            if int(cfg.intrinsic.gate.median_cache_interval) != 1:
+                raise ConfigError(
+                    f"intrinsic.gate.median_cache_interval must be 1 for method '{method}'. "
+                    "Use method 'glpe_cache' to enable median caching."
+                )
+
         if gate_enabled:
             if cfg.intrinsic.gate.min_consec_to_gate <= 0:
                 raise ConfigError("intrinsic.gate.min_consec_to_gate must be > 0 for method 'glpe'")
