@@ -104,6 +104,7 @@ def cli_plots(
     metric: Optional[str] = typer.Option(None, "--metric", "-m"),
     smooth: int = typer.Option(5, "--smooth", "-w"),
     shade: bool = typer.Option(True, "--shade/--no-shade"),
+    paper: bool = typer.Option(False, "--paper/--no-paper"),
 ) -> None:
     run_plots_suite(
         runs_root=runs_root,
@@ -111,6 +112,7 @@ def cli_plots(
         metric=metric,
         smooth=smooth,
         shade=shade,
+        paper_mode=bool(paper),
     )
 
 
@@ -198,6 +200,7 @@ def cli_full(
     quick: bool = typer.Option(False, "--quick/--no-quick"),
     strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
     strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
+    paper: bool = typer.Option(False, "--paper/--no-paper"),
 ) -> None:
     run_training_suite(
         configs_dir=configs_dir,
@@ -233,6 +236,7 @@ def cli_full(
         metric=metric,
         smooth=smooth,
         shade=shade,
+        paper_mode=bool(paper),
     )
 
     run_video_suite(
