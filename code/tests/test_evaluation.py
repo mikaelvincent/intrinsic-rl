@@ -190,6 +190,18 @@ def _write_latest_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, st
     torch.save(payload, ckpt_dir / "ckpt_latest.pt")
 
 
+def _write_step_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> Path:
+    ckpt_dir = run_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "step": int(step),
+        "cfg": {"env": {"id": str(env_id)}, "method": str(method), "seed": int(seed)},
+    }
+    ckpt_path = ckpt_dir / f"ckpt_step_{int(step)}.pt"
+    torch.save(payload, ckpt_path)
+    return ckpt_path
+
+
 def _fake_evaluate(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs) -> dict:
     _ = ckpt, device, kwargs
     return {
@@ -271,3 +283,42 @@ def test_eval_suite_step_parity_report(tmp_path: Path, monkeypatch: pytest.Monke
             device="cpu",
             policy_mode="mode",
         )
+
+
+def test_eval_suite_fixed_step_selects_expected_ckpt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs_root = tmp_path / "runs_suite"
+    results_dir = tmp_path / "results_suite"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=10)
+    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=20)
+    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=30)
+
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
+    run_eval_suite(
+        runs_root=runs_root,
+        results_dir=results_dir,
+        episodes=1,
+        device="cpu",
+        policy_mode="mode",
+        strict_coverage=True,
+        strict_step_parity=True,
+        ckpt_policy="fixed_step",
+        target_step=25,
+    )
+
+    raw_path = results_dir / "summary_raw.csv"
+    assert raw_path.exists()
+
+    with raw_path.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    assert len(rows) == 1
+    assert int(rows[0]["ckpt_step"]) == 20
+    assert rows[0]["ckpt_path"].endswith("ckpt_step_20.pt")
