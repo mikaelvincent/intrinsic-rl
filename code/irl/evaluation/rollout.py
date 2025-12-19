@@ -92,7 +92,10 @@ def run_eval_episodes(
 
                 gate_val = 1
                 int_val = 0.0
-                gate_source = "recomputed" if is_glpe_family else "n/a"
+                if is_glpe_family:
+                    gate_source = "recomputed" if intrinsic_module is not None else "missing_intrinsic"
+                else:
+                    gate_source = "n/a"
 
                 if intrinsic_module is not None:
                     try:
