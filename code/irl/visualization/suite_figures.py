@@ -32,9 +32,11 @@ def _generate_comparison_plot(
     filename_suffix: str,
     plots_root: Path,
     *,
+    paper_mode: bool = False,
     align: str = "interpolate",
 ) -> None:
     align_mode, meta_title, meta_file = _meta_tags(smooth=int(smooth), align=str(align))
+    neutral = bool(paper_mode)
 
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: kv[0]):
         relevant_methods = [m for m in methods_to_plot if m in by_method]
@@ -54,11 +56,17 @@ def _generate_comparison_plot(
             if agg.n_runs == 0 or agg.steps.size == 0:
                 continue
 
-            is_main_glpe = method.lower() == "glpe"
+            is_main_glpe = (method.lower() == "glpe") and not neutral
             lw = 2.5 if is_main_glpe else 1.5
             alpha = 1.0 if is_main_glpe else 0.4
             zorder = 10 if is_main_glpe else 2
             color = "#d62728" if is_main_glpe else None
+
+            if neutral:
+                lw = 1.8
+                alpha = 0.9
+                zorder = 2
+                color = None
 
             label = f"{method} (n={agg.n_runs})"
             line = ax.plot(
@@ -73,11 +81,12 @@ def _generate_comparison_plot(
 
             if shade and agg.n_runs > 1:
                 ci = 1.96 * (agg.std / sqrt(float(agg.n_runs)))
+                shade_alpha = 0.12 if neutral else (0.18 if is_main_glpe else 0.12)
                 ax.fill_between(
                     agg.steps,
                     agg.mean - ci,
                     agg.mean + ci,
-                    alpha=0.18 if is_main_glpe else 0.12,
+                    alpha=shade_alpha,
                     color=line.get_color(),
                     linewidth=0.0,
                     zorder=max(0, zorder - 1),
