@@ -141,7 +141,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
             )
             payload["intrinsic"] = {"method": str(method), "state_dict": mod.state_dict()}
 
-        ckpt_path = tmp_path / f"ckpt_{method}.pt"
+        ckpt_path = tmp_path / f"ckpt_{method}{'_intr' if include_intrinsic else ''}.pt"
         torch.save(payload, ckpt_path)
         return ckpt_path
 
@@ -181,6 +181,24 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     d_g = np.load(traj_g, allow_pickle=False)
     assert str(d_g["method"].reshape(-1)[0]) == "glpe"
     assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
+
+    out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
+    ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
+    _ = evaluate(
+        env="DummyTraj-v0",
+        ckpt=ckpt_g_missing,
+        episodes=1,
+        device="cpu",
+        save_traj=True,
+        traj_out_dir=out_g_missing,
+        policy_mode="mode",
+    )
+    traj_g_missing = out_g_missing / "DummyTraj-v0_trajectory.npz"
+    assert traj_g_missing.exists()
+
+    d_g_missing = np.load(traj_g_missing, allow_pickle=False)
+    assert str(d_g_missing["method"].reshape(-1)[0]) == "glpe"
+    assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
 
 
 def _write_latest_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> None:
