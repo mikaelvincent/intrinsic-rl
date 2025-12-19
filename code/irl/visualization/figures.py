@@ -347,7 +347,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     gated = ~active
 
     gate_note = (gate_source or "recomputed").strip().lower()
-    if gate_note not in {"checkpoint", "recomputed", "mixed", "n/a"}:
+    if gate_note not in {"checkpoint", "recomputed", "mixed", "n/a", "missing_intrinsic"}:
         gate_note = "recomputed"
 
     title_bits: list[str] = [str(env_disp)]
