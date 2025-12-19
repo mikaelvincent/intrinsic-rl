@@ -53,22 +53,33 @@ def build_log_payload(
 
     with torch.no_grad():
         last_obs = rollout.obs_seq[-1]
-        if len(rollout.obs_shape) >= 2:
-            ent_last = float(policy.entropy(last_obs).mean().item())
-        else:
-            last_obs_t = torch.as_tensor(last_obs, device=device, dtype=torch.float32)
-            ent_last = float(policy.entropy(last_obs_t).mean().item())
+        ent_last = float("nan")
+        try:
+            if len(rollout.obs_shape) >= 2:
+                ent_last = float(policy.entropy(last_obs).mean().item())
+            else:
+                last_obs_t = torch.as_tensor(last_obs, device=device, dtype=torch.float32)
+                ent_last = float(policy.entropy(last_obs_t).mean().item())
+            if not np.isfinite(float(ent_last)):
+                ent_last = float("nan")
+        except Exception:
+            ent_last = float("nan")
 
         ENTROPY_MAX_SAMPLES = 1024
         total_samples = int(obs_flat_for_ppo.shape[0])
 
         ent_mean_update = float("nan")
         if total_samples <= ENTROPY_MAX_SAMPLES:
-            if len(rollout.obs_shape) >= 2:
-                ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
-            else:
-                obs_flat_t = torch.as_tensor(obs_flat_for_ppo, device=device, dtype=torch.float32)
-                ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
+            try:
+                if len(rollout.obs_shape) >= 2:
+                    ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
+                else:
+                    obs_flat_t = torch.as_tensor(obs_flat_for_ppo, device=device, dtype=torch.float32)
+                    ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
+                if not np.isfinite(float(ent_mean_update)):
+                    ent_mean_update = float("nan")
+            except Exception:
+                ent_mean_update = float("nan")
 
     log_payload: dict[str, object] = {
         "entropy_last": float(ent_last),
