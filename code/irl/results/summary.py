@@ -234,3 +234,93 @@ def write_summary_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
         "step_mean",
     ]
     atomic_write_csv(path, cols, agg_rows)
+
+
+def aggregate_results_by_step(
+    rows: List[RunResult],
+    *,
+    per_seed_policy: Literal["latest_ckpt"] = "latest_ckpt",
+    ci: float = 0.95,
+    n_boot: int = 2000,
+) -> List[Dict[str, object]]:
+    groups: dict[tuple[str, str, int], list[RunResult]] = {}
+    for r in rows:
+        key = (str(r.method), str(r.env_id), int(r.ckpt_step))
+        groups.setdefault(key, []).append(r)
+
+    out: list[dict[str, object]] = []
+    for (method, env_id, ckpt_step), rs in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
+        n_runs_total = int(len(rs))
+
+        rs_per_seed = _reduce_to_one_per_seed(rs, policy=per_seed_policy)
+        seeds = sorted({int(r.seed) for r in rs_per_seed})
+        n_seeds = int(len(seeds))
+
+        ret_vals = [float(r.mean_return) for r in rs_per_seed]
+        len_vals = [float(r.mean_length) for r in rs_per_seed]
+
+        mean_return_mean = float(mean(ret_vals)) if n_seeds > 0 else 0.0
+        mean_return_std = float(pstdev(ret_vals)) if n_seeds > 1 else 0.0
+        mean_return_se = float(mean_return_std / sqrt(n_seeds)) if n_seeds > 1 else 0.0
+
+        mean_length_mean = float(mean(len_vals)) if n_seeds > 0 else 0.0
+        mean_length_std = float(pstdev(len_vals)) if n_seeds > 1 else 0.0
+        mean_length_se = float(mean_length_std / sqrt(n_seeds)) if n_seeds > 1 else 0.0
+
+        rng_ret = np.random.default_rng(_stable_u32_seed("ret_step", method, env_id, str(int(ckpt_step))))
+        rng_len = np.random.default_rng(_stable_u32_seed("len_step", method, env_id, str(int(ckpt_step))))
+        mean_return_ci95_lo, mean_return_ci95_hi = _bootstrap_mean_ci(
+            ret_vals, n_boot=int(n_boot), ci=float(ci), rng=rng_ret
+        )
+        mean_length_ci95_lo, mean_length_ci95_hi = _bootstrap_mean_ci(
+            len_vals, n_boot=int(n_boot), ci=float(ci), rng=rng_len
+        )
+
+        out.append(
+            {
+                "method": method,
+                "env_id": env_id,
+                "ckpt_step": int(ckpt_step),
+                "per_seed_ckpt_policy": str(per_seed_policy),
+                "episodes_per_seed": int(rs_per_seed[0].episodes) if rs_per_seed else 0,
+                "n_runs": n_runs_total,
+                "n_seeds": n_seeds,
+                "seeds": ",".join(str(s) for s in seeds),
+                "mean_return_mean": mean_return_mean,
+                "mean_return_std": mean_return_std,
+                "mean_return_se": mean_return_se,
+                "mean_return_ci95_lo": float(mean_return_ci95_lo),
+                "mean_return_ci95_hi": float(mean_return_ci95_hi),
+                "mean_length_mean": mean_length_mean,
+                "mean_length_std": mean_length_std,
+                "mean_length_se": mean_length_se,
+                "mean_length_ci95_lo": float(mean_length_ci95_lo),
+                "mean_length_ci95_hi": float(mean_length_ci95_hi),
+            }
+        )
+
+    return out
+
+
+def write_summary_by_step_csv(agg_rows: List[Dict[str, object]], path: Path) -> None:
+    cols = [
+        "method",
+        "env_id",
+        "ckpt_step",
+        "per_seed_ckpt_policy",
+        "episodes_per_seed",
+        "n_runs",
+        "n_seeds",
+        "seeds",
+        "mean_return_mean",
+        "mean_return_std",
+        "mean_return_se",
+        "mean_return_ci95_lo",
+        "mean_return_ci95_hi",
+        "mean_length_mean",
+        "mean_length_std",
+        "mean_length_se",
+        "mean_length_ci95_lo",
+        "mean_length_ci95_hi",
+    ]
+    atomic_write_csv(path, cols, agg_rows)
