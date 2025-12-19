@@ -48,6 +48,9 @@ def _prep_images_to_nchw(x: Tensor | object, expected_c: int, device: torch.devi
     if xt.dim() >= 5:
         xt = xt.reshape(-1, *xt.shape[-3:])
 
+    if xt.dim() == 3 and int(expected_c) == 1 and int(xt.shape[-1]) not in (1, 3, 4):
+        xt = xt.unsqueeze(0) if int(xt.shape[0]) == 1 else xt.unsqueeze(1)
+
     cfg = ImagePreprocessConfig(
         grayscale=False,
         scale_uint8=True,
