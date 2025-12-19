@@ -76,6 +76,8 @@ def run_plots_suite(
     metric: Optional[str],
     smooth: int,
     shade: bool,
+    *,
+    paper_mode: bool = False,
 ) -> None:
     root = runs_root.resolve()
     results_root = results_dir.resolve()
@@ -147,6 +149,7 @@ def run_plots_suite(
             title=f"All Methods ({metric})",
             filename_suffix=f"overlay_{metric}",
             plots_root=plots_root,
+            paper_mode=bool(paper_mode),
         )
     else:
         baselines, ablations = _suite_method_groups(all_methods)
@@ -160,6 +163,7 @@ def run_plots_suite(
             title="Task Performance (Episode Return)",
             filename_suffix="perf_extrinsic",
             plots_root=plots_root,
+            paper_mode=bool(paper_mode),
         )
 
         _generate_comparison_plot(
@@ -171,6 +175,7 @@ def run_plots_suite(
             title="Total Reward Objective (Smoothed)",
             filename_suffix="perf_total",
             plots_root=plots_root,
+            paper_mode=bool(paper_mode),
         )
 
         _generate_comparison_plot(
@@ -182,6 +187,7 @@ def run_plots_suite(
             title="Ablation Study (Episode Return)",
             filename_suffix="ablations",
             plots_root=plots_root,
+            paper_mode=bool(paper_mode),
         )
 
         _generate_comparison_plot(
@@ -193,6 +199,7 @@ def run_plots_suite(
             title="Ablation Study (Total Reward Objective)",
             filename_suffix="ablations_total",
             plots_root=plots_root,
+            paper_mode=bool(paper_mode),
         )
 
         _generate_gating_plot(groups, plots_root=plots_root, smooth=25)
@@ -208,8 +215,17 @@ def run_plots_suite(
         summary_csv = results_root / "summary.csv"
         if summary_csv.exists():
             bar_plot_path = plots_root / "summary_normalized_bars.png"
-            plot_normalized_summary(summary_csv, bar_plot_path, highlight_method="glpe")
-            typer.echo(f"[suite] Saved normalized summary bars: {bar_plot_path}")
+            plot_normalized_summary(
+                summary_csv,
+                bar_plot_path,
+                highlight_method=None if bool(paper_mode) else "glpe",
+                baseline_method="vanilla",
+                baseline_required=bool(paper_mode),
+            )
+            if bar_plot_path.exists():
+                typer.echo(f"[suite] Saved normalized summary bars: {bar_plot_path}")
+            else:
+                typer.echo("[suite] Skipping bar chart (baseline method missing).")
         else:
             typer.echo("[suite] Skipping bar chart (summary.csv not found; run 'eval' stage first).")
 
