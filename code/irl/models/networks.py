@@ -140,7 +140,7 @@ class PolicyNetwork(nn.Module):
             return CategoricalDist(logits=logits)
 
         mu = self.mu_head(feats)
-        log_std = self.log_std.expand_as(mu)
+        log_std = self.log_std.expand_as(mu).clamp(-20.0, 2.0)
 
         if bool(getattr(self, "_squash_actions", False)) and hasattr(self, "_action_low") and hasattr(
             self, "_action_high"
