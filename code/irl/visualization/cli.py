@@ -21,7 +21,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="
 @app.command("curves")
 def cli_curves(
     runs: List[str] = typer.Option(..., "--runs", "-r"),
-    metric: str = typer.Option("reward_total_mean", "--metric", "-m"),
+    metric: str = typer.Option("episode_return_mean", "--metric", "-m"),
     smooth: int = typer.Option(1, "--smooth", "-s"),
     shade: bool = typer.Option(False, "--shade/--no-shade"),
     label: Optional[str] = typer.Option(None, "--label", "-l"),
@@ -81,7 +81,7 @@ def cli_curves(
 def cli_overlay(
     group: List[str] = typer.Option(..., "--group", "-g"),
     labels: Optional[List[str]] = typer.Option(None, "--labels", "-l"),
-    metric: str = typer.Option("reward_total_mean", "--metric", "-m"),
+    metric: str = typer.Option("episode_return_mean", "--metric", "-m"),
     smooth: int = typer.Option(1, "--smooth", "-s"),
     shade: bool = typer.Option(False, "--shade/--no-shade"),
     out: Path = typer.Option(Path("results/overlay.png"), "--out", "-o", dir_okay=False),
