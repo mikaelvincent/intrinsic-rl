@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from pathlib import Path
 from statistics import mean, median, pstdev
 from typing import Any, Mapping
@@ -9,11 +10,18 @@ import typer
 
 from irl.cli.common import validate_policy_mode
 from irl.evaluator import evaluate
-from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt
+from irl.pipelines.discovery import discover_run_dirs_with_selected_ckpts
 from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_checkpoints
-from irl.results.summary import RunResult, aggregate_results, write_raw_csv, write_summary_csv
-from irl.utils.checkpoint import load_checkpoint
+from irl.results.summary import (
+    RunResult,
+    aggregate_results,
+    aggregate_results_by_step,
+    write_raw_csv,
+    write_summary_by_step_csv,
+    write_summary_csv,
+)
+from irl.utils.checkpoint import atomic_write_text, load_checkpoint
 from irl.utils.io import atomic_write_csv
 from irl.utils.runs import parse_run_name
 
@@ -173,8 +181,53 @@ def _enforce_coverage_and_step_parity(
             typer.echo(msg)
 
 
-def _discover_run_dirs_with_ckpt(runs_root: Path) -> list[tuple[Path, Path]]:
-    return discover_run_dirs_with_latest_ckpt(runs_root)
+def _discover_run_dirs_with_ckpt(
+    runs_root: Path,
+    *,
+    ckpt_policy: str,
+    target_step: int | None,
+    every_k: int | None,
+    max_ckpts_per_run: int | None,
+) -> list[tuple[Path, Path]]:
+    return discover_run_dirs_with_selected_ckpts(
+        runs_root,
+        policy=str(ckpt_policy),
+        target_step=target_step,
+        every_k=every_k,
+        max_ckpts_per_run=max_ckpts_per_run,
+    )
+
+
+def _write_eval_meta(
+    *,
+    results_root: Path,
+    runs_root: Path,
+    ckpt_policy: str,
+    target_step: int | None,
+    every_k: int | None,
+    max_ckpts_per_run: int | None,
+    episodes: int,
+    device: str,
+    policy_mode: str,
+    strict_coverage: bool,
+    strict_step_parity: bool,
+) -> Path:
+    meta = {
+        "ckpt_policy": str(ckpt_policy).strip().lower(),
+        "target_step": None if target_step is None else int(target_step),
+        "every_k": None if every_k is None else int(every_k),
+        "max_ckpts_per_run": None if max_ckpts_per_run is None else int(max_ckpts_per_run),
+        "episodes": int(episodes),
+        "device": str(device),
+        "policy_mode": str(policy_mode),
+        "strict_coverage": bool(strict_coverage),
+        "strict_step_parity": bool(strict_step_parity),
+        "runs_root": str(Path(runs_root).resolve()),
+        "results_dir": str(Path(results_root).resolve()),
+    }
+    out_path = Path(results_root) / "eval_meta.json"
+    atomic_write_text(out_path, json.dumps(meta, indent=2, sort_keys=True) + "\n")
+    return out_path
 
 
 def run_eval_suite(
@@ -186,20 +239,44 @@ def run_eval_suite(
     *,
     strict_coverage: bool = True,
     strict_step_parity: bool = True,
+    ckpt_policy: str = "latest",
+    target_step: int | None = None,
+    every_k: int | None = None,
+    max_ckpts_per_run: int | None = None,
 ) -> None:
     pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
+
+    policy = str(ckpt_policy).strip().lower()
+    if policy not in {"latest", "fixed_step", "all_steps", "every_k"}:
+        raise typer.BadParameter(
+            f"--ckpt-policy must be one of: latest, fixed_step, all_steps, every_k (got {ckpt_policy!r})"
+        )
+    if policy == "fixed_step" and target_step is None:
+        raise typer.BadParameter("--target-step is required when --ckpt-policy=fixed_step")
+    if policy == "every_k" and every_k is None:
+        raise typer.BadParameter("--every-k is required when --ckpt-policy=every_k")
 
     root = runs_root.resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    runs = _discover_run_dirs_with_ckpt(root)
+    runs = _discover_run_dirs_with_ckpt(
+        root,
+        ckpt_policy=str(policy),
+        target_step=None if target_step is None else int(target_step),
+        every_k=None if every_k is None else int(every_k),
+        max_ckpts_per_run=None if max_ckpts_per_run is None else int(max_ckpts_per_run),
+    )
     if not runs:
-        typer.echo(f"[suite] No run directories with checkpoints under {root}")
+        typer.echo(f"[suite] No checkpoints found under {root} (ckpt_policy={policy}).")
         return
 
-    typer.echo(f"[suite] Evaluating {len(runs)} run(s) from {root}")
+    n_runs = len({rd.resolve() for rd, _ in runs})
+    typer.echo(
+        f"[suite] Evaluating {len(runs)} checkpoint(s) from {n_runs} run(s) under {root} "
+        f"(ckpt_policy={policy})"
+    )
 
     traj_root = results_dir / "plots" / "trajectories"
     traj_root.mkdir(parents=True, exist_ok=True)
@@ -252,7 +329,7 @@ def run_eval_suite(
                     f"!= cfg.seed {cfg_seed}; using cfg.seed."
                 )
 
-            traj_out_dir = traj_root / rd.name
+            traj_out_dir = traj_root / rd.name / ckpt.stem
             traj_out_dir.mkdir(parents=True, exist_ok=True)
 
             specs.append(
@@ -265,7 +342,7 @@ def run_eval_suite(
                     traj_out_dir=traj_out_dir,
                     payload=payload,
                     notes=tuple(notes),
-                    label=str(rd.name),
+                    label=f"{rd.name}/{ckpt.stem}",
                 )
             )
         except Exception as exc:
@@ -307,13 +384,35 @@ def run_eval_suite(
     agg_rows = aggregate_results(results)
     write_summary_csv(agg_rows, summary_path)
 
-    typer.echo(f"[suite] Wrote per-run results to {raw_path}")
+    typer.echo(f"[suite] Wrote per-checkpoint results to {raw_path}")
     typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
+
+    unique_steps = sorted({int(r.ckpt_step) for r in results if int(r.ckpt_step) >= 0})
+    if len(unique_steps) > 1:
+        by_step_path = results_root / "summary_by_step.csv"
+        by_step_rows = aggregate_results_by_step(results)
+        write_summary_by_step_csv(by_step_rows, by_step_path)
+        typer.echo(f"[suite] Wrote step-grouped summary to {by_step_path}")
 
     coverage_rows, seeds_by_env, steps_by_env = _coverage_from_results(results)
     coverage_path = results_root / "coverage.csv"
     _write_coverage_csv(coverage_rows, coverage_path)
     typer.echo(f"[suite] Wrote coverage report to {coverage_path}")
+
+    meta_path = _write_eval_meta(
+        results_root=results_root,
+        runs_root=root,
+        ckpt_policy=str(policy),
+        target_step=None if target_step is None else int(target_step),
+        every_k=None if every_k is None else int(every_k),
+        max_ckpts_per_run=None if max_ckpts_per_run is None else int(max_ckpts_per_run),
+        episodes=int(episodes),
+        device=str(device),
+        policy_mode=str(pm),
+        strict_coverage=bool(strict_coverage),
+        strict_step_parity=bool(strict_step_parity),
+    )
+    typer.echo(f"[suite] Wrote eval metadata to {meta_path}")
 
     _enforce_coverage_and_step_parity(
         seeds_by_env,
