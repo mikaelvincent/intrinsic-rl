@@ -67,6 +67,14 @@ def build_intrinsic_kwargs(cfg_like: Any) -> dict[str, Any]:
     if method == "glpe_nogate":
         gating_enabled = False
 
+    cache_interval = _as_int(
+        _get(gate, "median_cache_interval", gate_defaults.median_cache_interval),
+        gate_defaults.median_cache_interval,
+    )
+    if method.startswith("glpe") and method != "glpe_cache":
+        # Median caching is reserved for the caching ablation.
+        cache_interval = 1
+
     return {
         "bin_size": _as_float(
             _get(intrinsic, "bin_size", intrinsic_defaults.bin_size),
@@ -116,10 +124,7 @@ def build_intrinsic_kwargs(cfg_like: Any) -> dict[str, Any]:
             _get(gate, "min_regions_for_gating", gate_defaults.min_regions_for_gating),
             gate_defaults.min_regions_for_gating,
         ),
-        "gate_median_cache_interval": _as_int(
-            _get(gate, "median_cache_interval", gate_defaults.median_cache_interval),
-            gate_defaults.median_cache_interval,
-        ),
+        "gate_median_cache_interval": int(cache_interval),
         "normalize_inside": _as_bool(
             _get(intrinsic, "normalize_inside", intrinsic_defaults.normalize_inside),
             intrinsic_defaults.normalize_inside,
