@@ -17,8 +17,10 @@ from .data import ensure_parent
 def plot_normalized_summary(
     summary_path: Path,
     out_path: Path,
-    highlight_method: str = "glpe",
+    highlight_method: str | None = "glpe",
     baseline_method: str = "vanilla",
+    *,
+    baseline_required: bool = False,
 ) -> None:
     if not summary_path.exists():
         return
@@ -33,11 +35,20 @@ def plot_normalized_summary(
     df["method"] = df["method"].astype(str).str.strip()
     df["method_key"] = df["method"].str.lower()
 
-    highlight_key = str(highlight_method).strip().lower()
+    hk = "" if highlight_method is None else str(highlight_method).strip().lower()
+    highlight_key: str | None = hk or None
+
     baseline_req = str(baseline_method).strip().lower()
 
     methods_present = set(df["method_key"].unique().tolist())
     if baseline_req not in methods_present:
+        if baseline_required:
+            warnings.warn(
+                f"Baseline method {baseline_method!r} not found; skipping normalized summary.",
+                UserWarning,
+            )
+            return
+
         counts = df.groupby("method_key")["env_id"].nunique().sort_values(ascending=False)
         if counts.empty:
             return
@@ -117,10 +128,12 @@ def plot_normalized_summary(
     if baseline_key in methods_all:
         ordered.append(baseline_key)
     for m in methods_all:
-        if m == baseline_key or m == highlight_key:
+        if m == baseline_key:
+            continue
+        if highlight_key is not None and m == highlight_key:
             continue
         ordered.append(m)
-    if highlight_key in methods_all and highlight_key not in ordered:
+    if highlight_key is not None and highlight_key in methods_all and highlight_key not in ordered:
         ordered.append(highlight_key)
 
     score = score[ordered]
@@ -143,7 +156,7 @@ def plot_normalized_summary(
     colors: dict[str, str] = {}
     other_idx = 0
     for m in ordered:
-        if m == highlight_key:
+        if highlight_key is not None and m == highlight_key:
             colors[m] = "#d62728"
         elif m == baseline_key:
             colors[m] = "#7f7f7f"
@@ -187,6 +200,8 @@ def plot_normalized_summary(
                 upper = np.maximum(0.0, hi - y)
                 yerr = np.vstack([lower, upper])
 
+            highlight_alpha = 0.9 if (highlight_key is not None and method_key == highlight_key) else 0.75
+
             ax.bar(
                 x_ok,
                 y,
@@ -195,7 +210,7 @@ def plot_normalized_summary(
                 color=colors[method_key],
                 edgecolor="white",
                 linewidth=0.5,
-                alpha=0.9 if method_key == highlight_key else 0.75,
+                alpha=highlight_alpha,
                 yerr=yerr,
                 capsize=2 if yerr is not None else 0,
             )
