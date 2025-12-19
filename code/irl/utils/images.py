@@ -2,6 +2,9 @@ from __future__ import annotations
 
 
 def infer_channels_hw(shape: tuple[int, ...]) -> tuple[int, tuple[int, int]]:
+    if len(shape) == 2:
+        return 1, (int(shape[0]), int(shape[1]))
+
     if len(shape) != 3:
         if len(shape) >= 2:
             return int(shape[-1]), (int(shape[0]), int(shape[1]))
