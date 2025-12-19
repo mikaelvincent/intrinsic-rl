@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from irl.visualization.figures import plot_normalized_summary
 
 
@@ -22,11 +24,14 @@ def test_plot_normalized_summary_requires_baseline(tmp_path: Path) -> None:
     )
 
     out = tmp_path / "bars.png"
-    plot_normalized_summary(
-        summary,
-        out,
-        highlight_method=None,
-        baseline_method="vanilla",
-        baseline_required=True,
-    )
+    with pytest.warns(
+        UserWarning, match=r"Baseline method 'vanilla' not found; skipping normalized summary\."
+    ):
+        plot_normalized_summary(
+            summary,
+            out,
+            highlight_method=None,
+            baseline_method="vanilla",
+            baseline_required=True,
+        )
     assert not out.exists()
