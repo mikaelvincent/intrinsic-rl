@@ -66,6 +66,10 @@ def cli_eval(
     quick: bool = typer.Option(False, "--quick/--no-quick"),
     strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
     strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
+    ckpt_policy: str = typer.Option("latest", "--ckpt-policy"),
+    target_step: int | None = typer.Option(None, "--target-step"),
+    every_k: int | None = typer.Option(None, "--every-k"),
+    max_ckpts_per_run: int | None = typer.Option(None, "--max-ckpts-per-run"),
 ) -> None:
     n_eps = int(episodes)
     if quick:
@@ -79,6 +83,10 @@ def cli_eval(
         policy_mode=str(policy),
         strict_coverage=bool(strict_coverage),
         strict_step_parity=bool(strict_step_parity),
+        ckpt_policy=str(ckpt_policy),
+        target_step=target_step,
+        every_k=every_k,
+        max_ckpts_per_run=max_ckpts_per_run,
     )
 
 
