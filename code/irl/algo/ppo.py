@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import torch
 from torch import Tensor, nn
@@ -8,6 +8,27 @@ from torch.optim import Adam
 
 from irl.utils.collections import pick as _pick
 from irl.utils.tensors import to_tensor as _to_tensor
+
+
+def _all_finite(x: Tensor) -> bool:
+    return bool(torch.isfinite(x).all())
+
+
+def _grads_all_finite(params: Iterable[torch.nn.Parameter]) -> bool:
+    for p in params:
+        g = p.grad
+        if g is None:
+            continue
+        if not torch.isfinite(g).all():
+            return False
+    return True
+
+
+def _params_all_finite(params: Iterable[torch.nn.Parameter]) -> bool:
+    for p in params:
+        if not torch.isfinite(p).all():
+            return False
+    return True
 
 
 def ppo_update(
@@ -39,6 +60,11 @@ def ppo_update(
     N = obs_t.shape[0]
     assert adv_t.shape[0] == N and vtarg_t.shape[0] == N, "adv/targets must match obs count"
 
+    if not _all_finite(obs_t):
+        raise ValueError("ppo_update: observations contain non-finite values.")
+    if not _all_finite(adv_t) or not _all_finite(vtarg_t):
+        raise ValueError("ppo_update: advantages/value_targets contain non-finite values.")
+
     adv_t = (adv_t - adv_t.mean()) / (adv_t.std(unbiased=False) + 1e-8)
 
     old_logp = _pick(batch, "old_log_probs")
@@ -47,6 +73,9 @@ def ppo_update(
             dist0 = policy.distribution(obs_t)
             old_logp = dist0.log_prob(act_t)
     old_logp_t = _to_tensor(old_logp, device, dtype=torch.float32).reshape(-1)
+
+    if not _all_finite(old_logp_t):
+        raise ValueError("ppo_update: old_log_probs contain non-finite values.")
 
     vf_clip = float(getattr(cfg, "value_clip_range", 0.0) or 0.0)
     if vf_clip > 0.0:
@@ -60,6 +89,9 @@ def ppo_update(
         val_opt = Adam(value.parameters(), lr=float(cfg.learning_rate))
     else:
         pol_opt, val_opt = optimizers
+
+    pol_params = tuple(policy.parameters())
+    val_params = tuple(value.parameters())
 
     mbs = int(max(1, N // int(max(1, int(cfg.minibatches)))))
     clip_eps = float(cfg.clip_range)
@@ -92,8 +124,19 @@ def ppo_update(
 
             dist = policy.distribution(o)
             logp = dist.log_prob(a)
+            if not _all_finite(logp):
+                early_stop_triggered = True
+                break
+
             logratio = logp - logp_old
+            if not _all_finite(logratio):
+                early_stop_triggered = True
+                break
+
             ratio = logratio.exp()
+            if not _all_finite(ratio):
+                early_stop_triggered = True
+                break
 
             surr1 = ratio * adv
             surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
@@ -101,18 +144,43 @@ def ppo_update(
             entropy = dist.entropy().mean()
 
             approx_kl_for_loss = ((ratio - 1.0) - logratio).mean()
+
+            if not _all_finite(policy_loss) or not _all_finite(entropy) or not _all_finite(approx_kl_for_loss):
+                early_stop_triggered = True
+                break
+
             approx_kl = approx_kl_for_loss.detach()
+            if kl_stop > 0.0 and float(approx_kl.item()) > kl_stop:
+                early_stop_triggered = True
+                break
 
             pol_total = policy_loss - ent_coef * entropy
             if kl_penalty_coef > 0.0:
                 pol_total = pol_total + float(kl_penalty_coef) * approx_kl_for_loss
 
+            if not _all_finite(pol_total):
+                early_stop_triggered = True
+                break
+
             pol_opt.zero_grad(set_to_none=True)
             pol_total.backward()
-            nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
+
+            if not _grads_all_finite(pol_params):
+                pol_opt.zero_grad(set_to_none=True)
+                early_stop_triggered = True
+                break
+
+            nn.utils.clip_grad_norm_(pol_params, max_norm=1.0)
             pol_opt.step()
 
+            if not _params_all_finite(pol_params):
+                raise RuntimeError("ppo_update: policy parameters became non-finite.")
+
             v_pred = value(o)
+            if not _all_finite(v_pred):
+                early_stop_triggered = True
+                break
+
             if vf_clip > 0.0 and v_old_all is not None:
                 v_old = v_old_all[idx]
                 v_pred_clipped = v_old + torch.clamp(v_pred - v_old, -vf_clip, vf_clip)
@@ -123,10 +191,23 @@ def ppo_update(
                 v_loss_elem = (vt - v_pred).pow(2)
             v_loss = 0.5 * v_loss_elem.mean() * val_coef
 
+            if not _all_finite(v_loss):
+                early_stop_triggered = True
+                break
+
             val_opt.zero_grad(set_to_none=True)
             v_loss.backward()
-            nn.utils.clip_grad_norm_(value.parameters(), max_norm=1.0)
+
+            if not _grads_all_finite(val_params):
+                val_opt.zero_grad(set_to_none=True)
+                early_stop_triggered = True
+                break
+
+            nn.utils.clip_grad_norm_(val_params, max_norm=1.0)
             val_opt.step()
+
+            if not _params_all_finite(val_params):
+                raise RuntimeError("ppo_update: value parameters became non-finite.")
 
             bsz = int(o.shape[0])
             tot_samples += bsz
@@ -139,10 +220,6 @@ def ppo_update(
             last_val_loss = float(v_loss.detach().item())
             sum_pol_loss += last_pol_loss * bsz
             sum_val_loss += last_val_loss * bsz
-
-            if kl_stop > 0.0 and float(approx_kl.item()) > kl_stop:
-                early_stop_triggered = True
-                break
 
         if early_stop_triggered:
             break
