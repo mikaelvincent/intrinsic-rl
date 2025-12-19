@@ -99,6 +99,14 @@ class ICM(BaseIntrinsicModule, nn.Module):
             t = obs if torch.is_tensor(obs) else torch.as_tensor(obs)
             if t.dim() >= 5:
                 t = t.reshape(-1, *t.shape[-3:])
+
+            if (
+                t.dim() == 3
+                and int(self.encoder.in_channels) == 1
+                and int(t.shape[-1]) not in (1, 3, 4)
+            ):
+                t = t.unsqueeze(0) if int(t.shape[0]) == 1 else t.unsqueeze(1)
+
             x = preprocess_image(t, cfg=self._img_pre_cfg, device=self.device)
             return self.encoder(x)
         x = as_tensor(obs, self.device)
