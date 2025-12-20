@@ -28,6 +28,7 @@ OBS_NORM_VAR = "var"
 INTRINSIC_METHOD = "method"
 INTRINSIC_STATE_DICT = "state_dict"
 INTRINSIC_EXTRA_STATE = "extra_state"
+INTRINSIC_OPTIMIZERS = "optimizers"
 
 KEY_INTRINSIC_EXTRA_STATE_COMPAT = "intrinsic_extra_state"
 KEY_INTRINSIC_STATE_COMPAT = "intrinsic_state"
@@ -41,6 +42,30 @@ def _obs_norm_state(obs_norm: Any) -> dict[str, Any] | None:
         OBS_NORM_MEAN: getattr(obs_norm, "mean"),
         OBS_NORM_VAR: getattr(obs_norm, "var"),
     }
+
+
+def _intrinsic_optim_state(intrinsic_module: Any) -> dict[str, Any] | None:
+    if intrinsic_module is None:
+        return None
+
+    out: dict[str, Any] = {}
+
+    opt_main = getattr(intrinsic_module, "_opt", None)
+    if opt_main is not None and hasattr(opt_main, "state_dict"):
+        try:
+            out["main"] = opt_main.state_dict()
+        except Exception:
+            pass
+
+    icm = getattr(intrinsic_module, "icm", None)
+    opt_icm = getattr(icm, "_opt", None) if icm is not None else None
+    if opt_icm is not None and opt_icm is not opt_main and hasattr(opt_icm, "state_dict"):
+        try:
+            out["icm"] = opt_icm.state_dict()
+        except Exception:
+            pass
+
+    return out or None
 
 
 def build_checkpoint_payload(
@@ -76,10 +101,14 @@ def build_checkpoint_payload(
 
     if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
         try:
-            payload[KEY_INTRINSIC] = {
+            intr: dict[str, Any] = {
                 INTRINSIC_METHOD: str(method_l),
                 INTRINSIC_STATE_DICT: intrinsic_module.state_dict(),
             }
+            opt_state = _intrinsic_optim_state(intrinsic_module)
+            if opt_state is not None:
+                intr[INTRINSIC_OPTIMIZERS] = opt_state
+            payload[KEY_INTRINSIC] = intr
         except Exception:
             pass
 
