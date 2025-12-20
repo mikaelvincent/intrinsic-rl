@@ -5,11 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 import typer
 
-from irl.visualization import plot_normalized_summary
-from irl.utils.checkpoint import load_checkpoint
-from irl.utils.runs import parse_run_name
-from irl.utils.runs import discover_runs_by_logs, find_latest_ckpt
-from irl.visualization.data import read_scalars
+from irl.utils.runs import discover_runs_by_logs, parse_run_name
 from .plot_helpers import (
     _generate_comparison_plot,
     _generate_component_plot,
@@ -40,6 +36,9 @@ def _list_dirs(label: str, root: Path) -> List[Path]:
 def _infer_method_env_from_checkpoint(
     run_dir: Path,
 ) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    from irl.utils.checkpoint import load_checkpoint
+    from irl.utils.runs import find_latest_ckpt
+
     ckpt = find_latest_ckpt(run_dir)
     if ckpt is None:
         return None, None, None
@@ -70,6 +69,17 @@ def _infer_method_env_from_checkpoint(
     )
 
 
+def _groups_for_timing(root: Path) -> Dict[str, Dict[str, List[Path]]]:
+    groups: Dict[str, Dict[str, List[Path]]] = {}
+    for rd in discover_runs_by_logs(root):
+        info = parse_run_name(rd)
+        method = (str(info.get("method") or "")).strip().lower() or "unknown"
+        env = (str(info.get("env") or "")).strip() or "unknown_env"
+        env = env.replace("/", "-")
+        groups.setdefault(env, {}).setdefault(method, []).append(rd)
+    return groups
+
+
 def run_plots_suite(
     runs_root: Path,
     results_dir: Path,
@@ -88,6 +98,90 @@ def run_plots_suite(
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
+
+    plots_root = (results_root / "plots").resolve()
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    if paper_mode:
+        summary_csv = results_root / "summary.csv"
+        if not summary_csv.exists():
+            typer.echo("[suite] Skipping paper plots (summary.csv not found; run 'eval' stage first).")
+            return
+
+        try:
+            from irl.visualization.paper_figures import (
+                load_eval_by_step_table,
+                load_eval_summary_table,
+                paper_method_groups,
+                plot_eval_bars_by_env,
+                plot_eval_curves_by_env,
+                plot_glpe_extrinsic_vs_intrinsic,
+                plot_glpe_state_gate_map,
+            )
+
+            df_summary = load_eval_summary_table(summary_csv)
+            methods_present = sorted(set(df_summary["method_key"].tolist()))
+            baselines, ablations = paper_method_groups(methods_present)
+
+            plot_eval_bars_by_env(
+                df_summary,
+                plots_root=plots_root,
+                methods_to_plot=baselines,
+                title="Task performance (evaluation)",
+                filename_suffix="paper_baselines",
+            )
+            plot_eval_bars_by_env(
+                df_summary,
+                plots_root=plots_root,
+                methods_to_plot=ablations,
+                title="Ablation study (evaluation)",
+                filename_suffix="paper_ablations",
+            )
+
+            by_step_path = results_root / "summary_by_step.csv"
+            if by_step_path.exists():
+                df_steps = load_eval_by_step_table(by_step_path)
+                plot_eval_curves_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=baselines,
+                    title="Learning curves (evaluation)",
+                    filename_suffix="paper_baselines_curves",
+                )
+                plot_eval_curves_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=ablations,
+                    title="Ablations over training (evaluation)",
+                    filename_suffix="paper_ablations_curves",
+                )
+            else:
+                typer.echo("[suite] summary_by_step.csv not found; skipping eval learning curves.")
+
+            traj_root = results_root / "plots" / "trajectories"
+            if traj_root.exists():
+                plot_glpe_state_gate_map(traj_root=traj_root, plots_root=plots_root)
+                plot_glpe_extrinsic_vs_intrinsic(traj_root=traj_root, plots_root=plots_root)
+            else:
+                typer.echo("[suite] No trajectories found; skipping GLPE trajectory plots.")
+
+            try:
+                from irl.visualization.timing_figures import plot_timing_breakdown
+
+                timing_groups = _groups_for_timing(root)
+                plot_timing_breakdown(timing_groups, plots_root=plots_root, tail_frac=0.25)
+            except Exception as exc:
+                typer.echo(f"[suite] Timing plots skipped ({type(exc).__name__}: {exc})")
+
+        except Exception as exc:
+            typer.echo(f"[suite] Paper plotting failed ({type(exc).__name__}: {exc})")
+
+        return
+
+    from irl.visualization import plot_normalized_summary
+    from irl.visualization.data import read_scalars
+    from irl.utils.runs import find_latest_ckpt
+    from irl.utils.checkpoint import load_checkpoint
 
     discovered_run_dirs = discover_runs_by_logs(root)
     if not discovered_run_dirs:
@@ -133,9 +227,6 @@ def run_plots_suite(
         for p, reason in sorted(skipped_runs.items(), key=lambda kv: str(kv[0])):
             typer.echo(f"[suite]   - {_rel(p, root)}: {reason}")
         return
-
-    plots_root = (results_root / "plots").resolve()
-    plots_root.mkdir(parents=True, exist_ok=True)
 
     all_methods = sorted({m for m_map in groups.values() for m in m_map})
 
