@@ -1,254 +1,86 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import List, Optional
-
-import torch
 import typer
 
-from irl.cli.common import QUICK_EPISODES
+from irl.paper_defaults import (
+    CONFIGS_DIR,
+    DEFAULT_EVAL_EPISODES,
+    DEFAULT_EVAL_POLICY_MODE,
+    DEFAULT_TRAIN_TOTAL_STEPS,
+    DEFAULT_VIDEO_FPS,
+    DEFAULT_VIDEO_MAX_STEPS,
+    DEFAULT_VIDEO_POLICY_MODE,
+    DEFAULT_VIDEO_SEEDS,
+    RESULTS_DIR,
+    RUNS_ROOT,
+)
+
 from .evaluation import run_eval_suite
 from .plotting import run_plots_suite
 from .training import run_training_suite
-from .validation import run_validate_results
 from .videos import run_video_suite
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
 
 @app.command("train")
-def cli_train(
-    configs_dir: Path = typer.Option(
-        Path("configs"),
-        "--configs-dir",
-        "-c",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    include: List[str] = typer.Option([], "--include", "-i"),
-    exclude: List[str] = typer.Option([], "--exclude", "-x"),
-    total_steps: int = typer.Option(150_000, "--total-steps", "-t"),
-    runs_root: Path = typer.Option(Path("runs_suite"), "--runs-root"),
-    seed: List[int] = typer.Option([], "--seed", "-r"),
-    device: Optional[str] = typer.Option(None, "--device", "-d"),
-    resume: bool = typer.Option(True, "--resume/--no-resume"),
-    auto_async: bool = typer.Option(False, "--auto-async/--no-auto-async"),
-) -> None:
+def cli_train() -> None:
     run_training_suite(
-        configs_dir=configs_dir,
-        include=include,
-        exclude=exclude,
-        total_steps=total_steps,
-        runs_root=runs_root,
-        seeds=seed,
-        device=device,
-        resume=resume,
-        auto_async=auto_async,
+        configs_dir=CONFIGS_DIR,
+        include=[],
+        exclude=[],
+        total_steps=int(DEFAULT_TRAIN_TOTAL_STEPS),
+        runs_root=RUNS_ROOT,
+        seeds=[],
+        device=None,
+        resume=True,
+        auto_async=False,
     )
 
 
 @app.command("eval")
-def cli_eval(
-    runs_root: Path = typer.Option(
-        Path("runs_suite"),
-        "--runs-root",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
-    episodes: int = typer.Option(20, "--episodes", "-e"),
-    device: str = typer.Option("cpu", "--device", "-d"),
-    policy: str = typer.Option("mode", "--policy", "-p"),
-    quick: bool = typer.Option(False, "--quick/--no-quick"),
-    strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
-    strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
-    ckpt_policy: str = typer.Option("latest", "--ckpt-policy"),
-    target_step: int | None = typer.Option(None, "--target-step"),
-    every_k: int | None = typer.Option(None, "--every-k"),
-    max_ckpts_per_run: int | None = typer.Option(None, "--max-ckpts-per-run"),
-) -> None:
-    n_eps = int(episodes)
-    if quick:
-        n_eps = min(n_eps, QUICK_EPISODES)
-
+def cli_eval() -> None:
     run_eval_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        episodes=n_eps,
-        device=device,
-        policy_mode=str(policy),
-        strict_coverage=bool(strict_coverage),
-        strict_step_parity=bool(strict_step_parity),
-        ckpt_policy=str(ckpt_policy),
-        target_step=target_step,
-        every_k=every_k,
-        max_ckpts_per_run=max_ckpts_per_run,
+        runs_root=RUNS_ROOT,
+        results_dir=RESULTS_DIR,
+        episodes=int(DEFAULT_EVAL_EPISODES),
+        device="cpu",
+        policy_mode=str(DEFAULT_EVAL_POLICY_MODE),
     )
 
 
 @app.command("plots")
-def cli_plots(
-    runs_root: Path = typer.Option(
-        Path("runs_suite"),
-        "--runs-root",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
-    metric: Optional[str] = typer.Option(None, "--metric", "-m"),
-    smooth: int = typer.Option(5, "--smooth", "-w"),
-    shade: bool = typer.Option(True, "--shade/--no-shade"),
-    paper: bool = typer.Option(False, "--paper/--no-paper"),
-) -> None:
+def cli_plots() -> None:
     run_plots_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        metric=metric,
-        smooth=smooth,
-        shade=shade,
-        paper_mode=bool(paper),
+        runs_root=RUNS_ROOT,
+        results_dir=RESULTS_DIR,
+        metric=None,
+        smooth=5,
+        shade=True,
+        paper_mode=True,
     )
 
 
 @app.command("videos")
-def cli_videos(
-    runs_root: Path = typer.Option(
-        Path("runs_suite"),
-        "--runs-root",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
-    device: str = typer.Option("cpu", "--device", "-d"),
-    policy: str = typer.Option("mode", "--policy", "-p"),
-    seed: List[int] = typer.Option([100], "--seed", "-s"),
-    max_steps: int = typer.Option(1000, "--max-steps"),
-    fps: int = typer.Option(30, "--fps"),
-    overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
-) -> None:
+def cli_videos() -> None:
     run_video_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        device=device,
-        policy_mode=str(policy),
-        eval_seeds=seed,
-        max_steps=int(max_steps),
-        fps=int(fps),
-        overwrite=bool(overwrite),
+        runs_root=RUNS_ROOT,
+        results_dir=RESULTS_DIR,
+        device="cpu",
+        policy_mode=str(DEFAULT_VIDEO_POLICY_MODE),
+        eval_seeds=list(DEFAULT_VIDEO_SEEDS),
+        max_steps=int(DEFAULT_VIDEO_MAX_STEPS),
+        fps=int(DEFAULT_VIDEO_FPS),
+        overwrite=False,
     )
-
-
-@app.command("validate-results")
-def cli_validate_results(
-    runs_root: Path = typer.Option(
-        Path("runs_suite"),
-        "--runs-root",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    results_dir: Path = typer.Option(
-        Path("results_suite"),
-        "--results-dir",
-        "-o",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    strict: bool = typer.Option(True, "--strict/--no-strict"),
-) -> None:
-    ok = run_validate_results(runs_root=runs_root, results_dir=results_dir, strict=bool(strict))
-    if not ok:
-        raise typer.Exit(code=1)
 
 
 @app.command("full")
-def cli_full(
-    configs_dir: Path = typer.Option(
-        Path("configs"),
-        "--configs-dir",
-        "-c",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-    ),
-    include: List[str] = typer.Option([], "--include", "-i"),
-    exclude: List[str] = typer.Option([], "--exclude", "-x"),
-    total_steps: int = typer.Option(150_000, "--total-steps", "-t"),
-    runs_root: Path = typer.Option(Path("runs_suite"), "--runs-root"),
-    seed: List[int] = typer.Option([], "--seed", "-r"),
-    device: Optional[str] = typer.Option(None, "--device", "-d"),
-    episodes: int = typer.Option(20, "--episodes", "-e"),
-    results_dir: Path = typer.Option(Path("results_suite"), "--results-dir", "-o"),
-    metric: Optional[str] = typer.Option(None, "--metric", "-m"),
-    smooth: int = typer.Option(5, "--smooth", "-w"),
-    shade: bool = typer.Option(True, "--shade/--no-shade"),
-    resume: bool = typer.Option(True, "--resume/--no-resume"),
-    auto_async: bool = typer.Option(False, "--auto-async/--no-auto-async"),
-    policy: str = typer.Option("mode", "--policy", "-p"),
-    quick: bool = typer.Option(False, "--quick/--no-quick"),
-    strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
-    strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
-    paper: bool = typer.Option(True, "--paper/--no-paper"),
-) -> None:
-    run_training_suite(
-        configs_dir=configs_dir,
-        include=include,
-        exclude=exclude,
-        total_steps=total_steps,
-        runs_root=runs_root,
-        seeds=seed,
-        device=device,
-        resume=resume,
-        auto_async=auto_async,
-    )
-
-    eval_device = "cuda:0" if device is None and torch.cuda.is_available() else (device or "cpu")
-
-    n_eps = int(episodes)
-    if quick:
-        n_eps = min(n_eps, QUICK_EPISODES)
-
-    run_eval_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        episodes=n_eps,
-        device=eval_device,
-        policy_mode=str(policy),
-        strict_coverage=bool(strict_coverage),
-        strict_step_parity=bool(strict_step_parity),
-    )
-
-    run_plots_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        metric=metric,
-        smooth=smooth,
-        shade=shade,
-        paper_mode=bool(paper),
-    )
-
-    run_video_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-        device=eval_device,
-        policy_mode=str(policy).strip().lower(),
-        eval_seeds=[100],
-        max_steps=1000,
-        fps=30,
-        overwrite=False,
-    )
+def cli_full() -> None:
+    cli_train()
+    cli_eval()
+    cli_plots()
+    cli_videos()
 
 
 def main(argv: list[str] | None = None) -> None:
