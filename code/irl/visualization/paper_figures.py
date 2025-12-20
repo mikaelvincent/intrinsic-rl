@@ -6,6 +6,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from irl.methods.spec import paper_method_groups as _paper_method_groups
 from irl.utils.checkpoint import atomic_replace
 
 
@@ -48,24 +49,7 @@ _ABLATION_ORDER: tuple[str, ...] = ("glpe_lp_only", "glpe_impact_only", "glpe_no
 
 
 def paper_method_groups(methods: Sequence[str]) -> tuple[list[str], list[str]]:
-    ms = [str(m).strip().lower() for m in methods if str(m).strip()]
-    ms_set = set(ms)
-
-    baselines: list[str] = [m for m in _BASELINE_ORDER if m in ms_set]
-    extras = sorted([m for m in ms if m not in set(baselines) and not m.startswith("glpe_") and m != "glpe"])
-    baselines.extend([m for m in extras if m not in set(baselines)])
-
-    ablations: list[str] = [m for m in _ABLATION_ORDER if m in ms_set]
-    other_abls = sorted([m for m in ms if m.startswith("glpe_") and m not in set(ablations)])
-    ablations.extend([m for m in other_abls if m not in set(ablations)])
-
-    if "glpe" in ms_set:
-        if "glpe" not in baselines:
-            baselines.append("glpe")
-        if "glpe" not in ablations:
-            ablations.append("glpe")
-
-    return baselines, ablations
+    return _paper_method_groups(methods)
 
 
 def load_eval_summary_table(summary_csv: Path) -> pd.DataFrame:
@@ -602,7 +586,9 @@ def plot_glpe_extrinsic_vs_intrinsic(
         y = np.concatenate(ys, axis=0).astype(np.float32, copy=False)
         g = np.concatenate(gs, axis=0) >= 0.5
 
-        idx = _sample_idx(x.shape[0], int(max_points), seed=abs(hash(("extint", env_id))) & 0x7FFFFFFF)
+        idx = _sample_idx(
+            x.shape[0], int(max_points), seed=abs(hash(("extint", env_id))) & 0x7FFFFFFF
+        )
         x = x[idx]
         y = y[idx]
         g = g[idx]
