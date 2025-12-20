@@ -12,6 +12,11 @@ from irl.paper_defaults import (
 
 
 def cli_bench() -> None:
+    typer.echo(
+        "[bench] Running microbenchmarks "
+        f"(device={str(DEFAULT_BENCH_DEVICE)}, threads={int(DEFAULT_BENCH_THREADS)}, "
+        f"seed={int(DEFAULT_BENCH_SEED)}, quick={bool(DEFAULT_BENCH_QUICK)}, out_dir={BENCH_DIR})"
+    )
     from irl.benchmarks.suite import run_all_benchmarks
 
     payload = run_all_benchmarks(
