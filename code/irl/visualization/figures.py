@@ -12,6 +12,7 @@ import pandas as pd
 
 from irl.utils.checkpoint import atomic_replace
 from .data import ensure_parent
+from .trajectory_projection import trajectory_projection
 
 
 def plot_normalized_summary(
@@ -200,7 +201,9 @@ def plot_normalized_summary(
                 upper = np.maximum(0.0, hi - y)
                 yerr = np.vstack([lower, upper])
 
-            highlight_alpha = 0.9 if (highlight_key is not None and method_key == highlight_key) else 0.75
+            highlight_alpha = (
+                0.9 if (highlight_key is not None and method_key == highlight_key) else 0.75
+            )
 
             ax.bar(
                 x_ok,
@@ -276,33 +279,6 @@ def _as_str_scalar(x: object) -> str | None:
         return None
 
 
-def _trajectory_projection(
-    env_id: str | None,
-    obs: np.ndarray,
-) -> tuple[int, int, str, str] | None:
-    if obs.ndim != 2 or obs.shape[1] < 2:
-        return None
-
-    D = int(obs.shape[1])
-    e = (env_id or "").strip()
-
-    if e.startswith("MountainCar"):
-        return 0, 1, "position", "velocity"
-    if e.startswith("CartPole"):
-        return (0, 2, "cart_pos", "pole_angle") if D >= 3 else (0, 1, "obs[0]", "obs[1]")
-    if e.startswith("Pendulum"):
-        return 0, 1, "cos(theta)", "sin(theta)"
-    if e.startswith("Acrobot"):
-        return 0, 1, "cos(theta1)", "sin(theta1)"
-    if e.startswith("LunarLander"):
-        return 0, 1, "x", "y"
-
-    if D == 2:
-        return 0, 1, "obs[0]", "obs[1]"
-
-    return None
-
-
 def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20000) -> bool:
     if not npz_path.exists():
         return False
@@ -319,7 +295,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     gate_source = _as_str_scalar(data.get("gate_source")) if hasattr(data, "get") else None
 
     env_disp = env_id or npz_path.stem.replace("_trajectory", "")
-    proj = _trajectory_projection(env_id, np.asarray(obs))
+    proj = trajectory_projection(env_id, np.asarray(obs))
     if proj is None:
         return False
 
