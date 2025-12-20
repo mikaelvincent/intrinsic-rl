@@ -10,7 +10,8 @@ import typer
 
 from irl.cli.validators import normalize_policy_mode
 from irl.evaluator import evaluate
-from irl.pipelines.discovery import discover_run_dirs_with_selected_ckpts
+from irl.paper_defaults import DEFAULT_EVAL_EPISODES, DEFAULT_EVAL_POLICY_MODE
+from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt, select_ckpts_for_run
 from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_checkpoints
 from irl.results.summary import (
@@ -28,6 +29,36 @@ from irl.utils.runs import parse_run_name
 
 def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
     return _cfg_fields_from_payload(payload)
+
+
+def _eval_cfg(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    cfg = payload.get("cfg") or {}
+    if not isinstance(cfg, Mapping):
+        return {}
+    ev = cfg.get("evaluation") or {}
+    return ev if isinstance(ev, Mapping) else {}
+
+
+def _eval_interval_steps(payload: Mapping[str, Any]) -> int:
+    ev = _eval_cfg(payload)
+    raw = ev.get("interval_steps", None)
+    try:
+        v = int(raw)
+    except Exception:
+        return 0
+    return max(0, v)
+
+
+def _eval_episodes(payload: Mapping[str, Any]) -> int:
+    ev = _eval_cfg(payload)
+    raw = ev.get("episodes", None)
+    try:
+        v = int(raw)
+        if v > 0:
+            return v
+    except Exception:
+        pass
+    return int(DEFAULT_EVAL_EPISODES)
 
 
 _COVERAGE_COLS: list[str] = [
@@ -136,9 +167,6 @@ def _coverage_msg_step(env_id: str, step_mean_by_method: dict[str, int]) -> str:
 def _enforce_coverage_and_step_parity(
     seeds_by_env: Mapping[str, Mapping[str, set[int]]],
     steps_by_env: Mapping[str, Mapping[str, list[int]]],
-    *,
-    strict_coverage: bool,
-    strict_step_parity: bool,
 ) -> None:
     for env_id in sorted(seeds_by_env.keys()):
         methods = seeds_by_env[env_id]
@@ -156,10 +184,7 @@ def _enforce_coverage_and_step_parity(
                 missing_by_method[str(m)] = miss
 
         if missing_by_method:
-            msg = _coverage_msg_seed(str(env_id), missing_by_method)
-            if strict_coverage:
-                raise RuntimeError(msg)
-            typer.echo(msg)
+            raise RuntimeError(_coverage_msg_seed(str(env_id), missing_by_method))
 
         step_means: dict[str, int] = {}
         for m, steps in steps_by_env.get(env_id, {}).items():
@@ -175,53 +200,27 @@ def _enforce_coverage_and_step_parity(
         min_step = min(step_means.values())
         thresh = max(1000, int(round(0.05 * max_step)))
         if (max_step - min_step) > thresh:
-            msg = _coverage_msg_step(str(env_id), step_means)
-            if strict_step_parity:
-                raise RuntimeError(msg)
-            typer.echo(msg)
-
-
-def _discover_run_dirs_with_ckpt(
-    runs_root: Path,
-    *,
-    ckpt_policy: str,
-    target_step: int | None,
-    every_k: int | None,
-    max_ckpts_per_run: int | None,
-) -> list[tuple[Path, Path]]:
-    return discover_run_dirs_with_selected_ckpts(
-        runs_root,
-        policy=str(ckpt_policy),
-        target_step=target_step,
-        every_k=every_k,
-        max_ckpts_per_run=max_ckpts_per_run,
-    )
+            raise RuntimeError(_coverage_msg_step(str(env_id), step_means))
 
 
 def _write_eval_meta(
     *,
     results_root: Path,
     runs_root: Path,
-    ckpt_policy: str,
-    target_step: int | None,
-    every_k: int | None,
-    max_ckpts_per_run: int | None,
     episodes: int,
     device: str,
     policy_mode: str,
-    strict_coverage: bool,
-    strict_step_parity: bool,
+    interval_steps_values: list[int],
 ) -> Path:
     meta = {
-        "ckpt_policy": str(ckpt_policy).strip().lower(),
-        "target_step": None if target_step is None else int(target_step),
-        "every_k": None if every_k is None else int(every_k),
-        "max_ckpts_per_run": None if max_ckpts_per_run is None else int(max_ckpts_per_run),
+        "ckpt_policy": "every_k",
+        "every_k_source": "cfg.evaluation.interval_steps",
+        "interval_steps_values": [int(x) for x in interval_steps_values],
         "episodes": int(episodes),
         "device": str(device),
         "policy_mode": str(policy_mode),
-        "strict_coverage": bool(strict_coverage),
-        "strict_step_parity": bool(strict_step_parity),
+        "strict_coverage": True,
+        "strict_step_parity": True,
         "runs_root": str(Path(runs_root).resolve()),
         "results_dir": str(Path(results_root).resolve()),
     }
@@ -231,59 +230,70 @@ def _write_eval_meta(
 
 
 def run_eval_suite(
+    *,
     runs_root: Path,
     results_dir: Path,
-    episodes: int,
-    device: str,
-    policy_mode: str = "mode",
-    *,
-    strict_coverage: bool = True,
-    strict_step_parity: bool = True,
-    ckpt_policy: str = "latest",
-    target_step: int | None = None,
-    every_k: int | None = None,
-    max_ckpts_per_run: int | None = None,
 ) -> None:
-    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
+    pm = normalize_policy_mode(DEFAULT_EVAL_POLICY_MODE, allowed=("mode", "sample"), name="policy_mode")
+    device = "cpu"
 
-    policy = str(ckpt_policy).strip().lower()
-    if policy not in {"latest", "fixed_step", "all_steps", "every_k"}:
-        raise typer.BadParameter(
-            f"--ckpt-policy must be one of: latest, fixed_step, all_steps, every_k (got {ckpt_policy!r})"
-        )
-    if policy == "fixed_step" and target_step is None:
-        raise typer.BadParameter("--target-step is required when --ckpt-policy=fixed_step")
-    if policy == "every_k" and every_k is None:
-        raise typer.BadParameter("--every-k is required when --ckpt-policy=every_k")
-
-    root = runs_root.resolve()
+    root = Path(runs_root).resolve()
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
 
-    runs = _discover_run_dirs_with_ckpt(
-        root,
-        ckpt_policy=str(policy),
-        target_step=None if target_step is None else int(target_step),
-        every_k=None if every_k is None else int(every_k),
-        max_ckpts_per_run=None if max_ckpts_per_run is None else int(max_ckpts_per_run),
-    )
-    if not runs:
-        typer.echo(f"[suite] No checkpoints found under {root} (ckpt_policy={policy}).")
+    discovered = discover_run_dirs_with_latest_ckpt(root)
+    if not discovered:
+        typer.echo(f"[suite] No checkpoints found under {root}.")
         return
 
-    n_runs = len({rd.resolve() for rd, _ in runs})
+    intervals_by_run: dict[Path, int] = {}
+    episodes_by_run: dict[Path, int] = {}
+    selected: list[tuple[Path, Path]] = []
+
+    for rd, ckpt_latest in discovered:
+        try:
+            payload_latest = load_checkpoint(ckpt_latest, map_location="cpu")
+        except Exception as exc:
+            typer.echo(f"[suite]    ! {rd.name}: failed to load {ckpt_latest.name} ({exc})")
+            continue
+
+        episodes_by_run[rd] = int(_eval_episodes(payload_latest))
+        interval = int(_eval_interval_steps(payload_latest))
+        intervals_by_run[rd] = int(interval)
+
+        if interval > 0:
+            ckpts = select_ckpts_for_run(rd, policy="every_k", every_k=int(interval))
+        else:
+            ckpts = select_ckpts_for_run(rd, policy="latest")
+
+        for ckpt in ckpts:
+            selected.append((rd, Path(ckpt)))
+
+    if not selected:
+        typer.echo(f"[suite] No evaluable checkpoints found under {root}.")
+        return
+
+    ep_vals = sorted({int(v) for v in episodes_by_run.values() if int(v) > 0})
+    if not ep_vals:
+        episodes = int(DEFAULT_EVAL_EPISODES)
+    elif len(ep_vals) == 1:
+        episodes = int(ep_vals[0])
+    else:
+        raise RuntimeError(f"[suite]    ! Evaluation episodes mismatch across runs: {ep_vals}")
+
+    n_runs = len({rd.resolve() for rd, _ in selected})
     typer.echo(
-        f"[suite] Evaluating {len(runs)} checkpoint(s) from {n_runs} run(s) under {root} "
-        f"(ckpt_policy={policy})"
+        f"[suite] Evaluating {len(selected)} checkpoint(s) from {n_runs} run(s) under {root} "
+        f"(every_k from cfg.evaluation.interval_steps)"
     )
 
-    traj_root = results_dir / "plots" / "trajectories"
+    traj_root = Path(results_dir) / "plots" / "trajectories"
     traj_root.mkdir(parents=True, exist_ok=True)
 
     specs: list[EvalCheckpoint] = []
 
-    for rd, ckpt in runs:
+    for rd, ckpt in selected:
         try:
             payload = load_checkpoint(ckpt, map_location="cpu")
             cfg_env_id, cfg_method, cfg_seed = _cfg_fields(payload)
@@ -348,6 +358,10 @@ def run_eval_suite(
         except Exception as exc:
             typer.echo(f"[suite]          ! evaluation failed: {exc}")
 
+    if not specs:
+        typer.echo("[suite] No checkpoints eligible for evaluation; nothing to do.")
+        return
+
     def _on_start(_i: int, _n: int, spec: EvalCheckpoint) -> None:
         for msg in spec.notes:
             typer.echo(msg)
@@ -375,7 +389,7 @@ def run_eval_suite(
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
         return
 
-    results_root = results_dir.resolve()
+    results_root = Path(results_dir).resolve()
     results_root.mkdir(parents=True, exist_ok=True)
     raw_path = results_root / "summary_raw.csv"
     summary_path = results_root / "summary.csv"
@@ -402,21 +416,14 @@ def run_eval_suite(
     meta_path = _write_eval_meta(
         results_root=results_root,
         runs_root=root,
-        ckpt_policy=str(policy),
-        target_step=None if target_step is None else int(target_step),
-        every_k=None if every_k is None else int(every_k),
-        max_ckpts_per_run=None if max_ckpts_per_run is None else int(max_ckpts_per_run),
         episodes=int(episodes),
         device=str(device),
         policy_mode=str(pm),
-        strict_coverage=bool(strict_coverage),
-        strict_step_parity=bool(strict_step_parity),
+        interval_steps_values=sorted({int(v) for v in intervals_by_run.values()}),
     )
     typer.echo(f"[suite] Wrote eval metadata to {meta_path}")
 
     _enforce_coverage_and_step_parity(
         seeds_by_env,
         steps_by_env,
-        strict_coverage=bool(strict_coverage),
-        strict_step_parity=bool(strict_step_parity),
     )
