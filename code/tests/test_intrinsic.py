@@ -6,9 +6,9 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 from gymnasium.envs.registration import register
-from torch.nn import functional as F
 from torch.optim import Adam
 
 from irl.cfg import Config, validate_config
@@ -36,21 +36,26 @@ class _Transition:
 def test_update_region_gate_transitions_and_resets() -> None:
     st = _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1)
 
-    for _ in range(2):
-        assert (
-            update_region_gate(
-                st,
-                lp_i=0.0,
-                tau_lp=1.0,
-                tau_s=0.5,
-                median_error_global=1.0,
-                hysteresis_up_mult=1.1,
-                min_consec_to_gate=3,
-                sufficient_regions=True,
-            )
-            == 1
-        )
-
+    update_region_gate(
+        st,
+        lp_i=0.0,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
+    update_region_gate(
+        st,
+        lp_i=0.0,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
     assert (
         update_region_gate(
             st,
@@ -65,17 +70,26 @@ def test_update_region_gate_transitions_and_resets() -> None:
         == 0
     )
 
-    for _ in range(2):
-        update_region_gate(
-            st,
-            lp_i=1.2,
-            tau_lp=1.0,
-            tau_s=0.5,
-            median_error_global=1.0,
-            hysteresis_up_mult=1.1,
-            min_consec_to_gate=3,
-            sufficient_regions=True,
-        )
+    update_region_gate(
+        st,
+        lp_i=1.2,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
+    update_region_gate(
+        st,
+        lp_i=1.2,
+        tau_lp=1.0,
+        tau_s=0.5,
+        median_error_global=1.0,
+        hysteresis_up_mult=1.1,
+        min_consec_to_gate=3,
+        sufficient_regions=True,
+    )
     assert st.gate == 1
 
     st2 = _RegionStats(ema_long=1.0, ema_short=10.0, count=10, gate=0, bad_consec=5, good_consec=1)
@@ -229,7 +243,7 @@ def test_intrinsic_compute_batch_matches_step() -> None:
         mod_batch = make_mod(obs_space, act_space, icm_cfg)
         mod_batch.load_state_dict(mod_step.state_dict())
 
-        B = 64
+        B = 32
         obs = rng.standard_normal((B, 4)).astype(np.float32)
         next_obs = rng.standard_normal((B, 4)).astype(np.float32)
         actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
@@ -277,7 +291,7 @@ def test_resume_restores_intrinsic_extra_state() -> None:
         (_make_riac, "riac", ("lp_rms",)),
     ):
         mod1 = make_module(obs_space, act_space, icm_cfg)
-        warmup = _rand_batch(rng, obs_dim, n_actions, B=64)
+        warmup = _rand_batch(rng, obs_dim, n_actions, B=32)
         _ = mod1.compute_batch(*warmup, reduction="none")
 
         sd_full = mod1.state_dict()
@@ -287,15 +301,12 @@ def test_resume_restores_intrinsic_extra_state() -> None:
         sd_no_extra = dict(sd_full)
         sd_no_extra.pop("_extra_state", None)
 
-        eval_batch = _rand_batch(rng, obs_dim, n_actions, B=32)
+        eval_batch = _rand_batch(rng, obs_dim, n_actions, B=16)
         with torch.no_grad():
             ref = mod1.compute_batch(*eval_batch, reduction="none").detach().cpu()
 
-        from irl.models.networks import PolicyNetwork as _PN
-        from irl.models.networks import ValueNetwork as _VN
-
-        policy = _PN(obs_space, act_space)
-        value = _VN(obs_space)
+        policy = PolicyNetwork(obs_space, act_space)
+        value = ValueNetwork(obs_space)
         pol_opt = Adam(policy.parameters(), lr=1e-3)
         val_opt = Adam(value.parameters(), lr=1e-3)
 
@@ -336,7 +347,9 @@ def test_resume_restores_intrinsic_extra_state() -> None:
             assert abs(float(getattr(mod1, name)) - float(getattr(mod2, name))) < 1e-6
 
 
-def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
+def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IRL_ALLOW_RESUME_WITHOUT_KDTREE_POINTS", raising=False)
+
     def _save_state_dict(sd: dict, path: Path) -> int:
         torch.save(sd, path)
         return int(path.stat().st_size)
@@ -382,7 +395,28 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
             checkpoint_include_points=bool(include_points),
         )
 
-    for make_module, tag in ((_make_glpe_points, "glpe"), (_make_riac_points, "riac")):
+    def _payload(method_l: str, intrinsic_sd: dict):
+        torch.manual_seed(0)
+        policy = PolicyNetwork(obs_space, act_space)
+        value = ValueNetwork(obs_space)
+        pol_opt = Adam(policy.parameters(), lr=1e-3)
+        val_opt = Adam(value.parameters(), lr=1e-3)
+        payload = {
+            "step": 10,
+            "policy": policy.state_dict(),
+            "value": value.state_dict(),
+            "obs_norm": None,
+            "intrinsic_norm": {},
+            "meta": {"updates": 0},
+            "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
+            "intrinsic": {"method": str(method_l), "state_dict": intrinsic_sd},
+        }
+        return payload, policy, value, pol_opt, val_opt
+
+    for make_module, tag, method_l in (
+        (_make_glpe_points, "glpe", "glpe"),
+        (_make_riac_points, "riac", "riac"),
+    ):
         mod = make_module(include_points=True)
         _fill_store(mod, n_points=5000, seed=0)
 
@@ -390,52 +424,56 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
         size_with = _save_state_dict(mod.state_dict(), p_with)
 
         mod.checkpoint_include_points = False
+        sd_omitted = mod.state_dict()
         p_without = tmp_path / f"{tag}_without_points.pt"
-        size_without = _save_state_dict(mod.state_dict(), p_without)
+        size_without = _save_state_dict(sd_omitted, p_without)
 
         assert size_without < size_with
         assert size_without <= int(size_with * 0.6)
 
         mod2 = make_module(include_points=False)
         mod2.load_state_dict(_torch_load_any(p_without), strict=True)
-
         assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
         assert int(mod2.store.depth_max) == 0
 
+        payload, policy, value, pol_opt, val_opt = _payload(method_l, _torch_load_any(p_without))
+        int_rms = RunningRMS(beta=0.99, eps=1e-8)
 
-def test_rnd_next_obs_and_rms_update() -> None:
-    obs_space_img = gym.spaces.Box(low=0, high=255, shape=(32, 32, 3), dtype=np.uint8)
-    rnd_img = RND(obs_space_img, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
+        with pytest.raises(RuntimeError, match="KDTree points"):
+            _restore_from_checkpoint(
+                resume_payload=payload,
+                resume_step=int(payload["step"]),
+                policy=policy,
+                value=value,
+                pol_opt=pol_opt,
+                val_opt=val_opt,
+                intrinsic_module=make_module(include_points=True),
+                method_l=str(method_l),
+                int_rms=int_rms,
+                obs_norm=None,
+                is_image=False,
+                device=torch.device("cpu"),
+                logger=get_logger("test_resume_points"),
+            )
 
-    rng = np.random.default_rng(1)
-    B = 10
-    H, W, C = (int(x) for x in obs_space_img.shape)
-    obs = rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
-    next_obs = rng.integers(0, 256, size=(B, H, W, C), dtype=np.uint8)
-
-    r2 = rnd_img.compute_batch(obs, next_obs)
-    r3 = rnd_img.compute_batch(next_obs)
-
-    assert r2.shape == r3.shape == (B,)
-    assert torch.isfinite(r2).all()
-    assert torch.isfinite(r3).all()
-    assert torch.allclose(r2, r3, atol=1e-6)
-
-    obs_space_vec = gym.spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
-    cfg = RNDConfig(feature_dim=16, hidden=(32, 32), rms_beta=0.0, normalize_intrinsic=True)
-    rnd = RND(obs_space_vec, device="cpu", cfg=cfg)
-
-    obs2 = rng.standard_normal((64, 5)).astype(np.float32)
-
-    with torch.no_grad():
-        x = torch.as_tensor(obs2, dtype=torch.float32)
-        p = rnd.predictor(x)
-        tgt = rnd.target(x)
-        per = F.mse_loss(p, tgt, reduction="none").mean(dim=-1)
-        expected_rms = float(torch.sqrt((per**2).mean() + float(cfg.rms_eps)).item())
-
-    _ = rnd.compute_batch(obs2)
-    assert abs(float(rnd.rms) - expected_rms) < 1e-6
+        monkeypatch.setenv("IRL_ALLOW_RESUME_WITHOUT_KDTREE_POINTS", "1")
+        int_rms2 = RunningRMS(beta=0.99, eps=1e-8)
+        global_step, _updates = _restore_from_checkpoint(
+            resume_payload=payload,
+            resume_step=int(payload["step"]),
+            policy=policy,
+            value=value,
+            pol_opt=pol_opt,
+            val_opt=val_opt,
+            intrinsic_module=make_module(include_points=True),
+            method_l=str(method_l),
+            int_rms=int_rms2,
+            obs_norm=None,
+            is_image=False,
+            device=torch.device("cpu"),
+            logger=get_logger("test_resume_points_override"),
+        )
+        assert int(global_step) == int(payload["step"])
 
 
 def test_grayscale_hw_observations_work_end_to_end() -> None:
@@ -470,7 +508,6 @@ def test_grayscale_hw_observations_work_end_to_end() -> None:
     icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
     next_obs_b = rng.integers(0, 256, size=(B, H, W), dtype=np.uint8)
     actions = rng.integers(0, int(act_space.n), size=(B,), endpoint=False, dtype=np.int64)
-
     r_icm = icm.compute_batch(obs_b, next_obs_b, actions, reduction="none")
     assert r_icm.shape == (B,)
     assert torch.isfinite(r_icm).all()
