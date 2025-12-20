@@ -17,6 +17,7 @@ NormalizeFn = Callable[[np.ndarray], np.ndarray]
 @dataclass(frozen=True)
 class Trajectory:
     obs: list[np.ndarray]
+    rewards_ext: list[float]
     gates: list[int]
     intrinsic: list[float]
     gate_source: str | None
@@ -63,6 +64,7 @@ def run_eval_episodes(
     want_traj = bool(save_traj) and not bool(is_image)
 
     traj_obs: list[np.ndarray] = []
+    traj_rewards_ext: list[float] = []
     traj_gates: list[int] = []
     traj_int_vals: list[float] = []
     traj_gate_source: str | None = None
@@ -89,6 +91,7 @@ def run_eval_episodes(
 
             if want_traj:
                 traj_obs.append(step_rec.obs_raw.copy())
+                traj_rewards_ext.append(float(step_rec.reward))
 
                 gate_val = 1
                 int_val = 0.0
@@ -140,6 +143,7 @@ def run_eval_episodes(
     traj = (
         Trajectory(
             obs=traj_obs,
+            rewards_ext=traj_rewards_ext,
             gates=traj_gates,
             intrinsic=traj_int_vals,
             gate_source=traj_gate_source,
