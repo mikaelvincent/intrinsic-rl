@@ -1,4 +1,3 @@
-# code/tests/test_evaluation.py
 from __future__ import annotations
 
 import csv
