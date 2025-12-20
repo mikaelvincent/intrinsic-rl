@@ -6,7 +6,6 @@ from irl.paper_defaults import (
     CONFIGS_DIR,
     DEFAULT_EVAL_EPISODES,
     DEFAULT_EVAL_POLICY_MODE,
-    DEFAULT_TRAIN_TOTAL_STEPS,
     DEFAULT_VIDEO_FPS,
     DEFAULT_VIDEO_MAX_STEPS,
     DEFAULT_VIDEO_POLICY_MODE,
@@ -27,14 +26,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="
 def cli_train() -> None:
     run_training_suite(
         configs_dir=CONFIGS_DIR,
-        include=[],
-        exclude=[],
-        total_steps=int(DEFAULT_TRAIN_TOTAL_STEPS),
         runs_root=RUNS_ROOT,
-        seeds=[],
-        device=None,
-        resume=True,
-        auto_async=False,
     )
 
 
