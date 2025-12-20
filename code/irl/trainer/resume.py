@@ -50,7 +50,7 @@ def _maybe_load_resume_payload(
                     f"  checkpoint: {stored_hash}\n"
                     f"  current   : {current_hash}\n"
                     "Refuse to resume with a different configuration. "
-                    "Supply a matching config or run with --no-resume."
+                    "Supply a matching config or start a fresh run directory."
                 )
             resume_payload = payload_cpu
             resume_step = int(step_cpu)
