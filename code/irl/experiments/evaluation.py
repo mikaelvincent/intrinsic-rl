@@ -250,6 +250,9 @@ def run_eval_suite(
     )
 
     root = Path(runs_root).resolve()
+    results_root = Path(results_dir).resolve()
+    typer.echo(f"[suite] Eval defaults: runs_root={root}, results_dir={results_root}, policy_mode={pm}")
+
     if not root.exists():
         typer.echo(f"[suite] No runs_root directory found: {root}")
         return
@@ -307,13 +310,14 @@ def run_eval_suite(
     else:
         raise RuntimeError(f"[suite]    ! Evaluation device mismatch across runs: {dev_vals}")
 
+    interval_vals = sorted({int(v) for v in intervals_by_run.values()})
     n_runs = len({rd.resolve() for rd, _ in selected})
     typer.echo(
         f"[suite] Evaluating {len(selected)} checkpoint(s) from {n_runs} run(s) under {root} "
-        f"(every_k from cfg.evaluation.interval_steps, device={device})"
+        f"(device={device}, episodes={episodes}, policy_mode={pm}, interval_steps={interval_vals} (0=latest))"
     )
 
-    traj_root = Path(results_dir) / "plots" / "trajectories"
+    traj_root = results_root / "plots" / "trajectories"
     traj_root.mkdir(parents=True, exist_ok=True)
 
     specs: list[EvalCheckpoint] = []
@@ -412,7 +416,6 @@ def run_eval_suite(
         typer.echo("[suite] No checkpoints evaluated; nothing to write.")
         return
 
-    results_root = Path(results_dir).resolve()
     results_root.mkdir(parents=True, exist_ok=True)
     raw_path = results_root / "summary_raw.csv"
     summary_path = results_root / "summary.csv"
