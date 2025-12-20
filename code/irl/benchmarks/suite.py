@@ -19,6 +19,7 @@ import torch
 
 from irl.utils.checkpoint import atomic_write_text
 from irl.utils.io import atomic_write_csv
+from irl.utils.seeding import seed_all as _seed_all
 
 
 @dataclass
@@ -67,15 +68,7 @@ def _stable_seed(base_seed: int, tag: str) -> int:
 
 
 def _seed_everything(seed: int) -> None:
-    s = int(seed)
-    random.seed(s)
-    np.random.seed(s)
-    torch.manual_seed(s)
-    if torch.cuda.is_available():
-        try:
-            torch.cuda.manual_seed_all(s)
-        except Exception:
-            pass
+    _seed_all(seed)
 
 
 def _maybe_cuda_sync(dev: torch.device) -> None:
