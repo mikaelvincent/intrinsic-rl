@@ -68,6 +68,10 @@ def run_training_suite(
     configs_dir: Path,
     runs_root: Path,
 ) -> None:
+    typer.echo(
+        f"[suite] Train defaults: configs_dir={Path(configs_dir).resolve()}, "
+        f"runs_root={Path(runs_root).resolve()}, total_steps=cfg.exp.total_steps"
+    )
     cfg_paths = _discover_configs(configs_dir)
     if not cfg_paths:
         typer.echo(f"[suite] No configuration files found under {configs_dir}")
