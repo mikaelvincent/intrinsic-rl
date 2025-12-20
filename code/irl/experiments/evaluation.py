@@ -8,9 +8,10 @@ from typing import Any, Mapping
 
 import typer
 
+from irl.checkpoints.runtime import extract_eval_settings as _extract_eval_settings
 from irl.cli.validators import normalize_policy_mode
 from irl.evaluator import evaluate
-from irl.paper_defaults import DEFAULT_EVAL_EPISODES, DEFAULT_EVAL_POLICY_MODE
+from irl.paper_defaults import DEFAULT_EVAL_POLICY_MODE
 from irl.pipelines.discovery import discover_run_dirs_with_latest_ckpt, select_ckpts_for_run
 from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
 from irl.pipelines.eval import evaluate_checkpoints
@@ -31,45 +32,16 @@ def _cfg_fields(payload: Mapping[str, Any]) -> tuple[str | None, str | None, int
     return _cfg_fields_from_payload(payload)
 
 
-def _eval_cfg(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    cfg = payload.get("cfg") or {}
-    if not isinstance(cfg, Mapping):
-        return {}
-    ev = cfg.get("evaluation") or {}
-    return ev if isinstance(ev, Mapping) else {}
-
-
 def _eval_interval_steps(payload: Mapping[str, Any]) -> int:
-    ev = _eval_cfg(payload)
-    raw = ev.get("interval_steps", None)
-    try:
-        v = int(raw)
-    except Exception:
-        return 0
-    return max(0, v)
+    return int(_extract_eval_settings(payload).interval_steps)
 
 
 def _eval_episodes(payload: Mapping[str, Any]) -> int:
-    ev = _eval_cfg(payload)
-    raw = ev.get("episodes", None)
-    try:
-        v = int(raw)
-        if v > 0:
-            return v
-    except Exception:
-        pass
-    return int(DEFAULT_EVAL_EPISODES)
+    return int(_extract_eval_settings(payload).episodes)
 
 
 def _eval_device(payload: Mapping[str, Any]) -> str:
-    cfg = payload.get("cfg") or {}
-    if not isinstance(cfg, Mapping):
-        return "cpu"
-    raw = cfg.get("device", None)
-    if raw is None:
-        return "cpu"
-    dev = str(raw).strip()
-    return dev or "cpu"
+    return str(_extract_eval_settings(payload).device)
 
 
 _COVERAGE_COLS: list[str] = [
@@ -293,7 +265,8 @@ def run_eval_suite(
 
     ep_vals = sorted({int(v) for v in episodes_by_run.values() if int(v) > 0})
     if not ep_vals:
-        episodes = int(DEFAULT_EVAL_EPISODES)
+        episodes = int(DEFAULT_EVAL_POLICY_MODE)  # unreachable, but keep type stable
+        episodes = 0
     elif len(ep_vals) == 1:
         episodes = int(ep_vals[0])
     else:
