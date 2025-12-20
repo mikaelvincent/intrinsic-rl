@@ -94,8 +94,9 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
         )
 
         assert float(rollout.dones_seq.reshape(-1)[0]) == 1.0
-        assert float(rollout.truncations_seq.reshape(-1)[0]) == 0.0
-        assert float(rollout.terminals_seq.reshape(-1)[0]) == 1.0
+        assert float(rollout.terminals_seq.reshape(-1)[0]) == 0.0
+        assert float(rollout.truncations_seq.reshape(-1)[0]) == 1.0
+        assert float(rollout.timeouts_no_final_obs_seq.reshape(-1)[0]) == 1.0
 
         adv_out = compute_advantages(
             rollout=rollout,
