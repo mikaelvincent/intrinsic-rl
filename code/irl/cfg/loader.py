@@ -272,10 +272,14 @@ def validate_config(cfg: Config) -> None:
 
     try:
         ts = getattr(cfg.exp, "total_steps", None)
-        if ts is not None and int(ts) <= 0:
-            raise ConfigError("exp.total_steps must be > 0 when provided")
+        if ts is None:
+            raise ConfigError("exp.total_steps is required")
+        if int(ts) <= 0:
+            raise ConfigError("exp.total_steps must be > 0")
+    except ConfigError:
+        raise
     except Exception as exc:
-        raise ConfigError(f"Invalid exp.total_steps: {exc}")
+        raise ConfigError(f"Invalid exp.total_steps: {exc}") from exc
 
 
 def to_dict(cfg: Config) -> dict:
