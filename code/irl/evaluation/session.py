@@ -5,10 +5,10 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from irl.checkpoints.runtime import build_obs_normalizer, extract_env_settings
 from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.factory import create_intrinsic_module
 from irl.models import PolicyNetwork
-from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import single_spaces
 from irl.utils.spaces import is_image_space
 
@@ -53,7 +53,7 @@ def build_eval_session(
     make_env_fn: Any,
     policy_cls: Any = PolicyNetwork,
 ) -> EvalSession:
-    runtime = extract_env_runtime(cfg)
+    runtime = extract_env_settings(cfg)
     frame_skip = int(runtime["frame_skip"])
     discrete_actions = bool(runtime["discrete_actions"])
     car_action_set = runtime["car_action_set"]
