@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from irl.utils.checkpoint import atomic_replace
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
 
 
 def _finite_quantiles(values: Any) -> tuple[float, float, float] | None:
@@ -23,33 +23,11 @@ def _finite_quantiles(values: Any) -> tuple[float, float, float] | None:
 
 
 def _style():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    plt.rcParams.update(
-        {
-            "figure.dpi": 150,
-            "savefig.dpi": 300,
-            "font.size": 9,
-            "axes.titlesize": 10,
-            "axes.labelsize": 9,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
-            "legend.fontsize": 8,
-        }
-    )
-    return plt
+    return apply_rcparams_paper()
 
 
 def _save_fig(fig, path: Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    fmt = path.suffix.lstrip(".").lower() or "png"
-    fig.savefig(str(tmp), dpi=300, bbox_inches="tight", format=fmt)
-    atomic_replace(tmp, path)
+    save_fig_atomic(fig, Path(path))
 
 
 def _pretty_name(name: str) -> str:
