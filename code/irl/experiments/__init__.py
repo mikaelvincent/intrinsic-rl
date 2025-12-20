@@ -4,10 +4,6 @@ import typer
 
 from irl.paper_defaults import (
     CONFIGS_DIR,
-    DEFAULT_VIDEO_FPS,
-    DEFAULT_VIDEO_MAX_STEPS,
-    DEFAULT_VIDEO_POLICY_MODE,
-    DEFAULT_VIDEO_SEEDS,
     RESULTS_DIR,
     RUNS_ROOT,
 )
@@ -46,16 +42,7 @@ def cli_plots() -> None:
 
 @app.command("videos")
 def cli_videos() -> None:
-    run_video_suite(
-        runs_root=RUNS_ROOT,
-        results_dir=RESULTS_DIR,
-        device="cpu",
-        policy_mode=str(DEFAULT_VIDEO_POLICY_MODE),
-        eval_seeds=list(DEFAULT_VIDEO_SEEDS),
-        max_steps=int(DEFAULT_VIDEO_MAX_STEPS),
-        fps=int(DEFAULT_VIDEO_FPS),
-        overwrite=False,
-    )
+    run_video_suite()
 
 
 @app.command("full")
