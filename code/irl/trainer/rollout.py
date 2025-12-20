@@ -7,7 +7,7 @@ from typing import Any, Mapping
 import numpy as np
 import torch
 
-from .runtime_utils import _apply_final_observation, _ensure_time_major_np
+from .runtime_utils import _apply_final_observation_with_mask, _ensure_time_major_np
 
 
 def _try_float(x: Any) -> float | None:
@@ -248,6 +248,8 @@ def collect_rollout(
     ep_lengths: list[int] = []
     ep_successes: list[float] = []
 
+    missing_final_obs_truncs = 0
+
     t_rollout_start = time.perf_counter()
 
     prev_done_flags: np.ndarray | None = None
@@ -308,7 +310,20 @@ def collect_rollout(
         ep_lengths.extend(el)
         ep_successes.extend(es)
 
-        next_obs_rollout = _apply_final_observation(next_obs_env, done_flags, infos)
+        next_obs_rollout, applied_final = _apply_final_observation_with_mask(
+            next_obs_env, done_flags, infos
+        )
+
+        no_final_timeout = truncs_b & (~np.asarray(applied_final, dtype=bool).reshape(B))
+        if bool(no_final_timeout.any()):
+            missing_final_obs_truncs += int(no_final_timeout.sum())
+            terms_store = terms_b.copy()
+            truncs_store = truncs_b.copy()
+            terms_store[no_final_timeout] = True
+            truncs_store[no_final_timeout] = False
+        else:
+            terms_store = terms_b
+            truncs_store = truncs_b
 
         next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
         if not is_image:
@@ -319,8 +334,8 @@ def collect_rollout(
         actions_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[0:1, :])
         rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
         dones_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
-        terminals_seq[t] = terms_b.astype(np.float32, copy=False)
-        truncations_seq[t] = truncs_b.astype(np.float32, copy=False)
+        terminals_seq[t] = terms_store.astype(np.float32, copy=False)
+        truncations_seq[t] = truncs_store.astype(np.float32, copy=False)
 
         if not is_image:
             next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
@@ -336,7 +351,7 @@ def collect_rollout(
                 reduction="none",
             )
             r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
-            r_step_np[terms_b] = 0.0
+            r_step_np[terms_store] = 0.0
             r_int_raw_seq[t] = r_step_np
             t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
@@ -344,6 +359,14 @@ def collect_rollout(
                 prev_done_flags = done_flags.astype(bool, copy=False)
 
         obs_var = next_obs_env
+
+    if missing_final_obs_truncs > 0 and not bool(getattr(collect_rollout, "_warned_no_final_obs", False)):
+        if hasattr(logger, "warning"):
+            logger.warning(
+                "Timeout bootstrapping disabled for %d truncation(s) without final_observation.",
+                int(missing_final_obs_truncs),
+            )
+        setattr(collect_rollout, "_warned_no_final_obs", True)
 
     if r_int_raw_seq is not None and intrinsic_module is not None and prev_done_flags is not None:
         try:
