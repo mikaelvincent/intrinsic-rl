@@ -178,19 +178,23 @@ class RIAC(BaseIntrinsicModule, nn.Module):
     ) -> Tensor:
         err_t, phi_t = self._forward_error_per_sample(obs, next_obs, actions)
         phi_np = phi_t.detach().cpu().numpy()
-        err_np = err_t.detach().cpu().numpy().astype(np.float64)
+        err_np = err_t.detach().cpu().numpy()
 
         N = int(err_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
         rids = self.store.bulk_insert(phi_np)
 
+        alpha_lp = float(self.alpha_lp)
+        update_region = self._update_region
+        lp_rms = self._lp_rms
+
         for i in range(N):
             rid = int(rids[i])
-            lp_val = float(self._update_region(rid, float(err_np[i])))
-            self._lp_rms.update_scalar(lp_val)
-            lp_norm = self._lp_rms.normalize_scalar(lp_val)
-            out[i] = self.alpha_lp * float(lp_norm)
+            lp_val = float(update_region(rid, float(err_np[i])))
+            lp_rms.update_scalar(lp_val)
+            lp_norm = lp_rms.normalize_scalar(lp_val)
+            out[i] = alpha_lp * float(lp_norm)
 
         out_t = torch.as_tensor(out, dtype=torch.float32, device=self.device)
         return out_t.mean() if reduction == "mean" else out_t
