@@ -5,7 +5,7 @@ from typing import Iterable, Sequence
 
 import typer
 
-from irl.cli.common import validate_policy_mode
+from irl.cli.validators import normalize_policy_mode
 from irl.pipelines.discovery import discover_run_dirs_with_step_ckpts
 from irl.utils.runs import list_step_ckpts
 from irl.video import render_rollout_video
@@ -34,7 +34,7 @@ def run_video_suite(
     fps: int = 30,
     overwrite: bool = False,
 ) -> None:
-    pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
+    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
 
     root = Path(runs_root).resolve()
     if not root.exists():
