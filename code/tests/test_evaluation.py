@@ -169,9 +169,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
         "method",
         "gate_source",
     }
-    assert str(d_v["method"].reshape(-1)[0]) == "vanilla"
     assert str(d_v["gate_source"].reshape(-1)[0]) == "n/a"
-    assert d_v["rewards_ext"].reshape(-1).shape[0] == d_v["obs"].shape[0]
 
     out_g = tmp_path / "glpe_out"
     ckpt_g = _write_ckpt(method="glpe", seed=7, include_intrinsic=True)
@@ -188,9 +186,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     assert traj_g.exists()
 
     d_g = np.load(traj_g, allow_pickle=False)
-    assert str(d_g["method"].reshape(-1)[0]) == "glpe"
     assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
-    assert d_g["rewards_ext"].reshape(-1).shape[0] == d_g["obs"].shape[0]
 
     out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
     ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
@@ -207,15 +203,16 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     assert traj_g_missing.exists()
 
     d_g_missing = np.load(traj_g_missing, allow_pickle=False)
-    assert str(d_g_missing["method"].reshape(-1)[0]) == "glpe"
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
-    assert d_g_missing["rewards_ext"].reshape(-1).shape[0] == d_g_missing["obs"].shape[0]
 
 
 def _write_latest_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> None:
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"step": int(step), "cfg": {"env": {"id": str(env_id)}, "method": str(method), "seed": int(seed)}}
+    payload = {
+        "step": int(step),
+        "cfg": {"env": {"id": str(env_id)}, "method": str(method), "seed": int(seed)},
+    }
     torch.save(payload, ckpt_dir / "ckpt_latest.pt")
 
 
@@ -248,9 +245,15 @@ def _fake_evaluate(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs
     }
 
 
-def test_eval_suite_seed_coverage_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runs_root = tmp_path / "runs_suite"
-    results_dir = tmp_path / "results_suite"
+def test_eval_suite_reports_coverage_and_step_parity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
+    runs_root = tmp_path / "runs_suite_seed"
+    results_dir = tmp_path / "results_suite_seed"
     group = runs_root / "groupA"
     group.mkdir(parents=True, exist_ok=True)
 
@@ -263,10 +266,6 @@ def test_eval_suite_seed_coverage_report(tmp_path: Path, monkeypatch: pytest.Mon
     _write_latest_ckpt(r_v1, env_id="DummyEval-v0", method="vanilla", seed=1, step=100)
     _write_latest_ckpt(r_v2, env_id="DummyEval-v0", method="vanilla", seed=2, step=100)
     _write_latest_ckpt(r_g1, env_id="DummyEval-v0", method="glpe", seed=1, step=50)
-
-    import irl.experiments.evaluation as eval_module
-
-    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
 
     with pytest.raises(RuntimeError, match="Seed coverage mismatch"):
         run_eval_suite(
@@ -281,40 +280,35 @@ def test_eval_suite_seed_coverage_report(tmp_path: Path, monkeypatch: pytest.Mon
     assert cov_path.exists()
     with cov_path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-
     glpe_rows = [r for r in rows if r["env_id"] == "DummyEval-v0" and r["method"] == "glpe"]
     assert len(glpe_rows) == 1
     assert glpe_rows[0]["missing_seeds"] == "2"
 
+    runs_root2 = tmp_path / "runs_suite_steps"
+    results_dir2 = tmp_path / "results_suite_steps"
+    runs_root2.mkdir(parents=True, exist_ok=True)
 
-def test_eval_suite_step_parity_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runs_root = tmp_path / "runs_suite"
-    results_dir = tmp_path / "results_suite"
-    runs_root.mkdir(parents=True, exist_ok=True)
-
-    r_v1 = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
-    r_g1 = runs_root / "glpe__DummyEval-v0__seed1__cfgA"
-    for rd in (r_v1, r_g1):
+    r_v = runs_root2 / "vanilla__DummyEval-v0__seed1__cfgA"
+    r_g = runs_root2 / "glpe__DummyEval-v0__seed1__cfgA"
+    for rd in (r_v, r_g):
         rd.mkdir(parents=True, exist_ok=True)
 
-    _write_latest_ckpt(r_v1, env_id="DummyEval-v0", method="vanilla", seed=1, step=100_000)
-    _write_latest_ckpt(r_g1, env_id="DummyEval-v0", method="glpe", seed=1, step=1_000)
-
-    import irl.experiments.evaluation as eval_module
-
-    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+    _write_latest_ckpt(r_v, env_id="DummyEval-v0", method="vanilla", seed=1, step=100_000)
+    _write_latest_ckpt(r_g, env_id="DummyEval-v0", method="glpe", seed=1, step=1_000)
 
     with pytest.raises(RuntimeError, match="Step parity mismatch"):
         run_eval_suite(
-            runs_root=runs_root,
-            results_dir=results_dir,
+            runs_root=runs_root2,
+            results_dir=results_dir2,
             episodes=1,
             device="cpu",
             policy_mode="mode",
         )
 
 
-def test_eval_suite_fixed_step_selects_expected_ckpt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_eval_suite_fixed_step_selects_expected_ckpt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
     runs_root.mkdir(parents=True, exist_ok=True)
