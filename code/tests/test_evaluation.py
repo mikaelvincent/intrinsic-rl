@@ -1,4 +1,3 @@
-# tests/test_evaluation.py
 from __future__ import annotations
 
 import csv
@@ -38,34 +37,6 @@ class _DummyEvalEnv(gym.Env):
     def step(self, action):
         self._t += 1
         obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        terminated = self._t >= 5
-        return obs, float(action), bool(terminated), False, {}
-
-    def close(self) -> None:
-        return
-
-
-class _DummyTrajEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self, seed: int | None = None) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(2)
-        self._rng = np.random.default_rng(seed)
-        self._t = 0
-
-    def reset(self, *, seed=None, options=None):
-        _ = options
-        if seed is not None:
-            self._rng = np.random.default_rng(seed)
-        self._t = 0
-        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        return obs, {}
-
-    def step(self, action):
-        self._t += 1
-        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
         terminated = self._t >= 3
         return obs, float(action), bool(terminated), False, {}
 
@@ -73,14 +44,13 @@ class _DummyTrajEnv(gym.Env):
         return
 
 
-for _id, _cls in (("DummyEval-v0", _DummyEvalEnv), ("DummyTraj-v0", _DummyTrajEnv)):
-    try:
-        register(id=_id, entry_point=_cls)
-    except Exception:
-        pass
+try:
+    register(id="DummyEval-v0", entry_point=_DummyEvalEnv)
+except Exception:
+    pass
 
 
-def test_evaluator_is_repeatable_with_fixed_seed(tmp_path: Path) -> None:
+def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(2)
 
@@ -92,7 +62,7 @@ def test_evaluator_is_repeatable_with_fixed_seed(tmp_path: Path) -> None:
         {
             "step": 0,
             "policy": policy.state_dict(),
-            "cfg": {"env": {"id": "DummyEval-v0"}, "seed": 321},
+            "cfg": {"env": {"id": "DummyEval-v0"}, "seed": 321, "method": "vanilla"},
             "obs_norm": None,
         },
         ckpt_path,
@@ -103,32 +73,23 @@ def test_evaluator_is_repeatable_with_fixed_seed(tmp_path: Path) -> None:
     assert s1["returns"] == s2["returns"]
     assert s1["lengths"] == s2["lengths"]
 
-
-def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None:
     def _write_ckpt(*, method: str, seed: int, include_intrinsic: bool) -> Path:
-        obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-        act_space = gym.spaces.Discrete(2)
-
         torch.manual_seed(0)
-        policy = PolicyNetwork(obs_space, act_space)
+        policy_local = PolicyNetwork(obs_space, act_space)
 
         cfg = {
+           
+
             "seed": int(seed),
             "method": str(method),
             "env": {
-                "id": "DummyTraj-v0",
+                "id": "DummyEval-v0",
                 "frame_skip": 1,
                 "discrete_actions": True,
                 "car_discrete_action_set": None,
             },
         }
-
-        payload: dict[str, object] = {
-            "step": 0,
-            "policy": policy.state_dict(),
-            "cfg": cfg,
-            "obs_norm": None,
-        }
+        payload: dict[str, object] = {"step": 0, "policy": policy_local.state_dict(), "cfg": cfg, "obs_norm": None}
 
         if include_intrinsic:
             mod = create_intrinsic_module(
@@ -140,14 +101,14 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
             )
             payload["intrinsic"] = {"method": str(method), "state_dict": mod.state_dict()}
 
-        ckpt_path = tmp_path / f"ckpt_{method}{'_intr' if include_intrinsic else ''}.pt"
-        torch.save(payload, ckpt_path)
-        return ckpt_path
+        p = tmp_path / f"ckpt_{method}{'_intr' if include_intrinsic else ''}.pt"
+        torch.save(payload, p)
+        return p
 
     out_v = tmp_path / "vanilla_out"
     ckpt_v = _write_ckpt(method="vanilla", seed=123, include_intrinsic=False)
     _ = evaluate(
-        env="DummyTraj-v0",
+        env="DummyEval-v0",
         ckpt=ckpt_v,
         episodes=1,
         device="cpu",
@@ -155,9 +116,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
         traj_out_dir=out_v,
         policy_mode="mode",
     )
-    traj_v = out_v / "DummyTraj-v0_trajectory.npz"
-    assert traj_v.exists()
-
+    traj_v = out_v / "DummyEval-v0_trajectory.npz"
     d_v = np.load(traj_v, allow_pickle=False)
     assert set(d_v.files) == {
         "obs",
@@ -173,7 +132,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     out_g = tmp_path / "glpe_out"
     ckpt_g = _write_ckpt(method="glpe", seed=7, include_intrinsic=True)
     _ = evaluate(
-        env="DummyTraj-v0",
+        env="DummyEval-v0",
         ckpt=ckpt_g,
         episodes=1,
         device="cpu",
@@ -181,16 +140,13 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
         traj_out_dir=out_g,
         policy_mode="mode",
     )
-    traj_g = out_g / "DummyTraj-v0_trajectory.npz"
-    assert traj_g.exists()
-
-    d_g = np.load(traj_g, allow_pickle=False)
+    d_g = np.load(out_g / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
 
     out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
     ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
     _ = evaluate(
-        env="DummyTraj-v0",
+        env="DummyEval-v0",
         ckpt=ckpt_g_missing,
         episodes=1,
         device="cpu",
@@ -198,11 +154,24 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
         traj_out_dir=out_g_missing,
         policy_mode="mode",
     )
-    traj_g_missing = out_g_missing / "DummyTraj-v0_trajectory.npz"
-    assert traj_g_missing.exists()
-
-    d_g_missing = np.load(traj_g_missing, allow_pickle=False)
+    d_g_missing = np.load(out_g_missing / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
+
+    out_rnd = tmp_path / "rnd_out"
+    ckpt_rnd = _write_ckpt(method="rnd", seed=11, include_intrinsic=True)
+    _ = evaluate(
+        env="DummyEval-v0",
+        ckpt=ckpt_rnd,
+        episodes=1,
+        device="cpu",
+        save_traj=True,
+        traj_out_dir=out_rnd,
+        policy_mode="mode",
+    )
+    d_rnd = np.load(out_rnd / "DummyEval-v0_trajectory.npz", allow_pickle=False)
+    assert str(d_rnd["gate_source"].reshape(-1)[0]) == "n/a"
+    vals = np.asarray(d_rnd["intrinsic"], dtype=np.float32).reshape(-1)
+    assert vals.size > 0 and np.isfinite(vals).all() and np.any(np.abs(vals) > 1e-8)
 
 
 def _write_latest_ckpt(
@@ -298,7 +267,6 @@ def test_eval_suite_reports_coverage_and_step_parity(
         run_eval_suite(runs_root=runs_root, results_dir=results_dir)
 
     cov_path = results_dir / "coverage.csv"
-    assert cov_path.exists()
     with cov_path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     glpe_rows = [r for r in rows if r["env_id"] == "DummyEval-v0" and r["method"] == "glpe"]
@@ -324,16 +292,16 @@ def test_eval_suite_reports_coverage_and_step_parity(
 def test_eval_suite_every_k_selects_expected_ckpts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
     runs_root = tmp_path / "runs_suite"
     results_dir = tmp_path / "results_suite"
     runs_root.mkdir(parents=True, exist_ok=True)
 
     run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
     run_dir.mkdir(parents=True, exist_ok=True)
-
-    import irl.experiments.evaluation as eval_module
-
-    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
 
     for step in (0, 10, 20, 30):
         _write_step_ckpt(
@@ -349,69 +317,8 @@ def test_eval_suite_every_k_selects_expected_ckpts(
     run_eval_suite(runs_root=runs_root, results_dir=results_dir)
 
     raw_path = results_dir / "summary_raw.csv"
-    assert raw_path.exists()
     with raw_path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
     steps = sorted({int(r["ckpt_step"]) for r in rows})
     assert steps == [0, 20, 30]
-
-
-def test_evaluator_writes_rnd_trajectory_intrinsic(tmp_path: Path) -> None:
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(2)
-
-    torch.manual_seed(0)
-    policy = PolicyNetwork(obs_space, act_space)
-
-    cfg = {
-        "seed": 123,
-        "method": "rnd",
-        "env": {
-            "id": "DummyTraj-v0",
-            "frame_skip": 1,
-            "discrete_actions": True,
-            "car_discrete_action_set": None,
-        },
-    }
-
-    mod = create_intrinsic_module(
-        "rnd",
-        obs_space,
-        act_space,
-        device="cpu",
-        **build_intrinsic_kwargs(cfg),
-    )
-
-    ckpt_path = tmp_path / "ckpt_rnd_intrinsic.pt"
-    torch.save(
-        {
-            "step": 0,
-            "policy": policy.state_dict(),
-            "cfg": cfg,
-            "obs_norm": None,
-            "intrinsic": {"method": "rnd", "state_dict": mod.state_dict()},
-        },
-        ckpt_path,
-    )
-
-    out_dir = tmp_path / "rnd_out"
-    _ = evaluate(
-        env="DummyTraj-v0",
-        ckpt=ckpt_path,
-        episodes=1,
-        device="cpu",
-        save_traj=True,
-        traj_out_dir=out_dir,
-        policy_mode="mode",
-    )
-
-    traj_path = out_dir / "DummyTraj-v0_trajectory.npz"
-    assert traj_path.exists()
-
-    d = np.load(traj_path, allow_pickle=False)
-    vals = np.asarray(d["intrinsic"], dtype=np.float32).reshape(-1)
-
-    assert vals.size > 0
-    assert np.isfinite(vals).all()
-    assert np.any(np.abs(vals) > 1e-8)
