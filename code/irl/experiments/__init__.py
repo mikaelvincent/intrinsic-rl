@@ -41,10 +41,6 @@ def cli_plots() -> None:
     run_plots_suite(
         runs_root=RUNS_ROOT,
         results_dir=RESULTS_DIR,
-        metric=None,
-        smooth=5,
-        shade=True,
-        paper_mode=True,
     )
 
 
