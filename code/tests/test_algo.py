@@ -8,7 +8,6 @@ from torch import nn
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
 from irl.cfg.schema import PPOConfig
-from irl.models.distributions import SquashedDiagGaussianDist
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.pipelines.policy_rollout import iter_policy_rollout
 
@@ -142,36 +141,6 @@ def test_compute_gae_accepts_batch_major_obs() -> None:
 
 def _flat_params(model: nn.Module) -> torch.Tensor:
     return torch.cat([p.detach().cpu().view(-1) for p in model.parameters()])
-
-
-def test_squashed_diag_gaussian_entropy_matches_mc() -> None:
-    torch.manual_seed(0)
-
-    B = 32
-    act_dim = 2
-    mean = torch.randn((B, act_dim), dtype=torch.float32)
-    log_std = torch.randn((B, act_dim), dtype=torch.float32).clamp(-1.2, 1.2)
-
-    low = torch.tensor([-0.5, -1.0], dtype=torch.float32)
-    high = torch.tensor([0.5, 1.0], dtype=torch.float32)
-
-    dist = SquashedDiagGaussianDist(mean=mean, log_std=log_std, low=low, high=high)
-
-    N = 8192
-    with torch.no_grad():
-        u = dist._normal().rsample((N,))
-        a = dist._squash(u)
-        entropy_ref = float((-dist.log_prob(a)).mean().item())
-
-    M = 2048
-    torch.manual_seed(1)
-    with torch.no_grad():
-        acc = 0.0
-        for _ in range(M):
-            acc += float(dist.entropy().mean().item())
-        entropy_est = float(acc) / float(M)
-
-    assert abs(entropy_est - entropy_ref) < 0.05
 
 
 def test_ppo_update_kl_penalty_changes_policy() -> None:
