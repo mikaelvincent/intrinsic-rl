@@ -9,7 +9,7 @@ from irl.utils.runs import find_latest_ckpt
 
 _CKPT_STEP_RE = re.compile(r"^ckpt_step_(\d+)\.pt$")
 
-_CKPT_POLICIES = {"latest", "fixed_step", "all_steps", "every_k"}
+_CKPT_POLICIES = {"latest", "every_k"}
 
 
 def discover_run_dirs_with_latest_ckpt(root: Path) -> list[tuple[Path, Path]]:
@@ -139,57 +139,21 @@ def _list_step_ckpts(run_dir: Path) -> list[tuple[int, Path]]:
     return out
 
 
-def _pick_step_at_or_before(step_ckpts: list[tuple[int, Path]], target_step: int) -> Path | None:
-    if not step_ckpts:
-        return None
-
-    tgt = int(target_step)
-    best: Path | None = None
-    for s, p in step_ckpts:
-        if int(s) <= tgt:
-            best = p
-        else:
-            break
-
-    return best if best is not None else step_ckpts[0][1]
-
-
-def _downsample_paths(paths: list[Path], max_keep: int | None) -> list[Path]:
-    if max_keep is None:
-        return paths
-    m = int(max_keep)
-    if m <= 0 or len(paths) <= m:
-        return paths
-    if m == 1:
-        return [paths[-1]]
-
-    n = int(len(paths))
-    if m >= n:
-        return paths
-
-    idxs: list[int] = []
-    for i in range(m):
-        j = int(round((i * (n - 1)) / float(m - 1)))
-        idxs.append(j)
-
-    uniq: list[int] = []
-    seen: set[int] = set()
-    for j in idxs:
-        jj = int(max(0, min(n - 1, j)))
-        if jj not in seen:
-            uniq.append(jj)
-            seen.add(jj)
-
-    return [paths[j] for j in uniq]
+def _ckpt_step_sort_key(path: Path) -> tuple[int, str]:
+    m = _CKPT_STEP_RE.match(path.name)
+    if not m:
+        return (2**63 - 1, str(path.name))
+    try:
+        return (int(m.group(1)), str(path.name))
+    except Exception:
+        return (2**63 - 1, str(path.name))
 
 
 def select_ckpts_for_run(
     run_dir: Path,
     *,
     policy: str = "latest",
-    target_step: int | None = None,
     every_k: int | None = None,
-    max_ckpts_per_run: int | None = None,
 ) -> list[Path]:
     pol = _normalize_ckpt_policy(policy)
     rd = Path(run_dir).resolve()
@@ -203,59 +167,43 @@ def select_ckpts_for_run(
         ckpt = find_latest_ckpt(rd)
         return [ckpt] if ckpt is not None else []
 
-    if pol == "fixed_step":
-        if target_step is None:
-            raise ValueError("ckpt_policy='fixed_step' requires target_step.")
-        picked = _pick_step_at_or_before(step_ckpts, int(target_step))
-        return [picked] if picked is not None else []
+    if every_k is None:
+        raise ValueError("ckpt_policy='every_k' requires every_k.")
+    k = int(every_k)
+    if k <= 0:
+        raise ValueError("every_k must be >= 1.")
 
-    if pol == "all_steps":
-        paths = [p for _s, p in step_ckpts]
-        return _downsample_paths(paths, max_ckpts_per_run)
+    max_step = int(step_ckpts[-1][0])
+    targets = list(range(0, max_step + 1, k))
 
-    if pol == "every_k":
-        if every_k is None:
-            raise ValueError("ckpt_policy='every_k' requires every_k.")
-        k = int(every_k)
-        if k <= 0:
-            raise ValueError("every_k must be >= 1.")
+    chosen: dict[int, Path] = {}
+    idx = 0
+    best_idx = -1
 
-        max_step = int(step_ckpts[-1][0])
-        targets = list(range(0, max_step + 1, k))
+    for t in targets:
+        tt = int(t)
+        while idx < len(step_ckpts) and int(step_ckpts[idx][0]) <= tt:
+            best_idx = idx
+            idx += 1
 
-        chosen: dict[int, Path] = {}
-        idx = 0
-        best_idx = -1
+        if best_idx >= 0:
+            s, p = step_ckpts[best_idx]
+            chosen[int(s)] = p
+        else:
+            s0, p0 = step_ckpts[0]
+            chosen[int(s0)] = p0
 
-        for t in targets:
-            tt = int(t)
-            while idx < len(step_ckpts) and int(step_ckpts[idx][0]) <= tt:
-                best_idx = idx
-                idx += 1
+    s_last, p_last = step_ckpts[-1]
+    chosen[int(s_last)] = p_last
 
-            if best_idx >= 0:
-                s, p = step_ckpts[best_idx]
-                chosen[int(s)] = p
-            else:
-                s0, p0 = step_ckpts[0]
-                chosen[int(s0)] = p0
-
-        s_last, p_last = step_ckpts[-1]
-        chosen[int(s_last)] = p_last
-
-        paths = [chosen[s] for s in sorted(chosen.keys())]
-        return _downsample_paths(paths, max_ckpts_per_run)
-
-    raise ValueError(f"Unsupported ckpt_policy={policy!r}.")
+    return [chosen[s] for s in sorted(chosen.keys())]
 
 
 def discover_run_dirs_with_selected_ckpts(
     root: Path,
     *,
     policy: str = "latest",
-    target_step: int | None = None,
     every_k: int | None = None,
-    max_ckpts_per_run: int | None = None,
 ) -> list[tuple[Path, Path]]:
     pol = _normalize_ckpt_policy(policy)
     if pol == "latest":
@@ -277,15 +225,9 @@ def discover_run_dirs_with_selected_ckpts(
             continue
         seen.add(run_dir)
 
-        ckpts = select_ckpts_for_run(
-            run_dir,
-            policy=pol,
-            target_step=target_step,
-            every_k=every_k,
-            max_ckpts_per_run=max_ckpts_per_run,
-        )
+        ckpts = select_ckpts_for_run(run_dir, policy=pol, every_k=every_k)
         for ckpt in ckpts:
             out.append((run_dir, Path(ckpt).resolve()))
 
-    out.sort(key=lambda t: (str(t[0]), str(t[1])))
+    out.sort(key=lambda t: (str(t[0]), _ckpt_step_sort_key(t[1])))
     return out
