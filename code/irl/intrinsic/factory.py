@@ -5,6 +5,9 @@ from typing import Any, Optional
 import gymnasium as gym
 import torch
 
+from irl.methods.spec import canonical_method as _canonical_method_core
+from irl.methods.spec import normalize_method as _normalize_method
+
 from .icm import ICM
 from .glpe import GLPE
 from .riac import RIAC
@@ -15,10 +18,7 @@ _SUPPORTED = {"icm", "rnd", "ride", "riac", "glpe"}
 
 
 def _canonical_method(method: str) -> str:
-    m = str(method).lower()
-    if m.startswith("glpe_"):
-        return "glpe"
-    return m
+    return _canonical_method_core(method)
 
 
 def is_intrinsic_method(method: str) -> bool:
@@ -32,7 +32,7 @@ def create_intrinsic_module(
     device: str | torch.device = "cpu",
     **kwargs: Any,
 ):
-    m_raw = str(method).lower()
+    m_raw = _normalize_method(method)
     m = _canonical_method(m_raw)
 
     if m == "icm":
