@@ -78,6 +78,7 @@ def evaluate(
             gates=rr.trajectory.gates,
             intrinsic=rr.trajectory.intrinsic,
             gate_source=rr.trajectory.gate_source,
+            intrinsic_semantics=rr.trajectory.intrinsic_semantics,
         )
 
     def _summary(rr: RolloutResult, mode: str) -> dict:
