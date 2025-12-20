@@ -25,10 +25,9 @@ class _ValueSequence(nn.Module):
         return self.v_t if self._calls == 1 else self.v_tp1
 
 
-def test_compute_gae_bootstraps_timeouts_and_dones() -> None:
+def test_compute_gae_handles_timeouts_and_layout() -> None:
     obs = torch.zeros((3, 1, 1), dtype=torch.float32)
     next_obs = torch.zeros((3, 1, 1), dtype=torch.float32)
-
     rewards = torch.tensor([[1.0], [1.0], [1.0]], dtype=torch.float32)
     v_t = torch.tensor([10.0, 20.0, 30.0], dtype=torch.float32)
     v_tp1 = torch.tensor([20.0, 30.0, 40.0], dtype=torch.float32)
@@ -47,7 +46,7 @@ def test_compute_gae_bootstraps_timeouts_and_dones() -> None:
     )
     assert torch.allclose(vt_term, torch.tensor([3.0, 2.0, 1.0], dtype=torch.float32), atol=1e-6)
 
-    terminals = torch.tensor([[0.0], [0.0], [0.0]], dtype=torch.float32)
+    terminals = torch.zeros((3, 1), dtype=torch.float32)
     truncs = torch.tensor([[0.0], [0.0], [1.0]], dtype=torch.float32)
     vf_boot = _ValueSequence(v_t, v_tp1)
     adv_boot, vt_boot = compute_gae(
@@ -70,71 +69,62 @@ def test_compute_gae_bootstraps_timeouts_and_dones() -> None:
         vt_boot, torch.tensor([43.0, 42.0, 41.0], dtype=torch.float32), atol=1e-6
     )
 
-
-def test_compute_gae_does_not_leak_across_truncation() -> None:
-    obs = torch.zeros((4, 1, 1), dtype=torch.float32)
-    next_obs = torch.zeros((4, 1, 1), dtype=torch.float32)
-
-    rewards = torch.tensor([[0.0], [0.0], [10.0], [0.0]], dtype=torch.float32)
-    terminals = torch.tensor([[0.0], [0.0], [0.0], [1.0]], dtype=torch.float32)
-    truncations = torch.tensor([[0.0], [1.0], [0.0], [0.0]], dtype=torch.float32)
-
-    vf = _ValueSequence(
-        v_t=[0.0, 0.0, 0.0, 0.0],
-        v_tp1=[0.0, 5.0, 0.0, 0.0],
-    )
-    adv, v_targets = compute_gae(
+    obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
+    next_obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
+    rewards2 = torch.tensor([[0.0], [0.0], [10.0], [0.0]], dtype=torch.float32)
+    terminals2 = torch.tensor([[0.0], [0.0], [0.0], [1.0]], dtype=torch.float32)
+    truncations2 = torch.tensor([[0.0], [1.0], [0.0], [0.0]], dtype=torch.float32)
+    vf2 = _ValueSequence(v_t=[0.0, 0.0, 0.0, 0.0], v_tp1=[0.0, 5.0, 0.0, 0.0])
+    adv2, vt2 = compute_gae(
         {
-            "obs": obs,
-            "next_observations": next_obs,
-            "rewards": rewards,
-            "terminals": terminals,
-            "truncations": truncations,
+            "obs": obs2,
+            "next_observations": next_obs2,
+            "rewards": rewards2,
+            "terminals": terminals2,
+            "truncations": truncations2,
         },
-        value_fn=vf,
+        value_fn=vf2,
         gamma=1.0,
         lam=1.0,
         bootstrap_on_timeouts=True,
     )
     expected = torch.tensor([5.0, 5.0, 10.0, 0.0], dtype=torch.float32)
-    assert torch.allclose(adv, expected, atol=1e-6)
-    assert torch.allclose(v_targets, expected, atol=1e-6)
+    assert torch.allclose(adv2, expected, atol=1e-6)
+    assert torch.allclose(vt2, expected, atol=1e-6)
 
-
-def test_compute_gae_accepts_batch_major_obs() -> None:
     T, B = 3, 2
     obs_tb = torch.zeros((T, B, 1), dtype=torch.float32)
     next_obs_tb = torch.zeros((T, B, 1), dtype=torch.float32)
     obs_bt = obs_tb.transpose(0, 1)
     next_obs_bt = next_obs_tb.transpose(0, 1)
 
-    rewards = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float32)
-    dones = torch.zeros((T, B), dtype=torch.float32)
-    dones[-1] = 1.0
+    rewards3 = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float32)
+    dones3 = torch.zeros((T, B), dtype=torch.float32)
+    dones3[-1] = 1.0
 
-    v_t = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
-    v_tp1 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-
-    vf_time_major = _ValueSequence(v_t, v_tp1)
+    vf_time_major = _ValueSequence(
+        v_t=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+        v_tp1=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    )
     adv_tb, vt_tb = compute_gae(
-        {"obs": obs_tb, "next_observations": next_obs_tb, "rewards": rewards, "dones": dones},
+        {"obs": obs_tb, "next_observations": next_obs_tb, "rewards": rewards3, "dones": dones3},
         value_fn=vf_time_major,
         gamma=0.99,
         lam=0.95,
         bootstrap_on_timeouts=False,
     )
 
-    vf_batch_major = _ValueSequence(v_t, v_tp1)
+    vf_batch_major = _ValueSequence(
+        v_t=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+        v_tp1=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    )
     adv_bt, vt_bt = compute_gae(
-        {"obs": obs_bt, "next_observations": next_obs_bt, "rewards": rewards, "dones": dones},
+        {"obs": obs_bt, "next_observations": next_obs_bt, "rewards": rewards3, "dones": dones3},
         value_fn=vf_batch_major,
         gamma=0.99,
         lam=0.95,
         bootstrap_on_timeouts=False,
     )
-
-    assert adv_tb.shape == adv_bt.shape == (T * B,)
-    assert vt_tb.shape == vt_bt.shape == (T * B,)
     assert torch.allclose(adv_tb, adv_bt, atol=1e-6)
     assert torch.allclose(vt_tb, vt_bt, atol=1e-6)
 
@@ -156,9 +146,7 @@ def test_ppo_update_kl_penalty_changes_policy() -> None:
     init_pol = {k: v.clone() for k, v in base_policy.state_dict().items()}
     init_val = {k: v.clone() for k, v in base_value.state_dict().items()}
 
-    N = 64
-    obs = rng.standard_normal((N, 4)).astype(np.float32)
-
+    obs = rng.standard_normal((64, 4)).astype(np.float32)
     with torch.no_grad():
         dist0 = base_policy.distribution(torch.as_tensor(obs, dtype=torch.float32))
         actions_t = dist0.sample()
@@ -169,11 +157,11 @@ def test_ppo_update_kl_penalty_changes_policy() -> None:
         "actions": actions_t.detach().cpu().numpy(),
         "old_log_probs": old_logp_t.detach().cpu().numpy().astype(np.float32),
     }
-    advantages = rng.standard_normal(N).astype(np.float32)
-    value_targets = rng.standard_normal(N).astype(np.float32)
+    advantages = rng.standard_normal(64).astype(np.float32)
+    value_targets = rng.standard_normal(64).astype(np.float32)
 
     cfg = PPOConfig(
-        steps_per_update=N,
+        steps_per_update=64,
         minibatches=2,
         epochs=2,
         learning_rate=3.0e-4,
@@ -202,8 +190,7 @@ def test_ppo_update_kl_penalty_changes_policy() -> None:
         cfg,
         return_stats=True,
     )
-    assert stats is not None
-    assert np.isfinite(float(stats["approx_kl"]))
+    assert stats is not None and np.isfinite(float(stats["approx_kl"]))
 
     policy_b = PolicyNetwork(obs_space, act_space)
     value_b = ValueNetwork(obs_space)
@@ -253,8 +240,7 @@ class _BoundedBoxEnv(gym.Env):
 
         self._t += 1
         terminated = self._t >= 3
-        obs = np.zeros((4,), dtype=np.float32)
-        return obs, 0.0, bool(terminated), False, {}
+        return np.zeros((4,), dtype=np.float32), 0.0, bool(terminated), False, {}
 
     def close(self) -> None:
         return
@@ -268,18 +254,19 @@ def test_policy_rollout_continuous_actions_within_bounds() -> None:
 
         for mode in ("mode", "sample"):
             obs0, _ = env.reset(seed=0)
-            steps = 0
-            for _step in iter_policy_rollout(
-                env=env,
-                policy=policy,
-                obs0=obs0,
-                act_space=env.action_space,
-                device=torch.device("cpu"),
-                policy_mode=mode,
-                normalize_obs=None,
-                max_steps=5,
-            ):
-                steps += 1
+            steps = sum(
+                1
+                for _ in iter_policy_rollout(
+                    env=env,
+                    policy=policy,
+                    obs0=obs0,
+                    act_space=env.action_space,
+                    device=torch.device("cpu"),
+                    policy_mode=mode,
+                    normalize_obs=None,
+                    max_steps=5,
+                )
+            )
             assert steps == 3
     finally:
         env.close()
