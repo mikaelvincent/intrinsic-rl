@@ -10,13 +10,11 @@ from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.utils.images import infer_channels_hw
 
 
-def test_infer_channels_hw_grayscale_2d() -> None:
+def test_grayscale_hw_observations_work_end_to_end() -> None:
     c, hw = infer_channels_hw((32, 32))
     assert c == 1
     assert hw == (32, 32)
 
-
-def test_grayscale_hw_observations_work_end_to_end() -> None:
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
 
@@ -28,8 +26,7 @@ def test_grayscale_hw_observations_work_end_to_end() -> None:
     value = ValueNetwork(obs_space).to(torch.device("cpu"))
 
     obs = rng.integers(0, 256, size=(H, W), dtype=np.uint8)
-    dist = policy.distribution(obs)
-    a = dist.sample()
+    a = policy.distribution(obs).sample()
     assert a.shape == (1,)
     v = value(obs)
     assert v.shape == (1,)
@@ -50,9 +47,7 @@ def test_grayscale_hw_observations_work_end_to_end() -> None:
     r_icm = icm.compute_batch(obs_b, next_obs_b, actions, reduction="none")
     assert r_icm.shape == (B,)
     assert torch.isfinite(r_icm).all()
-
-    losses = icm.loss(obs_b, next_obs_b, actions)
-    assert torch.isfinite(losses["intrinsic_mean"]).all()
+    assert torch.isfinite(icm.loss(obs_b, next_obs_b, actions)["intrinsic_mean"]).all()
 
     rnd = RND(obs_space, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
     r_rnd = rnd.compute_batch(obs_b, reduction="none")
