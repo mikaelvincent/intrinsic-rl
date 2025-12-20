@@ -4,6 +4,7 @@ from dataclasses import is_dataclass
 from typing import Any, Mapping
 
 from irl.cfg.schema import GateConfig, IntrinsicConfig
+from irl.methods.spec import is_glpe_family, normalize_method
 
 
 def _get(obj: Any, key: str, default: Any) -> Any:
@@ -55,7 +56,7 @@ def _as_float(v: Any, default: float) -> float:
 def build_intrinsic_kwargs(cfg_like: Any) -> dict[str, Any]:
     cfg = cfg_like if is_dataclass(cfg_like) else cfg_like
 
-    method = str(_get(cfg, "method", "vanilla")).strip().lower()
+    method = normalize_method(_get(cfg, "method", "vanilla"))
 
     intrinsic_defaults = IntrinsicConfig()
     gate_defaults = GateConfig()
@@ -71,8 +72,7 @@ def build_intrinsic_kwargs(cfg_like: Any) -> dict[str, Any]:
         _get(gate, "median_cache_interval", gate_defaults.median_cache_interval),
         gate_defaults.median_cache_interval,
     )
-    if method.startswith("glpe") and method != "glpe_cache":
-        # Median caching is reserved for the caching ablation.
+    if is_glpe_family(method) and method != "glpe_cache":
         cache_interval = 1
 
     return {
