@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 import gymnasium as gym
@@ -366,3 +367,57 @@ def test_eval_suite_every_k_selects_expected_ckpts(
 
     steps = sorted({int(r["ckpt_step"]) for r in rows})
     assert steps == [0, 20, 30]
+
+
+def test_eval_suite_uses_cfg_device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import irl.experiments.evaluation as eval_module
+
+    seen: list[str] = []
+
+    def _capture(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs) -> dict:
+        _ = ckpt, kwargs
+        seen.append(str(device))
+        return {
+            "env_id": str(env),
+            "episodes": int(episodes),
+            "seed": 0,
+            "mean_return": 1.0,
+            "std_return": 0.0,
+            "min_return": 1.0,
+            "max_return": 1.0,
+            "mean_length": 1.0,
+            "std_length": 0.0,
+            "returns": [1.0],
+            "lengths": [1],
+        }
+
+    monkeypatch.setattr(eval_module, "evaluate", _capture)
+
+    runs_root = tmp_path / "runs_suite_dev"
+    results_dir = tmp_path / "results_suite_dev"
+    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    ckpt_dir = run_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    torch.save(
+        {
+            "step": 0,
+            "cfg": {
+                "env": {"id": "DummyEval-v0"},
+                "method": "vanilla",
+                "seed": 1,
+                "device": "cuda:0",
+                "evaluation": {"interval_steps": 0, "episodes": 1},
+            },
+        },
+        ckpt_dir / "ckpt_latest.pt",
+    )
+
+    run_eval_suite(runs_root=runs_root, results_dir=results_dir)
+
+    assert seen and seen[0] == "cuda:0"
+
+    meta_path = results_dir / "eval_meta.json"
+    assert meta_path.exists()
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta.get("device") == "cuda:0"
