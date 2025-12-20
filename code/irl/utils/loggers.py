@@ -191,13 +191,10 @@ class MetricLogger:
         s = int(step)
         last = self._last_csv_write_step
 
-        should_write_csv = False
         if last is None:
-            if s == 0 or s >= interval:
-                should_write_csv = True
+            should_write_csv = True
         else:
-            if s >= last + interval:
-                should_write_csv = True
+            should_write_csv = s >= last + interval
 
         if not should_write_csv:
             return False
