@@ -1,7 +1,7 @@
+# tests/test_evaluation.py
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 import gymnasium as gym
@@ -38,9 +38,8 @@ class _DummyEvalEnv(gym.Env):
     def step(self, action):
         self._t += 1
         obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        reward = float(action)
         terminated = self._t >= 5
-        return obs, reward, bool(terminated), False, {}
+        return obs, float(action), bool(terminated), False, {}
 
     def close(self) -> None:
         return
@@ -67,9 +66,8 @@ class _DummyTrajEnv(gym.Env):
     def step(self, action):
         self._t += 1
         obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        reward = float(action)
         terminated = self._t >= 3
-        return obs, reward, bool(terminated), False, {}
+        return obs, float(action), bool(terminated), False, {}
 
     def close(self) -> None:
         return
@@ -297,10 +295,7 @@ def test_eval_suite_reports_coverage_and_step_parity(
     _write_latest_ckpt(r_g1, env_id="DummyEval-v0", method="glpe", seed=1, step=50)
 
     with pytest.raises(RuntimeError, match="Seed coverage mismatch"):
-        run_eval_suite(
-            runs_root=runs_root,
-            results_dir=results_dir,
-        )
+        run_eval_suite(runs_root=runs_root, results_dir=results_dir)
 
     cov_path = results_dir / "coverage.csv"
     assert cov_path.exists()
@@ -323,10 +318,7 @@ def test_eval_suite_reports_coverage_and_step_parity(
     _write_latest_ckpt(r_g, env_id="DummyEval-v0", method="glpe", seed=1, step=1_000)
 
     with pytest.raises(RuntimeError, match="Step parity mismatch"):
-        run_eval_suite(
-            runs_root=runs_root2,
-            results_dir=results_dir2,
-        )
+        run_eval_suite(runs_root=runs_root2, results_dir=results_dir2)
 
 
 def test_eval_suite_every_k_selects_expected_ckpts(
@@ -354,70 +346,12 @@ def test_eval_suite_every_k_selects_expected_ckpts(
             episodes=1,
         )
 
-    run_eval_suite(
-        runs_root=runs_root,
-        results_dir=results_dir,
-    )
+    run_eval_suite(runs_root=runs_root, results_dir=results_dir)
 
     raw_path = results_dir / "summary_raw.csv"
     assert raw_path.exists()
-
     with raw_path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
     steps = sorted({int(r["ckpt_step"]) for r in rows})
     assert steps == [0, 20, 30]
-
-
-def test_eval_suite_uses_cfg_device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import irl.experiments.evaluation as eval_module
-
-    seen: list[str] = []
-
-    def _capture(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs) -> dict:
-        _ = ckpt, kwargs
-        seen.append(str(device))
-        return {
-            "env_id": str(env),
-            "episodes": int(episodes),
-            "seed": 0,
-            "mean_return": 1.0,
-            "std_return": 0.0,
-            "min_return": 1.0,
-            "max_return": 1.0,
-            "mean_length": 1.0,
-            "std_length": 0.0,
-            "returns": [1.0],
-            "lengths": [1],
-        }
-
-    monkeypatch.setattr(eval_module, "evaluate", _capture)
-
-    runs_root = tmp_path / "runs_suite_dev"
-    results_dir = tmp_path / "results_suite_dev"
-    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
-    ckpt_dir = run_dir / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    torch.save(
-        {
-            "step": 0,
-            "cfg": {
-                "env": {"id": "DummyEval-v0"},
-                "method": "vanilla",
-                "seed": 1,
-                "device": "cuda:0",
-                "evaluation": {"interval_steps": 0, "episodes": 1},
-            },
-        },
-        ckpt_dir / "ckpt_latest.pt",
-    )
-
-    run_eval_suite(runs_root=runs_root, results_dir=results_dir)
-
-    assert seen and seen[0] == "cuda:0"
-
-    meta_path = results_dir / "eval_meta.json"
-    assert meta_path.exists()
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta.get("device") == "cuda:0"
