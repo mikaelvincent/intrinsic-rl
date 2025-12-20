@@ -1,4 +1,3 @@
-# code/irl/experiments/evaluation.py
 from __future__ import annotations
 
 from collections import defaultdict
