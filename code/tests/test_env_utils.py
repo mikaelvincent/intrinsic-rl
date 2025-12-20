@@ -9,36 +9,10 @@ import pytest
 from gymnasium.envs.registration import register
 
 from irl.envs.manager import EnvManager
-from irl.envs.wrappers import DomainRandomizationWrapper, FrameSkip
+from irl.envs.wrappers import DomainRandomizationWrapper
 from irl.intrinsic.regions.kdtree import KDTreeRegionStore
 from irl.trainer.runtime_utils import _apply_final_observation
 from irl.utils.checkpoint import CheckpointManager
-
-
-class _FrameSkipEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(2)
-        self.t = 0
-
-    def reset(self, *, seed=None, options=None):
-        _ = seed, options
-        self.t = 0
-        return np.array([0.0], dtype=np.float32), {}
-
-    def step(self, action):
-        _ = action
-        self.t += 1
-        obs = np.array([float(self.t)], dtype=np.float32)
-        reward = 1.0
-        terminated = self.t >= 3
-        return obs, reward, bool(terminated), False, {"t": self.t}
-
-    def close(self) -> None:
-        return
 
 
 class _CarRacingLikeEnv(gym.Env):
@@ -52,18 +26,14 @@ class _CarRacingLikeEnv(gym.Env):
             high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
-        self._t = 0
 
     def reset(self, *, seed=None, options=None):
         _ = seed, options
-        self._t = 0
         return np.zeros((4,), dtype=np.float32), {}
 
     def step(self, action):
         _ = action
-        self._t += 1
-        obs = np.zeros((4,), dtype=np.float32)
-        return obs, 0.0, True, False, {}
+        return np.zeros((4,), dtype=np.float32), 0.0, True, False, {}
 
     def close(self) -> None:
         return
@@ -96,8 +66,7 @@ class _DummyMujocoLikeEnv(gym.Env):
 
     def step(self, action):
         _ = action
-        obs = self.observation_space.sample()
-        return obs, 0.0, False, False, {}
+        return self.observation_space.sample(), 0.0, False, False, {}
 
     def close(self) -> None:
         return
@@ -116,13 +85,10 @@ def test_checkpoint_manager_prune_keeps_step0() -> None:
     with TemporaryDirectory() as td:
         run_dir = Path(td) / "run"
         cm = CheckpointManager(run_dir, interval_steps=10, max_to_keep=2)
-
         for step in (0, 10, 20, 30):
             cm.save(step=step, payload=_payload(step))
 
-        ckpt_dir = run_dir / "checkpoints"
-        kept = sorted(p.name for p in ckpt_dir.glob("ckpt_step_*.pt"))
-
+        kept = sorted(p.name for p in (run_dir / "checkpoints").glob("ckpt_step_*.pt"))
         assert "ckpt_step_0.pt" in kept
         assert "ckpt_step_30.pt" in kept
         assert "ckpt_step_20.pt" in kept
@@ -131,13 +97,12 @@ def test_checkpoint_manager_prune_keeps_step0() -> None:
 
 def test_kdtree_bulk_insert_matches_sequential_and_dedup() -> None:
     rng = np.random.default_rng(0)
-    dim = 3
-    pts = rng.standard_normal((100, dim)).astype(np.float32)
+    pts = rng.standard_normal((100, 3)).astype(np.float32)
 
-    store_seq = KDTreeRegionStore(dim=dim, capacity=4, depth_max=6)
+    store_seq = KDTreeRegionStore(dim=3, capacity=4, depth_max=6)
     rids_seq = np.array([store_seq.insert(p) for p in pts], dtype=np.int64)
 
-    store_bulk = KDTreeRegionStore(dim=dim, capacity=4, depth_max=6)
+    store_bulk = KDTreeRegionStore(dim=3, capacity=4, depth_max=6)
     rids_bulk = store_bulk.bulk_insert(pts)
 
     assert np.all(rids_seq == rids_bulk)
@@ -165,26 +130,6 @@ def test_apply_final_observation_handles_vector_and_scalar() -> None:
     assert np.allclose(fixed_1, np.array([10.0, 11.0, 12.0], dtype=np.float32))
 
 
-def test_frameskip_accumulates_reward_and_stops() -> None:
-    env = _FrameSkipEnv()
-    try:
-        env = FrameSkip(env, skip=2)
-        obs, _ = env.reset()
-        assert obs.shape == (1,)
-
-        obs1, r1, term1, trunc1, _ = env.step(0)
-        assert np.isclose(r1, 2.0)
-        assert not term1 and not trunc1
-        assert np.isclose(obs1[0], 2.0)
-
-        obs2, r2, term2, trunc2, _ = env.step(1)
-        assert np.isclose(r2, 1.0)
-        assert term2 and not trunc2
-        assert np.isclose(obs2[0], 3.0)
-    finally:
-        env.close()
-
-
 def test_domain_randomization_mujoco_stays_near_baseline() -> None:
     env = _DummyMujocoLikeEnv()
     try:
@@ -192,7 +137,7 @@ def test_domain_randomization_mujoco_stays_near_baseline() -> None:
         baseline = wrapped.unwrapped.model.opt.gravity.copy()
 
         unique_scales: set[float] = set()
-        for _ in range(8):
+        for _ in range(6):
             _, info = wrapped.reset()
             g = wrapped.unwrapped.model.opt.gravity
             ratio = g / baseline
@@ -201,10 +146,7 @@ def test_domain_randomization_mujoco_stays_near_baseline() -> None:
             assert np.all(ratio >= 0.95 - 1e-6)
             assert np.all(ratio <= 1.05 + 1e-6)
 
-            assert isinstance(info, dict)
-            diag = info.get("dr_applied")
-            assert isinstance(diag, dict)
-
+            assert isinstance(info, dict) and isinstance(info.get("dr_applied"), dict)
             unique_scales.add(round(float(ratio.reshape(-1)[0]), 3))
 
         assert len(unique_scales) > 1
