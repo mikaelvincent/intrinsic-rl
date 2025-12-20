@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
@@ -9,6 +8,7 @@ import numpy as np
 from gymnasium.vector import AsyncVectorEnv, SyncVectorEnv
 from gymnasium.wrappers import RecordEpisodeStatistics
 
+from irl.runtime.envvars import ensure_sdl_dummy
 from irl.utils.loggers import get_logger
 
 from .wrappers import CarRacingDiscreteActionWrapper, DomainRandomizationWrapper, FrameSkip
@@ -111,8 +111,7 @@ class EnvManager:
             if self.render_mode is not None:
                 kwargs["render_mode"] = self.render_mode
 
-            if "SDL_VIDEODRIVER" not in os.environ:
-                os.environ["SDL_VIDEODRIVER"] = "dummy"
+            ensure_sdl_dummy()
 
             env = gym.make(self.env_id, **kwargs)
 
