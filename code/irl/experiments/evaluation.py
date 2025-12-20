@@ -265,9 +265,8 @@ def run_eval_suite(
 
     ep_vals = sorted({int(v) for v in episodes_by_run.values() if int(v) > 0})
     if not ep_vals:
-        episodes = int(DEFAULT_EVAL_POLICY_MODE)  # unreachable, but keep type stable
-        episodes = 0
-    elif len(ep_vals) == 1:
+        raise RuntimeError("[suite]    ! No positive evaluation episodes found across runs.")
+    if len(ep_vals) == 1:
         episodes = int(ep_vals[0])
     else:
         raise RuntimeError(f"[suite]    ! Evaluation episodes mismatch across runs: {ep_vals}")
