@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .atomic_files import atomic_replace, atomic_write_bytes, atomic_write_text
+from .atomic import atomic_replace, atomic_write_bytes, atomic_write_text
 from .checkpoint_manager import CheckpointManager, load_checkpoint
 from .config_hash import compute_cfg_hash
 
