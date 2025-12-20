@@ -80,8 +80,9 @@ def run_video_suite() -> None:
     videos_root.mkdir(parents=True, exist_ok=True)
 
     typer.echo(
-        f"[suite] Rendering rollout videos for {len(run_dirs)} run(s) "
-        f"({pm}, eval_seeds={seeds}) to {videos_root}"
+        f"[suite] Videos defaults: runs_root={root}, out_dir={videos_root}, device={device}, "
+        f"policy_mode={pm}, eval_seeds={seeds}, max_steps={int(DEFAULT_VIDEO_MAX_STEPS)}, "
+        f"fps={int(DEFAULT_VIDEO_FPS)}"
     )
 
     for rd in run_dirs:
