@@ -74,6 +74,7 @@ def evaluate(
             env_id=str(env),
             method=str(method),
             obs=rr.trajectory.obs,
+            rewards_ext=rr.trajectory.rewards_ext,
             gates=rr.trajectory.gates,
             intrinsic=rr.trajectory.intrinsic,
             gate_source=rr.trajectory.gate_source,
