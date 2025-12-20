@@ -41,7 +41,7 @@ def render_rollout_video(
     ckpt_step = int(payload.get("step", -1))
 
     ensure_mujoco_gl(env_id)
-    seed_everything(int(seed), deterministic=True)
+    seed_everything(int(seed), deterministic=True, device=str(device))
 
     runtime = extract_env_settings(cfg)
     frame_skip = int(runtime["frame_skip"])
