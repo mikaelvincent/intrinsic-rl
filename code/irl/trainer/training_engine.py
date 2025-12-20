@@ -21,7 +21,6 @@ from .training_setup import TrainingSession
 from .update_steps import compute_advantages, compute_intrinsic_rewards, ppo_step
 
 
-# CUDA kernels launch asynchronously; synchronize only for timing/profiling.
 def _maybe_cuda_sync(device: torch.device, enabled: bool) -> None:
     if not enabled:
         return
@@ -104,6 +103,10 @@ def run_training_loop(
 
     progress = ProgressLogger.start(initial_step=int(global_step))
 
+    ep_buf_returns: list[float] = []
+    ep_buf_lengths: list[int] = []
+    ep_buf_successes: list[float] = []
+
     while global_step < int(total_steps):
         t_update_start = time.perf_counter()
 
@@ -139,6 +142,13 @@ def run_training_loop(
             device=device,
             logger=logger,
         )
+
+        if rollout.episode_returns:
+            ep_buf_returns.extend(rollout.episode_returns)
+        if rollout.episode_lengths:
+            ep_buf_lengths.extend(rollout.episode_lengths)
+        if rollout.episode_successes:
+            ep_buf_successes.extend(rollout.episode_successes)
 
         obs = rollout.final_env_obs
         global_step += int(rollout.steps_collected)
@@ -241,9 +251,33 @@ def run_training_loop(
         )
         t_logging_compute = time.perf_counter() - log_compute_t0
 
+        if ep_buf_returns:
+            ret = np.asarray(ep_buf_returns, dtype=np.float64).reshape(-1)
+            lens = np.asarray(ep_buf_lengths, dtype=np.float64).reshape(-1) if ep_buf_lengths else ret * 0.0
+            log_payload["episode_count"] = int(ret.size)
+            log_payload["episode_return_mean"] = float(ret.mean()) if ret.size else 0.0
+            log_payload["episode_return_std"] = float(ret.std(ddof=0)) if ret.size > 1 else 0.0
+            log_payload["episode_length_mean"] = float(lens.mean()) if lens.size else 0.0
+            log_payload["episode_length_std"] = float(lens.std(ddof=0)) if lens.size > 1 else 0.0
+            log_payload["success_rate"] = (
+                float(np.mean(ep_buf_successes)) if ep_buf_successes else 0.0
+            )
+        else:
+            log_payload["episode_count"] = 0
+            log_payload["episode_return_mean"] = 0.0
+            log_payload["episode_return_std"] = 0.0
+            log_payload["episode_length_mean"] = 0.0
+            log_payload["episode_length_std"] = 0.0
+            log_payload["success_rate"] = 0.0
+
         ml_t0 = time.perf_counter()
-        ml.log(step=int(global_step), **log_payload)
+        wrote_csv = ml.log(step=int(global_step), **log_payload)
         t_ml_log = time.perf_counter() - ml_t0
+
+        if wrote_csv:
+            ep_buf_returns.clear()
+            ep_buf_lengths.clear()
+            ep_buf_successes.clear()
 
         t_update_total = time.perf_counter() - t_update_start
 
