@@ -8,7 +8,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from irl.trainer.metrics_schema import REWARD_METRIC_FALLBACKS
+from irl.metrics.schema import REWARD_METRIC_FALLBACKS
 from irl.utils.runs import expand_runs_from_patterns, parse_run_name
 
 
