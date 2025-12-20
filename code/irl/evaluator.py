@@ -35,7 +35,7 @@ def evaluate(
     seed_eval_base = int(seed_cfg) + int(seed_offset)
     step = int(payload.get("step", -1))
 
-    seed_everything(seed_cfg, deterministic=True)
+    seed_everything(seed_cfg, deterministic=True, device=str(device))
 
     session = build_eval_session(
         env_id=str(env),
