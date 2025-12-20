@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -19,6 +20,87 @@ from irl.utils.loggers import (
 from .build import default_run_dir
 from .obs_norm import RunningObsNorm
 from .runtime_utils import _move_optimizer_state_to_device
+
+_ALLOW_RESUME_WO_POINTS_ENV = "IRL_ALLOW_RESUME_WITHOUT_KDTREE_POINTS"
+
+
+def _truthy_env(name: str) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return False
+    return v.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _is_kdtree_intrinsic_method(method_l: str) -> bool:
+    m = str(method_l).strip().lower()
+    return m == "riac" or m.startswith("glpe")
+
+
+def _extract_store_include_points(extra: object) -> bool | None:
+    if not isinstance(extra, dict):
+        return None
+    store = extra.get("store")
+    if not isinstance(store, dict):
+        return None
+    if "include_points" not in store:
+        return None
+    try:
+        return bool(store.get("include_points"))
+    except Exception:
+        return None
+
+
+def _payload_extra_state(payload: dict, intr: dict) -> object | None:
+    extra_state = intr.get(ckpt_schema.INTRINSIC_EXTRA_STATE, None)
+    if extra_state is not None:
+        return extra_state
+    compat = payload.get(ckpt_schema.KEY_INTRINSIC_EXTRA_STATE_COMPAT, None)
+    if compat is not None:
+        return compat
+    return payload.get(ckpt_schema.KEY_INTRINSIC_STATE_COMPAT, None)
+
+
+def _guard_resume_kdtree_points(
+    payload: dict,
+    *,
+    intrinsic_module: object | None,
+    method_l: str,
+    logger: object,
+) -> None:
+    if intrinsic_module is None:
+        return
+    if not _is_kdtree_intrinsic_method(method_l):
+        return
+
+    intr = payload.get(ckpt_schema.KEY_INTRINSIC)
+    if not isinstance(intr, dict) or intr.get(ckpt_schema.INTRINSIC_METHOD) != method_l:
+        return
+
+    sd = intr.get(ckpt_schema.INTRINSIC_STATE_DICT, None)
+    extra = sd.get("_extra_state") if isinstance(sd, dict) and "_extra_state" in sd else None
+    if extra is None:
+        extra = _payload_extra_state(payload, intr)
+
+    includes_points = _extract_store_include_points(extra)
+    if includes_points is not False:
+        return
+
+    if _truthy_env(_ALLOW_RESUME_WO_POINTS_ENV):
+        if hasattr(logger, "warning"):
+            logger.warning(
+                "Resuming with KDTree points omitted for method=%s; region splitting is disabled and "
+                "training may diverge from an uninterrupted run.",
+                str(method_l),
+            )
+        return
+
+    raise RuntimeError(
+        "Refusing to resume: intrinsic checkpoint for method "
+        f"{str(method_l)!r} was saved without KDTree points (include_points=False), "
+        "which changes training semantics on restore (region splitting is disabled). "
+        "Resume with a checkpoint that includes points, or set "
+        f"{_ALLOW_RESUME_WO_POINTS_ENV}=1 to resume anyway."
+    )
 
 
 def _init_run_dir_and_ckpt(cfg: Config, run_dir: Optional[Path]) -> Tuple[Path, CheckpointManager]:
@@ -84,6 +166,13 @@ def _restore_from_checkpoint(
 
     if resume_payload is None:
         return global_step, update_idx
+
+    _guard_resume_kdtree_points(
+        resume_payload,
+        intrinsic_module=intrinsic_module,
+        method_l=str(method_l),
+        logger=logger,
+    )
 
     try:
         policy.load_state_dict(resume_payload[ckpt_schema.KEY_POLICY])
