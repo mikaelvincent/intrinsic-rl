@@ -15,12 +15,13 @@ from irl.cfg import Config, validate_config
 from irl.intrinsic import RunningRMS
 from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.glpe.gating import _RegionStats, update_region_gate
-from irl.intrinsic.icm import ICMConfig
+from irl.intrinsic.icm import ICM, ICMConfig
 from irl.intrinsic.riac import RIAC
 from irl.intrinsic.rnd import RND, RNDConfig
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.trainer import train as run_train
 from irl.trainer.training_setup import _restore_from_checkpoint
+from irl.utils.images import infer_channels_hw
 from irl.utils.loggers import get_logger
 
 
@@ -290,8 +291,11 @@ def test_resume_restores_intrinsic_extra_state() -> None:
         with torch.no_grad():
             ref = mod1.compute_batch(*eval_batch, reduction="none").detach().cpu()
 
-        policy = PolicyNetwork(obs_space, act_space)
-        value = ValueNetwork(obs_space)
+        from irl.models.networks import PolicyNetwork as _PN
+        from irl.models.networks import ValueNetwork as _VN
+
+        policy = _PN(obs_space, act_space)
+        value = _VN(obs_space)
         pol_opt = Adam(policy.parameters(), lr=1e-3)
         val_opt = Adam(value.parameters(), lr=1e-3)
 
@@ -432,3 +436,46 @@ def test_rnd_next_obs_and_rms_update() -> None:
 
     _ = rnd.compute_batch(obs2)
     assert abs(float(rnd.rms) - expected_rms) < 1e-6
+
+
+def test_grayscale_hw_observations_work_end_to_end() -> None:
+    c, hw = infer_channels_hw((32, 32))
+    assert c == 1
+    assert hw == (32, 32)
+
+    torch.manual_seed(0)
+    rng = np.random.default_rng(0)
+
+    H, W = 32, 32
+    obs_space = gym.spaces.Box(low=0, high=255, shape=(H, W), dtype=np.uint8)
+    act_space = gym.spaces.Discrete(3)
+
+    policy = PolicyNetwork(obs_space, act_space).to(torch.device("cpu"))
+    value = ValueNetwork(obs_space).to(torch.device("cpu"))
+
+    obs = rng.integers(0, 256, size=(H, W), dtype=np.uint8)
+    assert policy.distribution(obs).sample().shape == (1,)
+    v = value(obs)
+    assert v.shape == (1,)
+    assert torch.isfinite(v).all()
+
+    B = 4
+    obs_b = rng.integers(0, 256, size=(B, H, W), dtype=np.uint8)
+    dist_b = policy.distribution(obs_b)
+    assert dist_b.logits.shape == (B, int(act_space.n))
+    v_b = value(obs_b)
+    assert v_b.shape == (B,)
+    assert torch.isfinite(v_b).all()
+
+    icm = ICM(obs_space, act_space, device="cpu", cfg=ICMConfig(phi_dim=32, hidden=(64, 64)))
+    next_obs_b = rng.integers(0, 256, size=(B, H, W), dtype=np.uint8)
+    actions = rng.integers(0, int(act_space.n), size=(B,), endpoint=False, dtype=np.int64)
+
+    r_icm = icm.compute_batch(obs_b, next_obs_b, actions, reduction="none")
+    assert r_icm.shape == (B,)
+    assert torch.isfinite(r_icm).all()
+
+    rnd = RND(obs_space, device="cpu", cfg=RNDConfig(feature_dim=32, hidden=(64, 64)))
+    r_rnd = rnd.compute_batch(obs_b, reduction="none")
+    assert r_rnd.shape == (B,)
+    assert torch.isfinite(r_rnd).all()
