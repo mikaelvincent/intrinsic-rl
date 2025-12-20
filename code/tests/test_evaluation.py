@@ -160,9 +160,18 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     assert traj_v.exists()
 
     d_v = np.load(traj_v, allow_pickle=False)
-    assert set(d_v.files) == {"obs", "gates", "intrinsic", "env_id", "method", "gate_source"}
+    assert set(d_v.files) == {
+        "obs",
+        "rewards_ext",
+        "gates",
+        "intrinsic",
+        "env_id",
+        "method",
+        "gate_source",
+    }
     assert str(d_v["method"].reshape(-1)[0]) == "vanilla"
     assert str(d_v["gate_source"].reshape(-1)[0]) == "n/a"
+    assert d_v["rewards_ext"].reshape(-1).shape[0] == d_v["obs"].shape[0]
 
     out_g = tmp_path / "glpe_out"
     ckpt_g = _write_ckpt(method="glpe", seed=7, include_intrinsic=True)
@@ -181,6 +190,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     d_g = np.load(traj_g, allow_pickle=False)
     assert str(d_g["method"].reshape(-1)[0]) == "glpe"
     assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
+    assert d_g["rewards_ext"].reshape(-1).shape[0] == d_g["obs"].shape[0]
 
     out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
     ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
@@ -199,6 +209,7 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     d_g_missing = np.load(traj_g_missing, allow_pickle=False)
     assert str(d_g_missing["method"].reshape(-1)[0]) == "glpe"
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
+    assert d_g_missing["rewards_ext"].reshape(-1).shape[0] == d_g_missing["obs"].shape[0]
 
 
 def _write_latest_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> None:
