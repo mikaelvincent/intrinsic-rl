@@ -12,6 +12,7 @@ def save_trajectory_npz(
     env_id: str,
     method: str,
     obs: Sequence[np.ndarray],
+    rewards_ext: Sequence[float],
     gates: Sequence[int],
     intrinsic: Sequence[float],
     gate_source: str | None,
@@ -35,6 +36,7 @@ def save_trajectory_npz(
     np.savez_compressed(
         traj_file,
         obs=np.stack([np.asarray(o) for o in obs]),
+        rewards_ext=np.asarray(list(rewards_ext), dtype=np.float32),
         gates=np.asarray(list(gates), dtype=np.int8),
         intrinsic=np.asarray(list(intrinsic), dtype=np.float32),
         env_id=np.asarray([str(env_id)], dtype=np.str_),
