@@ -71,6 +71,7 @@ class Trajectory:
     gates: list[int]
     intrinsic: list[float]
     gate_source: str | None
+    intrinsic_semantics: str | None
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ def run_eval_episodes(
 
     method_l = str(method).strip().lower()
     is_glpe_family = method_l.startswith("glpe")
+    is_intrinsic_method = is_glpe_family or method_l in {"icm", "rnd", "ride", "riac"}
     want_traj = bool(save_traj) and not bool(is_image)
 
     traj_obs: list[np.ndarray] = []
@@ -108,6 +110,7 @@ def run_eval_episodes(
     traj_gates: list[int] = []
     traj_int_vals: list[float] = []
     traj_gate_source: str | None = None
+    traj_intrinsic_semantics: str | None = None
 
     for ep_seed in episode_seeds:
         _seed_torch(int(ep_seed))
@@ -135,10 +138,21 @@ def run_eval_episodes(
 
                 gate_val = 1
                 int_val = 0.0
+
                 if is_glpe_family:
                     gate_source = "recomputed" if intrinsic_module is not None else "missing_intrinsic"
                 else:
                     gate_source = "n/a"
+
+                if intrinsic_module is None:
+                    intrinsic_semantics = "missing_intrinsic" if is_intrinsic_method else "none"
+                else:
+                    if is_glpe_family:
+                        intrinsic_semantics = "frozen_checkpoint"
+                    elif method_l == "ride":
+                        intrinsic_semantics = "unbinned_impact"
+                    else:
+                        intrinsic_semantics = "compute_batch"
 
                 if intrinsic_module is not None:
                     try:
@@ -155,6 +169,9 @@ def run_eval_episodes(
                             if res is not None:
                                 gate_val, int_val = res
                                 gate_source = "checkpoint"
+                                intrinsic_semantics = "frozen_checkpoint"
+                            else:
+                                intrinsic_semantics = "unavailable"
                         else:
                             r_out = _compute_intrinsic_batch(
                                 intrinsic_module,
@@ -165,7 +182,7 @@ def run_eval_episodes(
                             )
                             int_val = float(r_out.view(-1)[0].item())
                     except Exception:
-                        pass
+                        intrinsic_semantics = "unavailable"
 
                 if bool(getattr(step_rec, "terminated", False)):
                     int_val = 0.0
@@ -178,6 +195,11 @@ def run_eval_episodes(
                 elif traj_gate_source != gate_source:
                     traj_gate_source = "mixed"
 
+                if traj_intrinsic_semantics is None:
+                    traj_intrinsic_semantics = intrinsic_semantics
+                elif traj_intrinsic_semantics != intrinsic_semantics:
+                    traj_intrinsic_semantics = "mixed"
+
         returns.append(float(ep_ret))
         lengths.append(int(ep_len))
 
@@ -188,6 +210,7 @@ def run_eval_episodes(
             gates=traj_gates,
             intrinsic=traj_int_vals,
             gate_source=traj_gate_source,
+            intrinsic_semantics=traj_intrinsic_semantics,
         )
         if want_traj and traj_obs
         else None
