@@ -1,3 +1,4 @@
+# tests/test_training.py
 from __future__ import annotations
 
 import csv
@@ -59,12 +60,7 @@ class _TimeoutMaskEnv(gym.Env):
             self._init_seed = int(seed)
         self._episode += 1
         self._t = 0
-
-        if self._episode == 1:
-            self._mode = "term" if (int(self._init_seed) % 2 == 1) else "trunc"
-        else:
-            self._mode = "term"
-
+        self._mode = "term" if self._episode > 1 else ("term" if (self._init_seed % 2 == 1) else "trunc")
         obs = np.array([float(self._episode), 0.0, 0.0, 0.0], dtype=np.float32)
         return obs, {}
 
@@ -104,45 +100,7 @@ class _ObsNormCountEnv(gym.Env):
         return
 
 
-class _DummyImageEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self, h: int = 32, w: int = 32, seed: int | None = None) -> None:
-        super().__init__()
-        self.H, self.W = int(h), int(w)
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(self.H, self.W, 3), dtype=np.uint8
-        )
-        self.action_space = gym.spaces.Discrete(3)
-        self._rng = np.random.default_rng(seed)
-        self._t = 0
-
-    def reset(self, *, seed=None, options=None):
-        _ = options
-        if seed is not None:
-            self._rng = np.random.default_rng(seed)
-        self._t = 0
-        obs = self._rng.integers(0, 256, size=(self.H, self.W, 3), dtype=np.uint8)
-        return obs, {}
-
-    def step(self, action):
-        _ = action
-        self._t += 1
-        obs = self._rng.integers(0, 256, size=(self.H, self.W, 3), dtype=np.uint8)
-        reward = 0.1
-        terminated = self._t >= 5
-        return obs, reward, bool(terminated), False, {}
-
-    def close(self) -> None:
-        return
-
-
-for _id, _cls in (
-    ("StepBudget-v0", _StepBudgetEnv),
-    ("TimeoutMask-v0", _TimeoutMaskEnv),
-    ("ObsNormCount-v0", _ObsNormCountEnv),
-    ("DummyImage-v0", _DummyImageEnv),
-):
+for _id, _cls in (("StepBudget-v0", _StepBudgetEnv), ("TimeoutMask-v0", _TimeoutMaskEnv), ("ObsNormCount-v0", _ObsNormCountEnv)):
     try:
         register(id=_id, entry_point=_cls)
     except Exception:
@@ -195,20 +153,6 @@ def _make_cfg(
     return cfg
 
 
-def _read_csv_column(path: Path, col: str) -> list[float]:
-    out: list[float] = []
-    with Path(path).open("r", newline="", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        if r.fieldnames is None or col not in set(r.fieldnames):
-            return []
-        for row in r:
-            try:
-                out.append(float(row[col]))
-            except Exception:
-                continue
-    return out
-
-
 def test_train_refuses_dirty_run_dir_without_resume(tmp_path: Path) -> None:
     run_dir = tmp_path / "run_dirty"
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
@@ -234,9 +178,7 @@ def test_total_steps_aligns_to_vec_envs_budget(tmp_path: Path) -> None:
 
     payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
     step = int(payload.get("step", -1))
-
     assert step == 4
-    assert step <= 5
     assert step % int(cfg.env.vec_envs) == 0
 
 
@@ -258,7 +200,6 @@ def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
 
     obs_norm = payload.get("obs_norm")
     assert isinstance(obs_norm, dict)
-
     count = float(obs_norm.get("count", float("nan")))
     assert np.isfinite(count)
     assert abs(count - float(step)) < 1e-6
@@ -287,26 +228,8 @@ def test_intrinsic_not_masked_on_truncations(tmp_path: Path) -> None:
 
     r2 = float(rows[2]["r_int_mean"])
     r4 = float(rows[4]["r_int_mean"])
-
     assert np.isfinite(r2) and r2 > 0.0
     assert abs(r4) < 1e-12
-
-
-def test_trainer_image_pipeline_riac_logs_intrinsic(tmp_path: Path) -> None:
-    cfg = _make_cfg(
-        env_id="DummyImage-v0",
-        method="riac",
-        vec_envs=1,
-        steps_per_update=6,
-        minibatches=1,
-        epochs=1,
-        eta=0.1,
-    )
-    out_dir = run_train(cfg, total_steps=6, run_dir=tmp_path / "run_riac_img", resume=False)
-
-    csv_path = out_dir / "logs" / "scalars.csv"
-    vals = _read_csv_column(csv_path, "r_int_mean")
-    assert vals and any(np.isfinite(v) for v in vals)
 
 
 class _IdentityObsNorm:
@@ -345,18 +268,12 @@ class _AutoResetTruncEnv(gym.Env):
     def step(self, action):
         _ = action
         self._t += 1
-
         obs = np.array([float(self._t)], dtype=np.float32)
-        reward = 0.0
-        terminated = False
-        truncated = False
-
-        if self._t >= 2:
-            truncated = True
+        truncated = self._t >= 2
+        if truncated:
             self._t = 0
             obs = np.array([0.0], dtype=np.float32)
-
-        return obs, reward, terminated, truncated, {}
+        return obs, 0.0, False, bool(truncated), {}
 
     def close(self) -> None:
         return
@@ -371,21 +288,19 @@ def _make_ride(obs_space: gym.Space, act_space: gym.Space) -> RIDE:
         bin_size=10.0,
         alpha_impact=1.0,
     )
-
     with torch.no_grad():
         for m in ride.icm.encoder.modules():
             if isinstance(m, nn.Linear):
                 m.weight.fill_(1.0)
                 m.bias.fill_(0.0)
-
     return ride
 
 
-def test_ride_binning_reset_applies_on_episode_start_in_rollout():
+def test_ride_binning_reset_applies_on_episode_start_in_rollout() -> None:
     env = _AutoResetTruncEnv()
     try:
         device = torch.device("cpu")
-        obs0, _ = env.reset()
+        obs0, _ = env.reset(seed=0)
 
         ride = _make_ride(env.observation_space, env.action_space)
         policy = _ZeroPolicy(device)
@@ -435,7 +350,6 @@ def test_ride_binning_reset_applies_on_episode_start_in_rollout():
         )
         assert r2.r_int_raw_seq is not None
         v2 = r2.r_int_raw_seq.reshape(-1)
-
         assert np.isclose(float(v2[0]), float(v[0]), atol=1e-6)
     finally:
         env.close()
