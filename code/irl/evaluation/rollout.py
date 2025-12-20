@@ -8,6 +8,7 @@ import torch
 
 from irl.cli.validators import normalize_policy_mode
 from irl.pipelines.policy_rollout import iter_policy_rollout
+from irl.utils.seeding import seed_torch_only as _seed_torch_only
 
 from .glpe import glpe_gate_and_intrinsic_no_update
 
@@ -31,13 +32,7 @@ class RolloutResult:
 
 
 def _seed_torch(seed: int) -> None:
-    s = int(seed)
-    torch.manual_seed(s)
-    if torch.cuda.is_available():
-        try:
-            torch.cuda.manual_seed_all(s)
-        except Exception:
-            pass
+    _seed_torch_only(seed)
 
 
 def run_eval_episodes(
