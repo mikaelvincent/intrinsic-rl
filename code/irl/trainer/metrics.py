@@ -69,13 +69,22 @@ def build_log_payload(
         total_samples = int(obs_flat_for_ppo.shape[0])
 
         ent_mean_update = float("nan")
-        if total_samples <= ENTROPY_MAX_SAMPLES:
+        if total_samples > 0:
             try:
-                if len(rollout.obs_shape) >= 2:
-                    ent_mean_update = float(policy.entropy(obs_flat_for_ppo).mean().item())
+                if total_samples > ENTROPY_MAX_SAMPLES:
+                    idx = np.linspace(
+                        0, total_samples - 1, ENTROPY_MAX_SAMPLES, dtype=np.int64
+                    )
+                    obs_sub = obs_flat_for_ppo[idx]
                 else:
-                    obs_flat_t = torch.as_tensor(obs_flat_for_ppo, device=device, dtype=torch.float32)
-                    ent_mean_update = float(policy.entropy(obs_flat_t).mean().item())
+                    obs_sub = obs_flat_for_ppo
+
+                if len(rollout.obs_shape) >= 2:
+                    ent_mean_update = float(policy.entropy(obs_sub).mean().item())
+                else:
+                    obs_sub_t = torch.as_tensor(obs_sub, device=device, dtype=torch.float32)
+                    ent_mean_update = float(policy.entropy(obs_sub_t).mean().item())
+
                 if not np.isfinite(float(ent_mean_update)):
                     ent_mean_update = float("nan")
             except Exception:
