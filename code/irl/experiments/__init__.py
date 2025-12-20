@@ -4,8 +4,6 @@ import typer
 
 from irl.paper_defaults import (
     CONFIGS_DIR,
-    DEFAULT_EVAL_EPISODES,
-    DEFAULT_EVAL_POLICY_MODE,
     DEFAULT_VIDEO_FPS,
     DEFAULT_VIDEO_MAX_STEPS,
     DEFAULT_VIDEO_POLICY_MODE,
@@ -35,9 +33,6 @@ def cli_eval() -> None:
     run_eval_suite(
         runs_root=RUNS_ROOT,
         results_dir=RESULTS_DIR,
-        episodes=int(DEFAULT_EVAL_EPISODES),
-        device="cpu",
-        policy_mode=str(DEFAULT_EVAL_POLICY_MODE),
     )
 
 
