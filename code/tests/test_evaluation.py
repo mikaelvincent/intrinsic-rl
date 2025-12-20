@@ -355,3 +355,63 @@ def test_eval_suite_every_k_selects_expected_ckpts(
 
     steps = sorted({int(r["ckpt_step"]) for r in rows})
     assert steps == [0, 20, 30]
+
+
+def test_evaluator_writes_rnd_trajectory_intrinsic(tmp_path: Path) -> None:
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+    act_space = gym.spaces.Discrete(2)
+
+    torch.manual_seed(0)
+    policy = PolicyNetwork(obs_space, act_space)
+
+    cfg = {
+        "seed": 123,
+        "method": "rnd",
+        "env": {
+            "id": "DummyTraj-v0",
+            "frame_skip": 1,
+            "discrete_actions": True,
+            "car_discrete_action_set": None,
+        },
+    }
+
+    mod = create_intrinsic_module(
+        "rnd",
+        obs_space,
+        act_space,
+        device="cpu",
+        **build_intrinsic_kwargs(cfg),
+    )
+
+    ckpt_path = tmp_path / "ckpt_rnd_intrinsic.pt"
+    torch.save(
+        {
+            "step": 0,
+            "policy": policy.state_dict(),
+            "cfg": cfg,
+            "obs_norm": None,
+            "intrinsic": {"method": "rnd", "state_dict": mod.state_dict()},
+        },
+        ckpt_path,
+    )
+
+    out_dir = tmp_path / "rnd_out"
+    _ = evaluate(
+        env="DummyTraj-v0",
+        ckpt=ckpt_path,
+        episodes=1,
+        device="cpu",
+        save_traj=True,
+        traj_out_dir=out_dir,
+        policy_mode="mode",
+    )
+
+    traj_path = out_dir / "DummyTraj-v0_trajectory.npz"
+    assert traj_path.exists()
+
+    d = np.load(traj_path, allow_pickle=False)
+    vals = np.asarray(d["intrinsic"], dtype=np.float32).reshape(-1)
+
+    assert vals.size > 0
+    assert np.isfinite(vals).all()
+    assert np.any(np.abs(vals) > 1e-8)
