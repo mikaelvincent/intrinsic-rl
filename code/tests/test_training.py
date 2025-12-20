@@ -205,6 +205,28 @@ def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
     assert abs(count - float(step)) < 1e-6
 
 
+def test_metrics_logged_when_interval_exceeds_total_steps(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="StepBudget-v0",
+        method="vanilla",
+        vec_envs=1,
+        steps_per_update=2,
+        minibatches=1,
+        epochs=1,
+        eta=0.0,
+    )
+    cfg = replace(cfg, logging=replace(cfg.logging, csv_interval=10_000))
+
+    out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_csv_interval", resume=False)
+
+    csv_path = out_dir / "logs" / "scalars.csv"
+    assert csv_path.exists()
+
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) >= 1
+
+
 def test_intrinsic_not_masked_on_truncations(tmp_path: Path) -> None:
     cfg = _make_cfg(
         env_id="TimeoutMask-v0",
