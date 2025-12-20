@@ -61,6 +61,17 @@ def _eval_episodes(payload: Mapping[str, Any]) -> int:
     return int(DEFAULT_EVAL_EPISODES)
 
 
+def _eval_device(payload: Mapping[str, Any]) -> str:
+    cfg = payload.get("cfg") or {}
+    if not isinstance(cfg, Mapping):
+        return "cpu"
+    raw = cfg.get("device", None)
+    if raw is None:
+        return "cpu"
+    dev = str(raw).strip()
+    return dev or "cpu"
+
+
 _COVERAGE_COLS: list[str] = [
     "env_id",
     "method",
@@ -234,8 +245,9 @@ def run_eval_suite(
     runs_root: Path,
     results_dir: Path,
 ) -> None:
-    pm = normalize_policy_mode(DEFAULT_EVAL_POLICY_MODE, allowed=("mode", "sample"), name="policy_mode")
-    device = "cpu"
+    pm = normalize_policy_mode(
+        DEFAULT_EVAL_POLICY_MODE, allowed=("mode", "sample"), name="policy_mode"
+    )
 
     root = Path(runs_root).resolve()
     if not root.exists():
@@ -249,6 +261,7 @@ def run_eval_suite(
 
     intervals_by_run: dict[Path, int] = {}
     episodes_by_run: dict[Path, int] = {}
+    devices_by_run: dict[Path, str] = {}
     selected: list[tuple[Path, Path]] = []
 
     for rd, ckpt_latest in discovered:
@@ -261,6 +274,7 @@ def run_eval_suite(
         episodes_by_run[rd] = int(_eval_episodes(payload_latest))
         interval = int(_eval_interval_steps(payload_latest))
         intervals_by_run[rd] = int(interval)
+        devices_by_run[rd] = str(_eval_device(payload_latest))
 
         if interval > 0:
             ckpts = select_ckpts_for_run(rd, policy="every_k", every_k=int(interval))
@@ -282,10 +296,21 @@ def run_eval_suite(
     else:
         raise RuntimeError(f"[suite]    ! Evaluation episodes mismatch across runs: {ep_vals}")
 
+    dev_vals = sorted(
+        {str(devices_by_run.get(rd, "cpu")).strip() for rd, _ in selected if str(rd).strip()}
+    )
+    dev_vals = [d for d in dev_vals if d]
+    if not dev_vals:
+        device = "cpu"
+    elif len(dev_vals) == 1:
+        device = str(dev_vals[0])
+    else:
+        raise RuntimeError(f"[suite]    ! Evaluation device mismatch across runs: {dev_vals}")
+
     n_runs = len({rd.resolve() for rd, _ in selected})
     typer.echo(
         f"[suite] Evaluating {len(selected)} checkpoint(s) from {n_runs} run(s) under {root} "
-        f"(every_k from cfg.evaluation.interval_steps)"
+        f"(every_k from cfg.evaluation.interval_steps, device={device})"
     )
 
     traj_root = Path(results_dir) / "plots" / "trajectories"
@@ -367,9 +392,7 @@ def run_eval_suite(
             typer.echo(msg)
         name = spec.label or spec.ckpt.name
         env_disp = spec.env if spec.env is not None else "UnknownEnv"
-        typer.echo(
-            f"[suite]    - {name}: ckpt={spec.ckpt.name}, env={env_disp}, episodes={episodes}"
-        )
+        typer.echo(f"[suite]    - {name}: ckpt={spec.ckpt.name}, env={env_disp}, episodes={episodes}")
 
     def _on_error(_i: int, _n: int, _spec: EvalCheckpoint, exc: Exception) -> None:
         typer.echo(f"[suite]          ! evaluation failed: {exc}")
