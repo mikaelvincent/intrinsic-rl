@@ -4,13 +4,14 @@ import csv
 import json
 import logging
 import math
+import os
 from logging import Logger
 from numbers import Number
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Iterable, Mapping, Optional
 
 from irl.cfg.schema import LoggingConfig
-from irl.utils.checkpoint import atomic_write_text, compute_cfg_hash
+from irl.utils.checkpoint import atomic_replace, atomic_write_text, compute_cfg_hash
 
 _DEFAULT_LOGGER_NAME = "irl"
 
@@ -114,20 +115,152 @@ class CSVLogger:
         self._writer: Optional[csv.DictWriter] = None
         self._fieldnames: Optional[list[str]] = None
         self._wrote_header = self.path.exists() and self.path.stat().st_size > 0
-        self._dropped_keys_warned: set[str] = set()
+
+        if self._wrote_header:
+            existing = self._read_existing_header()
+            if existing is not None:
+                self._fieldnames = existing
+                self._writer = csv.DictWriter(
+                    self._file,
+                    fieldnames=self._fieldnames,
+                    extrasaction="ignore",
+                    restval="",
+                )
+
+    def _read_existing_header(self) -> list[str] | None:
+        try:
+            with self.path.open("r", newline="", encoding="utf-8") as f:
+                r = csv.reader(f)
+                row = next(r, None)
+        except Exception:
+            return None
+
+        if not row:
+            return None
+
+        hdr = [str(c).strip() for c in row]
+        hdr = [c for c in hdr if c]
+        if not hdr:
+            return None
+        return hdr
+
+    @staticmethod
+    def _desired_fieldnames(keys: Iterable[str]) -> list[str]:
+        ks = {str(k).strip() for k in keys if str(k).strip()}
+        ks.add("step")
+        ks.discard("")
+        others = sorted(k for k in ks if k != "step")
+        return ["step"] + others
 
     def _ensure_writer(self, row: Mapping[str, object]) -> None:
-        if self._writer is not None:
+        if self._writer is not None and self._fieldnames is not None:
             return
-        keys = [k for k in row.keys() if k != "step"]
-        self._fieldnames = ["step"] + sorted(keys)
+
+        if self._fieldnames is None and self._wrote_header:
+            existing = self._read_existing_header()
+            if existing is not None:
+                self._fieldnames = existing
+
+        if self._fieldnames is None:
+            keys = [k for k in row.keys() if k != "step"]
+            self._fieldnames = ["step"] + sorted(keys)
+
         self._writer = csv.DictWriter(
-            self._file, fieldnames=self._fieldnames, extrasaction="ignore"
+            self._file,
+            fieldnames=self._fieldnames,
+            extrasaction="ignore",
+            restval="",
         )
         if not self._wrote_header:
             self._writer.writeheader()
             self._file.flush()
+            try:
+                os.fsync(self._file.fileno())
+            except Exception:
+                pass
             self._wrote_header = True
+
+    def _rewrite_csv_with_header(self, fieldnames: list[str]) -> bool:
+        rows: list[dict[str, object]] = []
+        try:
+            with self.path.open("r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    return False
+                for r in reader:
+                    if None in r:
+                        r = {k: v for k, v in r.items() if k is not None}
+                    rows.append(r)
+        except FileNotFoundError:
+            rows = []
+        except Exception:
+            return False
+
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            with tmp.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=fieldnames,
+                    extrasaction="ignore",
+                    restval="",
+                )
+                w.writeheader()
+                for r in rows:
+                    w.writerow(r)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            atomic_replace(tmp, self.path)
+        except Exception:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
+            return False
+
+        return True
+
+    def _expand_schema(self, desired_fieldnames: list[str]) -> bool:
+        prev_fieldnames = None if self._fieldnames is None else list(self._fieldnames)
+
+        try:
+            self._file.flush()
+            try:
+                os.fsync(self._file.fileno())
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        try:
+            self._file.close()
+        except Exception:
+            pass
+
+        ok = self._rewrite_csv_with_header(desired_fieldnames)
+
+        self._file = open(self.path, "a", newline="", encoding="utf-8")
+        if ok:
+            self._fieldnames = list(desired_fieldnames)
+        else:
+            self._fieldnames = prev_fieldnames
+
+        if self._fieldnames is not None:
+            self._writer = csv.DictWriter(
+                self._file,
+                fieldnames=self._fieldnames,
+                extrasaction="ignore",
+                restval="",
+            )
+        else:
+            self._writer = None
+
+        self._wrote_header = self.path.exists() and self.path.stat().st_size > 0
+        return ok
 
     def log_row(self, step: int, metrics: Mapping[str, object]) -> None:
         row = {"step": int(step)}
@@ -140,19 +273,19 @@ class CSVLogger:
                 row[k] = str(v)
 
         self._ensure_writer(row)
-        assert self._writer is not None
+        assert self._writer is not None and self._fieldnames is not None
 
-        if self._fieldnames is not None:
-            extra = set(row.keys()) - set(self._fieldnames)
-            if extra:
-                newly_warned = extra - self._dropped_keys_warned
-                if newly_warned:
+        extra = set(row.keys()) - set(self._fieldnames)
+        if extra:
+            desired = self._desired_fieldnames(set(self._fieldnames) | set(row.keys()))
+            if desired != self._fieldnames:
+                ok = self._expand_schema(desired)
+                if not ok:
                     get_logger("csv").warning(
-                        "Dropping metrics not in CSV header for %s: %s",
+                        "Could not expand CSV schema for %s; dropping keys: %s",
                         self.path,
-                        ", ".join(sorted(newly_warned)),
+                        ", ".join(sorted(str(k) for k in extra)),
                     )
-                    self._dropped_keys_warned |= newly_warned
 
         self._writer.writerow(row)
         self._file.flush()
