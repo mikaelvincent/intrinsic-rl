@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 from logging import Logger
+from numbers import Number
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -172,11 +174,30 @@ class MetricLogger:
         self.csv = CSVLogger(self.csv_path)
 
         self._last_csv_write_step: Optional[int] = None
+        self._last_finite: dict[str, float] = {}
 
-    def log(self, step: int, **metrics: float) -> None:
+    @staticmethod
+    def _num(v: object) -> float | None:
+        if isinstance(v, bool):
+            return None
+        if not isinstance(v, Number):
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    def log(self, step: int, **metrics: object) -> bool:
         interval = int(max(1, self.cfg.csv_interval))
         s = int(step)
         last = self._last_csv_write_step
+
+        for k, v in metrics.items():
+            x = self._num(v)
+            if x is None:
+                continue
+            if math.isfinite(x):
+                self._last_finite[str(k)] = float(x)
 
         should_write_csv = False
         if last is None:
@@ -186,9 +207,27 @@ class MetricLogger:
             if s >= last + interval:
                 should_write_csv = True
 
-        if should_write_csv:
-            self.csv.log_row(s, metrics)
-            self._last_csv_write_step = s
+        if not should_write_csv:
+            return False
+
+        out: dict[str, object] = {}
+        for k, v in metrics.items():
+            kk = str(k)
+            x = self._num(v)
+            if x is None:
+                out[kk] = v
+                continue
+            if math.isfinite(x):
+                out[kk] = v
+                continue
+            if kk in self._last_finite:
+                out[kk] = float(self._last_finite[kk])
+            else:
+                out[kk] = 0.0
+
+        self.csv.log_row(s, out)
+        self._last_csv_write_step = s
+        return True
 
     def log_hparams(self, params: Mapping[str, object]) -> None:
         if not isinstance(params, Mapping):
