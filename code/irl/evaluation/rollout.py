@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from irl.cli.validators import normalize_policy_mode
+from irl.intrinsic.factory import compute_intrinsic_batch as _compute_intrinsic_batch
 from irl.pipelines.policy_rollout import iter_policy_rollout
 from irl.utils.seeding import seed_torch_only as _seed_torch_only
 
@@ -155,18 +156,19 @@ def run_eval_episodes(
                                 gate_val, int_val = res
                                 gate_source = "checkpoint"
                         else:
-                            try:
-                                r_out = intrinsic_module.compute_batch(
-                                    step_rec.obs_t.unsqueeze(0),
-                                    next_t.unsqueeze(0),
-                                    step_rec.act_t.unsqueeze(0),
-                                    reduction="none",
-                                )
-                                int_val = float(r_out.mean().item())
-                            except Exception:
-                                pass
+                            r_out = _compute_intrinsic_batch(
+                                intrinsic_module,
+                                method_l,
+                                step_rec.obs_t,
+                                next_t,
+                                step_rec.act_t,
+                            )
+                            int_val = float(r_out.view(-1)[0].item())
                     except Exception:
                         pass
+
+                if bool(getattr(step_rec, "terminated", False)):
+                    int_val = 0.0
 
                 traj_gates.append(int(gate_val))
                 traj_int_vals.append(float(int_val))
