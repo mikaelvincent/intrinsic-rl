@@ -60,6 +60,57 @@ def _payload_extra_state(payload: dict, intr: dict) -> object | None:
     return payload.get(ckpt_schema.KEY_INTRINSIC_STATE_COMPAT, None)
 
 
+def _intrinsic_optimizer_objects(intrinsic_module: object) -> dict[str, object]:
+    out: dict[str, object] = {}
+
+    opt_main = getattr(intrinsic_module, "_opt", None)
+    if opt_main is not None and hasattr(opt_main, "load_state_dict"):
+        out["main"] = opt_main
+
+    icm = getattr(intrinsic_module, "icm", None)
+    opt_icm = getattr(icm, "_opt", None) if icm is not None else None
+    if opt_icm is not None and opt_icm is not opt_main and hasattr(opt_icm, "load_state_dict"):
+        out["icm"] = opt_icm
+
+    return out
+
+
+def _restore_intrinsic_optimizers(
+    *,
+    intrinsic_module: object,
+    opt_states: object,
+    device: object,
+    logger: object,
+) -> None:
+    if not isinstance(opt_states, dict):
+        return
+
+    opts = _intrinsic_optimizer_objects(intrinsic_module)
+    if not opts:
+        return
+
+    try:
+        param_dev = next(getattr(intrinsic_module, "parameters")()).device
+    except Exception:
+        param_dev = device
+
+    for k, state in opt_states.items():
+        name = str(k)
+        opt = opts.get(name)
+        if opt is None or not isinstance(state, dict):
+            continue
+        try:
+            opt.load_state_dict(state)
+            _move_optimizer_state_to_device(opt, param_dev)
+        except Exception as exc:
+            if hasattr(logger, "warning"):
+                logger.warning(
+                    "Could not restore intrinsic optimizer %s (%s).",
+                    name,
+                    type(exc).__name__,
+                )
+
+
 def _guard_resume_kdtree_points(
     payload: dict,
     *,
@@ -236,6 +287,15 @@ def _restore_from_checkpoint(
                 intrinsic_module.set_extra_state(extra_state)
 
             intrinsic_module.to(device)
+
+            opt_states = intr.get(ckpt_schema.INTRINSIC_OPTIMIZERS, None)
+            if opt_states is not None:
+                _restore_intrinsic_optimizers(
+                    intrinsic_module=intrinsic_module,
+                    opt_states=opt_states,
+                    device=device,
+                    logger=logger,
+                )
     except Exception:
         log_resume_intrinsic_warning(method_l)
 
