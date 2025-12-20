@@ -1,6 +1,6 @@
-import os
+from .runtime.envvars import disable_nnpack as _disable_nnpack
 
-os.environ["ATEN_NNPACK_ENABLED"] = "0"
+_disable_nnpack()
 
 from ._version import __version__
 from .utils.checkpoint import CheckpointManager, load_checkpoint
