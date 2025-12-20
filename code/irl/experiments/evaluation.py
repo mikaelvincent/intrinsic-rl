@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import typer
 
-from irl.cli.common import validate_policy_mode
+from irl.cli.validators import normalize_policy_mode
 from irl.evaluator import evaluate
 from irl.pipelines.discovery import discover_run_dirs_with_selected_ckpts
 from irl.pipelines.eval import EvalCheckpoint, cfg_fields_from_payload as _cfg_fields_from_payload
@@ -244,7 +244,7 @@ def run_eval_suite(
     every_k: int | None = None,
     max_ckpts_per_run: int | None = None,
 ) -> None:
-    pm = validate_policy_mode(policy_mode, allowed=("mode", "sample"))
+    pm = normalize_policy_mode(policy_mode, allowed=("mode", "sample"), name="policy_mode")
 
     policy = str(ckpt_policy).strip().lower()
     if policy not in {"latest", "fixed_step", "all_steps", "every_k"}:
