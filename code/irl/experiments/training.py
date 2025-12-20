@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import glob
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional, Sequence
 
 import typer
 
@@ -14,34 +12,19 @@ from irl.utils.checkpoint import load_checkpoint
 from irl.utils.steps import resolve_total_steps as _resolve_total_steps
 
 
-def _discover_configs(
-    configs_root: Path,
-    include: Sequence[str] | None = None,
-    exclude: Sequence[str] | None = None,
-) -> list[Path]:
-    root = configs_root.resolve()
+def _discover_configs(configs_root: Path) -> list[Path]:
+    root = Path(configs_root).resolve()
     if not root.exists():
         raise typer.BadParameter(f"configs_dir does not exist: {root}")
+    if not root.is_dir():
+        raise typer.BadParameter(f"configs_dir is not a directory: {root}")
 
-    patterns = list(include) if include else ["**/*.yaml", "**/*.yml"]
-    candidates: set[Path] = set()
-
-    for pat in patterns:
-        full_pattern = str(root / pat)
-        for hit in glob.glob(full_pattern, recursive=True):
-            p = Path(hit)
-            if p.is_file() and p.suffix.lower() in {".yaml", ".yml"}:
-                candidates.add(p.resolve())
-
-    if exclude:
-        to_drop: set[Path] = set()
-        for pat in exclude:
-            full_pattern = str(root / pat)
-            for hit in glob.glob(full_pattern, recursive=True):
-                to_drop.add(Path(hit).resolve())
-        candidates.difference_update(to_drop)
-
-    return sorted(candidates)
+    cfgs = [p for p in root.rglob("*.yaml") if p.is_file()] + [
+        p for p in root.rglob("*.yml") if p.is_file()
+    ]
+    cfgs = [p.resolve() for p in cfgs]
+    cfgs.sort(key=lambda p: str(p.relative_to(root)))
+    return cfgs
 
 
 def _run_dir_name(cfg: Config, cfg_path: Path, seed: int) -> str:
@@ -83,16 +66,9 @@ def _normalize_seed_list(seed_like: object) -> list[int]:
 
 def run_training_suite(
     configs_dir: Path,
-    include: Sequence[str],
-    exclude: Sequence[str],
-    total_steps: int,
     runs_root: Path,
-    seeds: Sequence[int],
-    device: Optional[str],
-    resume: bool,
-    auto_async: bool = False,
 ) -> None:
-    cfg_paths = _discover_configs(configs_dir, include=include, exclude=exclude)
+    cfg_paths = _discover_configs(configs_dir)
     if not cfg_paths:
         typer.echo(f"[suite] No configuration files found under {configs_dir}")
         return
@@ -107,51 +83,34 @@ def run_training_suite(
             typer.echo(f"[suite] Skipping {cfg_path}: failed to load config ({exc})")
             continue
 
-        seed_list = _normalize_seed_list(seeds) if seeds else _normalize_seed_list(getattr(cfg, "seed", 1))
+        seed_list = _normalize_seed_list(getattr(cfg, "seed", 1))
+        if not seed_list:
+            typer.echo(f"[suite] Skipping {cfg_path}: seed list is empty")
+            continue
+
         for seed_val in seed_list:
             cfg_seeded = replace(cfg, seed=int(seed_val))
-            if device is not None:
-                cfg_seeded = replace(cfg_seeded, device=str(device))
 
             target_steps = _resolve_total_steps(
                 cfg_seeded,
-                int(total_steps),
+                None,
                 default_total_steps=10_000,
                 prefer_cfg=True,
                 align_to_vec_envs=True,
             )
 
-            deterministic = False
-            try:
-                deterministic = bool(getattr(getattr(cfg_seeded, "exp", None), "deterministic", False))
-            except Exception:
-                deterministic = False
-
-            if auto_async and int(cfg_seeded.env.vec_envs) > 1 and not bool(
-                getattr(cfg_seeded.env, "async_vector", False)
-            ):
-                if deterministic:
-                    typer.echo(
-                        f"[suite]    -> keeping SyncVectorEnv (exp.deterministic=True) for {cfg_path.name}"
-                    )
-                else:
-                    cfg_seeded = replace(cfg_seeded, env=replace(cfg_seeded.env, async_vector=True))
-                    typer.echo(
-                        f"[suite]    -> enabling AsyncVectorEnv (num_envs={cfg_seeded.env.vec_envs}) for {cfg_path.name}"
-                    )
-
             run_dir = _run_dir_for(cfg_seeded, cfg_path, seed_val, runs_root)
 
             latest_ckpt = run_dir / "checkpoints" / "ckpt_latest.pt"
             existing_step = 0
-            if latest_ckpt.exists() and resume:
+            if latest_ckpt.exists():
                 try:
                     payload = load_checkpoint(latest_ckpt, map_location="cpu")
                     existing_step = int(payload.get("step", 0))
                 except Exception:
                     existing_step = 0
 
-            if resume and existing_step >= target_steps:
+            if existing_step >= target_steps:
                 typer.echo(
                     f"[suite] SKIP  {cfg_path.name} "
                     f"(method={cfg_seeded.method}, env={cfg_seeded.env.id}, seed={seed_val}) "
@@ -159,7 +118,7 @@ def run_training_suite(
                 )
                 continue
 
-            resume_flag = resume and latest_ckpt.exists() and existing_step > 0
+            resume_flag = bool(latest_ckpt.exists())
             mode = "resume" if resume_flag else "fresh"
             typer.echo(
                 f"[suite] TRAIN {cfg_path.name} "
@@ -169,7 +128,7 @@ def run_training_suite(
             )
             run_train(
                 cfg_seeded,
-                total_steps=int(target_steps),
+                total_steps=None,
                 run_dir=run_dir,
                 resume=resume_flag,
             )
