@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,16 @@ from .resume import _init_run_dir_and_ckpt, _maybe_load_resume_payload, _restore
 from .session_types import IntrinsicContext, PPOOptimizers, TrainingSession
 from .setup_env import _build_env, _log_reset_diagnostics
 from .setup_intrinsic import _build_intrinsic
+
+_TRUTHY_ENV: set[str] = {"1", "true", "yes", "y", "on"}
+_DETERMINISTIC_WARN_ONLY_ENV = "IRL_DETERMINISTIC_WARN_ONLY"
+
+
+def _truthy_env(name: str) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return False
+    return v.strip().lower() in _TRUTHY_ENV
 
 
 def _existing_run_artifacts(run_dir: Path) -> list[Path]:
@@ -92,7 +103,28 @@ def build_training_session(
             )
 
     deterministic = _resolve_deterministic_flag(cfg)
-    seed_everything(int(cfg.seed), deterministic=deterministic)
+
+    warn_only: bool | None = None
+    if deterministic and device.type == "cuda":
+        warn_only = _truthy_env(_DETERMINISTIC_WARN_ONLY_ENV)
+        if hasattr(logger, "warning"):
+            if warn_only:
+                logger.warning(
+                    "Deterministic CUDA enabled (warn-only); some ops may be nondeterministic."
+                )
+            else:
+                logger.warning(
+                    "Deterministic CUDA enabled; some ops may be unsupported or slow. "
+                    "Set %s=1 to downgrade errors to warnings.",
+                    _DETERMINISTIC_WARN_ONLY_ENV,
+                )
+
+    seed_everything(
+        int(cfg.seed),
+        deterministic=deterministic,
+        device=device,
+        warn_only=warn_only,
+    )
 
     try:
         ensure_mujoco_gl(cfg.env.id)
