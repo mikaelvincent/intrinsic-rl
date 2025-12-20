@@ -126,8 +126,10 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
         "env_id",
         "method",
         "gate_source",
+        "intrinsic_semantics",
     }
     assert str(d_v["gate_source"].reshape(-1)[0]) == "n/a"
+    assert str(d_v["intrinsic_semantics"].reshape(-1)[0]) == "none"
 
     out_g = tmp_path / "glpe_out"
     ckpt_g = _write_ckpt(method="glpe", seed=7, include_intrinsic=True)
@@ -142,6 +144,7 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
     )
     d_g = np.load(out_g / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
+    assert str(d_g["intrinsic_semantics"].reshape(-1)[0]) == "frozen_checkpoint"
 
     out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
     ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
@@ -156,6 +159,7 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
     )
     d_g_missing = np.load(out_g_missing / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
+    assert str(d_g_missing["intrinsic_semantics"].reshape(-1)[0]) == "missing_intrinsic"
 
     out_rnd = tmp_path / "rnd_out"
     ckpt_rnd = _write_ckpt(method="rnd", seed=11, include_intrinsic=True)
@@ -170,6 +174,7 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
     )
     d_rnd = np.load(out_rnd / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_rnd["gate_source"].reshape(-1)[0]) == "n/a"
+    assert str(d_rnd["intrinsic_semantics"].reshape(-1)[0]) == "compute_batch"
     vals = np.asarray(d_rnd["intrinsic"], dtype=np.float32).reshape(-1)
     assert vals.size > 0 and np.isfinite(vals).all() and np.any(np.abs(vals) > 1e-8)
 
