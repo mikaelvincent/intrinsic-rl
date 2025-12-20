@@ -71,7 +71,7 @@ class AdaptationConfig:
 @dataclass(frozen=True)
 class EvaluationConfig:
     interval_steps: int = 50_000
-    episodes: int = 10
+    episodes: int = 20
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ class LoggingConfig:
 @dataclass(frozen=True)
 class ExperimentConfig:
     deterministic: bool = True
-    total_steps: int | None = None
+    total_steps: int = 150_000
     profile_cuda_sync: bool = False
 
 
