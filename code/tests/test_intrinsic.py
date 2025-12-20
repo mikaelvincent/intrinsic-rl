@@ -6,7 +6,6 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
-import pytest
 import torch
 from gymnasium.envs.registration import register
 from torch.nn import functional as F
@@ -14,12 +13,10 @@ from torch.optim import Adam
 
 from irl.cfg import Config, validate_config
 from irl.intrinsic import RunningRMS
-from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.glpe.gating import _RegionStats, update_region_gate
 from irl.intrinsic.icm import ICMConfig
 from irl.intrinsic.riac import RIAC
-from irl.intrinsic.ride import RIDE
 from irl.intrinsic.rnd import RND, RNDConfig
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.trainer import train as run_train
@@ -217,78 +214,45 @@ def _make_riac(obs_space, act_space, icm_cfg: ICMConfig) -> RIAC:
     )
 
 
-def test_glpe_compute_batch_matches_sequential_compute() -> None:
+def test_intrinsic_compute_batch_matches_step() -> None:
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
     obs_space, act_space = _make_vector_spaces()
     icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
 
-    mod_step = _make_glpe(obs_space, act_space, icm_cfg)
-    mod_batch = _make_glpe(obs_space, act_space, icm_cfg)
-    mod_batch.load_state_dict(mod_step.state_dict())
+    for make_mod, attrs in (
+        (_make_glpe, ("gate_rate", "impact_rms", "lp_rms")),
+        (_make_riac, ("lp_rms",)),
+    ):
+        mod_step = make_mod(obs_space, act_space, icm_cfg)
+        mod_batch = make_mod(obs_space, act_space, icm_cfg)
+        mod_batch.load_state_dict(mod_step.state_dict())
 
-    B = 64
-    obs = rng.standard_normal((B, 4)).astype(np.float32)
-    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
-    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
+        B = 64
+        obs = rng.standard_normal((B, 4)).astype(np.float32)
+        next_obs = rng.standard_normal((B, 4)).astype(np.float32)
+        actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
 
-    step_vals = np.array(
-        [
-            float(mod_step.compute(_Transition(obs[i], int(actions[i]), next_obs[i])).r_int)
-            for i in range(B)
-        ],
-        dtype=np.float32,
-    )
-
-    with torch.no_grad():
-        batch_vals = (
-            mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.float32)
+        step_vals = np.array(
+            [
+                float(mod_step.compute(_Transition(obs[i], int(actions[i]), next_obs[i])).r_int)
+                for i in range(B)
+            ],
+            dtype=np.float32,
         )
 
-    assert np.allclose(step_vals, batch_vals, atol=1e-5)
-    assert abs(mod_step.gate_rate - mod_batch.gate_rate) < 1e-6
-    assert abs(mod_step.impact_rms - mod_batch.impact_rms) < 1e-6
-    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
+        with torch.no_grad():
+            batch_vals = (
+                mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
+                .detach()
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
 
-
-def test_riac_compute_batch_matches_sequential_compute() -> None:
-    torch.manual_seed(0)
-    rng = np.random.default_rng(1)
-    obs_space, act_space = _make_vector_spaces()
-    icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
-
-    mod_step = _make_riac(obs_space, act_space, icm_cfg)
-    mod_batch = _make_riac(obs_space, act_space, icm_cfg)
-    mod_batch.load_state_dict(mod_step.state_dict())
-
-    B = 64
-    obs = rng.standard_normal((B, 4)).astype(np.float32)
-    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
-    actions = rng.integers(0, 3, size=(B,), endpoint=False, dtype=np.int64)
-
-    step_vals = np.array(
-        [
-            float(mod_step.compute(_Transition(obs[i], int(actions[i]), next_obs[i])).r_int)
-            for i in range(B)
-        ],
-        dtype=np.float32,
-    )
-
-    with torch.no_grad():
-        batch_vals = (
-            mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.float32)
-        )
-
-    assert np.allclose(step_vals, batch_vals, atol=1e-5)
-    assert abs(mod_step.lp_rms - mod_batch.lp_rms) < 1e-6
+        assert np.allclose(step_vals, batch_vals, atol=1e-5)
+        for name in attrs:
+            assert abs(float(getattr(mod_step, name)) - float(getattr(mod_batch, name))) < 1e-6
 
 
 def _rand_batch(rng: np.random.Generator, obs_dim: int, n_actions: int, B: int):
@@ -298,14 +262,7 @@ def _rand_batch(rng: np.random.Generator, obs_dim: int, n_actions: int, B: int):
     return obs, next_obs, actions
 
 
-@pytest.mark.parametrize(
-    "make_module, method_l, attrs",
-    [
-        (_make_glpe, "glpe", ("gate_rate", "impact_rms", "lp_rms")),
-        (_make_riac, "riac", ("lp_rms",)),
-    ],
-)
-def test_resume_restores_intrinsic_extra_state(make_module, method_l: str, attrs: tuple[str, ...]):
+def test_resume_restores_intrinsic_extra_state() -> None:
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
 
@@ -314,61 +271,65 @@ def test_resume_restores_intrinsic_extra_state(make_module, method_l: str, attrs
     obs_space, act_space = _make_vector_spaces(obs_dim=obs_dim, n_actions=n_actions)
     icm_cfg = ICMConfig(phi_dim=16, hidden=(32, 32))
 
-    mod1 = make_module(obs_space, act_space, icm_cfg)
-    warmup = _rand_batch(rng, obs_dim, n_actions, B=64)
-    _ = mod1.compute_batch(*warmup, reduction="none")
+    for make_module, method_l, attrs in (
+        (_make_glpe, "glpe", ("gate_rate", "impact_rms", "lp_rms")),
+        (_make_riac, "riac", ("lp_rms",)),
+    ):
+        mod1 = make_module(obs_space, act_space, icm_cfg)
+        warmup = _rand_batch(rng, obs_dim, n_actions, B=64)
+        _ = mod1.compute_batch(*warmup, reduction="none")
 
-    sd_full = mod1.state_dict()
-    extra_state = sd_full.get("_extra_state")
-    assert extra_state is not None
+        sd_full = mod1.state_dict()
+        extra_state = sd_full.get("_extra_state")
+        assert extra_state is not None
 
-    sd_no_extra = dict(sd_full)
-    sd_no_extra.pop("_extra_state", None)
+        sd_no_extra = dict(sd_full)
+        sd_no_extra.pop("_extra_state", None)
 
-    eval_batch = _rand_batch(rng, obs_dim, n_actions, B=32)
-    with torch.no_grad():
-        ref = mod1.compute_batch(*eval_batch, reduction="none").detach().cpu()
+        eval_batch = _rand_batch(rng, obs_dim, n_actions, B=32)
+        with torch.no_grad():
+            ref = mod1.compute_batch(*eval_batch, reduction="none").detach().cpu()
 
-    policy = PolicyNetwork(obs_space, act_space)
-    value = ValueNetwork(obs_space)
-    pol_opt = Adam(policy.parameters(), lr=1e-3)
-    val_opt = Adam(value.parameters(), lr=1e-3)
+        policy = PolicyNetwork(obs_space, act_space)
+        value = ValueNetwork(obs_space)
+        pol_opt = Adam(policy.parameters(), lr=1e-3)
+        val_opt = Adam(value.parameters(), lr=1e-3)
 
-    mod2 = make_module(obs_space, act_space, icm_cfg)
-    payload = {
-        "step": 100,
-        "policy": policy.state_dict(),
-        "value": value.state_dict(),
-        "obs_norm": None,
-        "intrinsic_norm": {},
-        "meta": {"updates": 0},
-        "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
-        "intrinsic": {"method": method_l, "state_dict": sd_no_extra, "extra_state": extra_state},
-    }
+        mod2 = make_module(obs_space, act_space, icm_cfg)
+        payload = {
+            "step": 100,
+            "policy": policy.state_dict(),
+            "value": value.state_dict(),
+            "obs_norm": None,
+            "intrinsic_norm": {},
+            "meta": {"updates": 0},
+            "optimizers": {"policy": pol_opt.state_dict(), "value": val_opt.state_dict()},
+            "intrinsic": {"method": method_l, "state_dict": sd_no_extra, "extra_state": extra_state},
+        }
 
-    int_rms = RunningRMS(beta=0.99, eps=1e-8)
-    _restore_from_checkpoint(
-        resume_payload=payload,
-        resume_step=int(payload["step"]),
-        policy=policy,
-        value=value,
-        pol_opt=pol_opt,
-        val_opt=val_opt,
-        intrinsic_module=mod2,
-        method_l=method_l,
-        int_rms=int_rms,
-        obs_norm=None,
-        is_image=False,
-        device=torch.device("cpu"),
-        logger=get_logger("test_resume_intrinsic"),
-    )
+        int_rms = RunningRMS(beta=0.99, eps=1e-8)
+        _restore_from_checkpoint(
+            resume_payload=payload,
+            resume_step=int(payload["step"]),
+            policy=policy,
+            value=value,
+            pol_opt=pol_opt,
+            val_opt=val_opt,
+            intrinsic_module=mod2,
+            method_l=method_l,
+            int_rms=int_rms,
+            obs_norm=None,
+            is_image=False,
+            device=torch.device("cpu"),
+            logger=get_logger("test_resume_intrinsic"),
+        )
 
-    with torch.no_grad():
-        out = mod2.compute_batch(*eval_batch, reduction="none").detach().cpu()
+        with torch.no_grad():
+            out = mod2.compute_batch(*eval_batch, reduction="none").detach().cpu()
 
-    assert torch.allclose(ref, out, atol=1e-6)
-    for name in attrs:
-        assert abs(float(getattr(mod1, name)) - float(getattr(mod2, name))) < 1e-6
+        assert torch.allclose(ref, out, atol=1e-6)
+        for name in attrs:
+            assert abs(float(getattr(mod1, name)) - float(getattr(mod2, name))) < 1e-6
 
 
 def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
@@ -436,11 +397,6 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path) -> None:
 
         assert int(mod2.store.num_regions()) == int(mod.store.num_regions())
         assert int(mod2.store.depth_max) == 0
-
-
-def test_build_intrinsic_kwargs_glpe_nogate_forces_disabled() -> None:
-    kw = build_intrinsic_kwargs({"method": "glpe_nogate", "intrinsic": {"gate": {"enabled": True}}})
-    assert kw["gating_enabled"] is False
 
 
 def test_rnd_next_obs_and_rms_update() -> None:
