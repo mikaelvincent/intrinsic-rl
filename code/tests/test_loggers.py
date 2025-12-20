@@ -35,3 +35,20 @@ def test_metric_logger_writes_nonfinite_values(tmp_path: Path) -> None:
     assert int(float(r1["nonfinite_any"])) == 1
     assert int(float(r1["nonfinite_count"])) == 1
     assert "bar" in {k for k in r1["nonfinite_keys"].split(",") if k}
+
+
+def test_metric_logger_expands_schema_for_new_keys(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run_expand"
+    ml = MetricLogger(run_dir, LoggingConfig(csv_interval=1, checkpoint_interval=100_000))
+    try:
+        assert ml.log(step=0, foo=1.0) is True
+        assert ml.log(step=1, foo=1.0, bar=2.0) is True
+    finally:
+        ml.close()
+
+    rows = _read_rows(run_dir / "logs" / "scalars.csv")
+    assert len(rows) >= 2
+    assert "bar" in rows[0]
+    assert "bar" in rows[1]
+    assert (rows[0]["bar"] or "").strip() == ""
+    assert abs(float(rows[1]["bar"]) - 2.0) < 1e-12
