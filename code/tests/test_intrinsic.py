@@ -417,6 +417,8 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.M
         (_make_glpe_points, "glpe", "glpe"),
         (_make_riac_points, "riac", "riac"),
     ):
+        monkeypatch.delenv("IRL_ALLOW_RESUME_WITHOUT_KDTREE_POINTS", raising=False)
+
         mod = make_module(include_points=True)
         _fill_store(mod, n_points=5000, seed=0)
 
