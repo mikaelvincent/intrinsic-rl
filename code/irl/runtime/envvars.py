@@ -12,13 +12,6 @@ _MUJOCO_ENV_HINTS: tuple[str, ...] = (
     "Ant",
     "HalfCheetah",
     "Humanoid",
-    "Hopper",
-    "Walker2d",
-    "Swimmer",
-    "Reacher",
-    "Pusher",
-    "InvertedPendulum",
-    "InvertedDoublePendulum",
 )
 
 
