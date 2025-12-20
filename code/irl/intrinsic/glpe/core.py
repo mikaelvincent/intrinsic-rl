@@ -319,7 +319,8 @@ class GLPE(nn.Module):
 
         ema_s = self._stats_ema_short[mask]
         ema_l = self._stats_ema_long[mask]
-        lp = np.maximum(0.0, ema_l - ema_s)
+        lp = ema_l - ema_s
+        np.maximum(lp, 0.0, out=lp)
 
         med_lp = float(np.median(lp)) if lp.size > 0 else 0.0
         med_err = float(np.median(ema_s)) if ema_s.size > 0 else 0.0
@@ -409,29 +410,36 @@ class GLPE(nn.Module):
         err, phi_t = self._forward_error_and_phi(obs, next_obs, actions)
 
         phi_np = phi_t.detach().cpu().numpy()
-        err_np = err.detach().cpu().numpy().astype(np.float64)
-        imp_np = impact_raw.detach().cpu().numpy().astype(np.float32)
+        err_np = err.detach().cpu().numpy()
+        imp_np = impact_raw.detach().cpu().numpy()
 
         N = int(imp_np.shape[0])
         out = np.empty(N, dtype=np.float32)
 
         rids = self.store.bulk_insert(phi_np)
 
+        gating_enabled = bool(self.gating_enabled)
+        normalize_inside = bool(self._normalize_inside)
+        alpha_imp = float(self.alpha_impact)
+        alpha_lp = float(self.alpha_lp)
+
+        update_region = self._update_region
+        maybe_update_gate = self._maybe_update_gate
+        rms = self._rms
+
         for i in range(N):
             rid = int(rids[i])
-            lp_raw = float(self._update_region(rid, float(err_np[i])))
+            lp_raw = float(update_region(rid, float(err_np[i])))
 
-            gate = 1
-            if self.gating_enabled:
-                gate = int(self._maybe_update_gate(rid, float(lp_raw)))
+            gate = int(maybe_update_gate(rid, float(lp_raw))) if gating_enabled else 1
 
-            if self._normalize_inside:
+            if normalize_inside:
                 imp_i = float(imp_np[i])
-                self._rms.update_scalar(imp_i, lp_raw)
-                imp_norm, lp_norm = self._rms.normalize_scalar(imp_i, lp_raw)
-                combined = self.alpha_impact * float(imp_norm) + self.alpha_lp * float(lp_norm)
+                rms.update_scalar(imp_i, lp_raw)
+                imp_norm, lp_norm = rms.normalize_scalar(imp_i, lp_raw)
+                combined = alpha_imp * float(imp_norm) + alpha_lp * float(lp_norm)
             else:
-                combined = self.alpha_impact * float(imp_np[i]) + self.alpha_lp * float(lp_raw)
+                combined = alpha_imp * float(imp_np[i]) + alpha_lp * float(lp_raw)
 
             out[i] = float(gate) * float(combined)
 
