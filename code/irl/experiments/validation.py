@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from irl.trainer.metrics_schema import (
+from irl.metrics.schema import (
     GLPE_GATE_ANY_COLS,
     GLPE_REQUIRED_COMPONENT_COLS,
     SCALARS_REQUIRED_COMMON_COLS,
