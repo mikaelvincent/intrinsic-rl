@@ -9,6 +9,7 @@ import pandas as pd
 from irl.methods.spec import paper_method_groups as _paper_method_groups
 
 from .plot_utils import apply_rcparams_paper, save_fig_atomic
+from .trajectory_projection import trajectory_projection
 
 
 def _style():
@@ -347,32 +348,6 @@ def _npz_str(data: Any, key: str) -> str | None:
         return None
 
 
-def _trajectory_projection(env_id: str | None, obs: np.ndarray) -> tuple[int, int, str, str] | None:
-    if obs.ndim != 2 or obs.shape[1] < 2:
-        return None
-
-    D = int(obs.shape[1])
-    e = (env_id or "").strip()
-
-    if e.startswith("MountainCar"):
-        return 0, 1, "position", "velocity"
-    if e.startswith("CartPole"):
-        return (0, 2, "cart_pos", "pole_angle") if D >= 3 else (0, 1, "obs[0]", "obs[1]")
-    if e.startswith("Pendulum"):
-        return 0, 1, "cos(theta)", "sin(theta)"
-    if e.startswith("Acrobot"):
-        return 0, 1, "cos(theta1)", "sin(theta1)"
-    if e.startswith("LunarLander"):
-        return 0, 1, "x", "y"
-    if e.startswith("BipedalWalker") and D >= 2:
-        return 0, 1, "obs[0]", "obs[1]"
-
-    if D == 2:
-        return 0, 1, "obs[0]", "obs[1]"
-
-    return None
-
-
 def _sample_idx(n: int, k: int, *, seed: int) -> np.ndarray:
     nn = int(n)
     kk = int(k)
@@ -438,7 +413,7 @@ def plot_glpe_state_gate_map(
 
         obs_cat = np.concatenate(obs_all, axis=0)
         gates_cat = np.concatenate(gates_all, axis=0)
-        proj = _trajectory_projection(env_id, obs_cat)
+        proj = trajectory_projection(env_id, obs_cat, include_bipedalwalker=True)
         if proj is None:
             continue
 
