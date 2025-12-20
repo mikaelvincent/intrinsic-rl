@@ -10,13 +10,13 @@ import torch
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
 from irl.intrinsic import compute_intrinsic_batch, update_module
+from irl.methods.spec import canonical_method as _canonical_method
 
 from .rollout import RolloutBatch
 
 
 def _canonical_intrinsic_method(method_l: str) -> str:
-    m = str(method_l).strip().lower()
-    return "glpe" if m.startswith("glpe_") else m
+    return _canonical_method(method_l)
 
 
 def _expected_intrinsic_update_keys(method_l: str) -> tuple[str, ...]:
