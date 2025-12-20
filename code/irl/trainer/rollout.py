@@ -30,7 +30,11 @@ def _coerce_vec(x: Any, B: int, *, dtype: Any | None = None) -> np.ndarray | Non
     try:
         arr = np.asarray(x, dtype=dtype) if dtype is not None else np.asarray(x)
     except Exception:
-        return None
+        # Vector envs can pad missing per-env entries with None, which breaks dtype coercion.
+        try:
+            arr = np.asarray(x, dtype=object)
+        except Exception:
+            return None
     arr = arr.reshape(-1)
     if int(arr.size) == int(B):
         return arr
@@ -47,6 +51,8 @@ def _episode_stats_from_info(info: Mapping[str, Any]) -> tuple[float, int, float
     r = _try_float(ep.get("r"))
     l = _try_int(ep.get("l"))
     if r is None or l is None:
+        return None
+    if not np.isfinite(float(r)):
         return None
 
     success = None
@@ -94,21 +100,21 @@ def _extract_completed_episodes(
                 if final_info.shape[:1] == (B,):
                     for i in idxs:
                         fi = final_info[int(i)]
-                        if isinstance(fi, dict):
+                        if isinstance(fi, Mapping):
                             _append(fi)
                 elif B == 1:
                     try:
                         fi0 = final_info.reshape(-1)[0]
-                        if isinstance(fi0, dict):
+                        if isinstance(fi0, Mapping):
                             _append(fi0)
                     except Exception:
                         pass
             elif isinstance(final_info, (list, tuple)) and len(final_info) == B:
                 for i in idxs:
                     fi = final_info[int(i)]
-                    if isinstance(fi, dict):
+                    if isinstance(fi, Mapping):
                         _append(fi)
-            elif B == 1 and isinstance(final_info, dict):
+            elif B == 1 and isinstance(final_info, Mapping):
                 _append(final_info)
 
             if returns:
@@ -124,6 +130,8 @@ def _extract_completed_episodes(
                     ri = _try_float(r_arr[int(i)])
                     li = _try_int(l_arr[int(i)])
                     if ri is None or li is None:
+                        continue
+                    if not np.isfinite(float(ri)):
                         continue
                     returns.append(float(ri))
                     lengths.append(int(li))
@@ -150,7 +158,7 @@ def _extract_completed_episodes(
     if isinstance(infos, (list, tuple)) and len(infos) == B:
         for i in idxs:
             fi = infos[int(i)]
-            if isinstance(fi, dict):
+            if isinstance(fi, Mapping):
                 _append(fi)
 
     return returns, lengths, successes
