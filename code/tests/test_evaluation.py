@@ -206,22 +206,50 @@ def test_evaluator_writes_trajectory_npz_and_gate_source(tmp_path: Path) -> None
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
 
 
-def _write_latest_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> None:
+def _write_latest_ckpt(
+    run_dir: Path,
+    *,
+    env_id: str,
+    method: str,
+    seed: int,
+    step: int,
+    eval_interval_steps: int = 50_000,
+    episodes: int = 1,
+) -> None:
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "step": int(step),
-        "cfg": {"env": {"id": str(env_id)}, "method": str(method), "seed": int(seed)},
+        "cfg": {
+            "env": {"id": str(env_id)},
+            "method": str(method),
+            "seed": int(seed),
+            "evaluation": {"interval_steps": int(eval_interval_steps), "episodes": int(episodes)},
+        },
     }
     torch.save(payload, ckpt_dir / "ckpt_latest.pt")
 
 
-def _write_step_ckpt(run_dir: Path, *, env_id: str, method: str, seed: int, step: int) -> Path:
+def _write_step_ckpt(
+    run_dir: Path,
+    *,
+    env_id: str,
+    method: str,
+    seed: int,
+    step: int,
+    eval_interval_steps: int = 50_000,
+    episodes: int = 1,
+) -> Path:
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "step": int(step),
-        "cfg": {"env": {"id": str(env_id)}, "method": str(method), "seed": int(seed)},
+        "cfg": {
+            "env": {"id": str(env_id)},
+            "method": str(method),
+            "seed": int(seed),
+            "evaluation": {"interval_steps": int(eval_interval_steps), "episodes": int(episodes)},
+        },
     }
     ckpt_path = ckpt_dir / f"ckpt_step_{int(step)}.pt"
     torch.save(payload, ckpt_path)
@@ -271,9 +299,6 @@ def test_eval_suite_reports_coverage_and_step_parity(
         run_eval_suite(
             runs_root=runs_root,
             results_dir=results_dir,
-            episodes=1,
-            device="cpu",
-            policy_mode="mode",
         )
 
     cov_path = results_dir / "coverage.csv"
@@ -300,13 +325,10 @@ def test_eval_suite_reports_coverage_and_step_parity(
         run_eval_suite(
             runs_root=runs_root2,
             results_dir=results_dir2,
-            episodes=1,
-            device="cpu",
-            policy_mode="mode",
         )
 
 
-def test_eval_suite_fixed_step_selects_expected_ckpt(
+def test_eval_suite_every_k_selects_expected_ckpts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runs_root = tmp_path / "runs_suite"
@@ -316,24 +338,24 @@ def test_eval_suite_fixed_step_selects_expected_ckpt(
     run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=10)
-    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=20)
-    _write_step_ckpt(run_dir, env_id="DummyEval-v0", method="vanilla", seed=1, step=30)
-
     import irl.experiments.evaluation as eval_module
 
     monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
 
+    for step in (0, 10, 20, 30):
+        _write_step_ckpt(
+            run_dir,
+            env_id="DummyEval-v0",
+            method="vanilla",
+            seed=1,
+            step=step,
+            eval_interval_steps=25,
+            episodes=1,
+        )
+
     run_eval_suite(
         runs_root=runs_root,
         results_dir=results_dir,
-        episodes=1,
-        device="cpu",
-        policy_mode="mode",
-        strict_coverage=True,
-        strict_step_parity=True,
-        ckpt_policy="fixed_step",
-        target_step=25,
     )
 
     raw_path = results_dir / "summary_raw.csv"
@@ -342,6 +364,5 @@ def test_eval_suite_fixed_step_selects_expected_ckpt(
     with raw_path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
-    assert len(rows) == 1
-    assert int(rows[0]["ckpt_step"]) == 20
-    assert rows[0]["ckpt_path"].endswith("ckpt_step_20.pt")
+    steps = sorted({int(r["ckpt_step"]) for r in rows})
+    assert steps == [0, 20, 30]
