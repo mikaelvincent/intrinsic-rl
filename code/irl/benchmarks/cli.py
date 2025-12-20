@@ -1,32 +1,32 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import typer
 
+from irl.paper_defaults import (
+    BENCH_DIR,
+    DEFAULT_BENCH_DEVICE,
+    DEFAULT_BENCH_QUICK,
+    DEFAULT_BENCH_SEED,
+    DEFAULT_BENCH_THREADS,
+)
 
-def cli_bench(
-    device: str = typer.Option("cpu", "--device", "-d"),
-    threads: int = typer.Option(1, "--threads", "-t"),
-    seed: int = typer.Option(0, "--seed", "-s"),
-    out_dir: Path = typer.Option(Path("results/benchmarks"), "--out-dir", "-o"),
-    quick: bool = typer.Option(True, "--quick/--full"),
-) -> None:
+
+def cli_bench() -> None:
     from irl.benchmarks.suite import run_all_benchmarks
 
     payload = run_all_benchmarks(
-        device=str(device),
-        threads=int(threads),
-        seed=int(seed),
-        out_dir=Path(out_dir),
-        quick=bool(quick),
+        device=str(DEFAULT_BENCH_DEVICE),
+        threads=int(DEFAULT_BENCH_THREADS),
+        seed=int(DEFAULT_BENCH_SEED),
+        out_dir=BENCH_DIR,
+        quick=bool(DEFAULT_BENCH_QUICK),
     )
 
     plot_outputs: dict[str, str] = {}
     try:
         from irl.benchmarks.plots import write_benchmark_plots
 
-        plot_outputs = write_benchmark_plots(payload, out_dir=Path(out_dir))
+        plot_outputs = write_benchmark_plots(payload, out_dir=BENCH_DIR)
     except Exception as exc:
         typer.echo(f"[bench] Plot generation failed: {type(exc).__name__}: {exc}")
 
