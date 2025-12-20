@@ -178,12 +178,40 @@ def compute_advantages(
     profile_cuda_sync: bool,
     maybe_cuda_sync: Callable[[torch.device, bool], None],
 ) -> AdvantageBatch:
+    T, B = int(rollout.T), int(rollout.B)
+
+    terminals_gae: np.ndarray | object = rollout.terminals_seq
+    truncations_gae: np.ndarray | object = rollout.truncations_seq
+
+    no_final = None
+    try:
+        no_final = getattr(rollout, "timeouts_no_final_obs_seq", None)
+    except Exception:
+        no_final = None
+
+    if no_final is not None:
+        try:
+            nf = np.asarray(no_final, dtype=np.float32)
+            if nf.shape[:2] == (T, B):
+                mask = nf > 0.0
+                if bool(mask.any()):
+                    m = mask.astype(np.float32, copy=False)
+                    terminals_gae = np.maximum(
+                        np.array(rollout.terminals_seq, dtype=np.float32, copy=True),
+                        m,
+                    )
+                    truncations_gae = np.array(rollout.truncations_seq, dtype=np.float32, copy=True)
+                    truncations_gae = truncations_gae * (1.0 - m)
+        except Exception:
+            terminals_gae = rollout.terminals_seq
+            truncations_gae = rollout.truncations_seq
+
     gae_batch = {
         "obs": rollout.obs_seq,
         "next_observations": rollout.next_obs_seq,
         "rewards": rewards_total_seq,
-        "terminals": rollout.terminals_seq,
-        "truncations": rollout.truncations_seq,
+        "terminals": terminals_gae,
+        "truncations": truncations_gae,
     }
 
     gae_t0 = time.perf_counter()
