@@ -175,6 +175,7 @@ class RolloutBatch:
     dones_seq: np.ndarray
     terminals_seq: np.ndarray
     truncations_seq: np.ndarray
+    timeouts_no_final_obs_seq: np.ndarray
     obs_shape: tuple[int, ...]
     is_discrete: bool
     r_int_raw_seq: np.ndarray | None
@@ -237,6 +238,7 @@ def collect_rollout(
     dones_seq = np.zeros((T, B), dtype=np.float32)
     terminals_seq = np.zeros((T, B), dtype=np.float32)
     truncations_seq = np.zeros((T, B), dtype=np.float32)
+    timeouts_no_final_obs_seq = np.zeros((T, B), dtype=np.float32)
 
     r_int_raw_seq = (
         np.zeros((T, B), dtype=np.float32)
@@ -317,13 +319,7 @@ def collect_rollout(
         no_final_timeout = truncs_b & (~np.asarray(applied_final, dtype=bool).reshape(B))
         if bool(no_final_timeout.any()):
             missing_final_obs_truncs += int(no_final_timeout.sum())
-            terms_store = terms_b.copy()
-            truncs_store = truncs_b.copy()
-            terms_store[no_final_timeout] = True
-            truncs_store[no_final_timeout] = False
-        else:
-            terms_store = terms_b
-            truncs_store = truncs_b
+        timeouts_no_final_obs_seq[t] = no_final_timeout.astype(np.float32, copy=False)
 
         next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
         if not is_image:
@@ -334,8 +330,8 @@ def collect_rollout(
         actions_seq[t] = a_np if B > 1 else (a_np if is_discrete else a_np[0:1, :])
         rew_ext_seq[t] = np.asarray(rewards, dtype=np.float32).reshape(B)
         dones_seq[t] = np.asarray(done_flags, dtype=np.float32).reshape(B)
-        terminals_seq[t] = terms_store.astype(np.float32, copy=False)
-        truncations_seq[t] = truncs_store.astype(np.float32, copy=False)
+        terminals_seq[t] = terms_b.astype(np.float32, copy=False)
+        truncations_seq[t] = truncs_b.astype(np.float32, copy=False)
 
         if not is_image:
             next_obs_seq[t] = next_obs_b_norm.astype(np.float32)
@@ -351,7 +347,7 @@ def collect_rollout(
                 reduction="none",
             )
             r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
-            r_step_np[terms_store] = 0.0
+            r_step_np[terms_b] = 0.0
             r_int_raw_seq[t] = r_step_np
             t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
@@ -409,6 +405,9 @@ def collect_rollout(
     dones_seq = _ensure_time_major_np(dones_seq, T, B, "dones")
     terminals_seq = _ensure_time_major_np(terminals_seq, T, B, "terminals")
     truncations_seq = _ensure_time_major_np(truncations_seq, T, B, "truncations")
+    timeouts_no_final_obs_seq = _ensure_time_major_np(
+        timeouts_no_final_obs_seq, T, B, "timeouts_no_final_obs"
+    )
     if r_int_raw_seq is not None:
         r_int_raw_seq = _ensure_time_major_np(r_int_raw_seq, T, B, "r_int_raw")
 
@@ -427,6 +426,7 @@ def collect_rollout(
         dones_seq=dones_seq,
         terminals_seq=terminals_seq,
         truncations_seq=truncations_seq,
+        timeouts_no_final_obs_seq=timeouts_no_final_obs_seq,
         obs_shape=tuple(int(x) for x in obs_shape),
         is_discrete=bool(is_discrete),
         r_int_raw_seq=r_int_raw_seq,
