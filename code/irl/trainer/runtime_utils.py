@@ -34,11 +34,12 @@ def _ensure_time_major_np(x: np.ndarray, T: int, B: int, name: str) -> np.ndarra
     )
 
 
-def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray:
+def _apply_final_observation_with_mask(next_obs: Any, done: Any, infos: Any) -> tuple[np.ndarray, np.ndarray]:
     obs = np.asarray(next_obs)
     done_mask = np.asarray(done, dtype=bool).reshape(-1)
+    applied = np.zeros_like(done_mask, dtype=bool)
     if not done_mask.any():
-        return obs
+        return obs, applied
 
     final = None
     if isinstance(infos, dict):
@@ -55,7 +56,7 @@ def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray
         final = finals if finals else None
 
     if final is None:
-        return obs
+        return obs, applied
 
     fixed = np.array(obs, copy=True)
 
@@ -65,14 +66,16 @@ def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray
                 fo_i = final[i]
                 if fo_i is not None:
                     fixed[i] = np.asarray(fo_i)
-            return fixed
+                    applied[int(i)] = True
+            return fixed, applied
 
         if isinstance(final, (list, tuple)) and len(final) == done_mask.shape[0]:
             for i in np.flatnonzero(done_mask):
                 fo_i = final[i]
                 if fo_i is not None:
                     fixed[i] = np.asarray(fo_i)
-            return fixed
+                    applied[int(i)] = True
+            return fixed, applied
     except Exception:
         pass
 
@@ -88,14 +91,23 @@ def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray
                         pass
 
                 if fo.size == fixed.size:
-                    return fo.reshape(fixed.shape).astype(fixed.dtype, copy=False)
+                    applied[0] = True
+                    return fo.reshape(fixed.shape).astype(fixed.dtype, copy=False), applied
 
                 if fixed.size == 1 and fo.size == 1:
                     fixed[...] = fo.reshape(())
-                    return fixed
+                    applied[0] = True
+                    return fixed, applied
             else:
                 fixed[0] = fo
+                applied[0] = True
+                return fixed, applied
         except Exception:
             pass
 
+    return fixed, applied
+
+
+def _apply_final_observation(next_obs: Any, done: Any, infos: Any) -> np.ndarray:
+    fixed, _applied = _apply_final_observation_with_mask(next_obs, done, infos)
     return fixed
