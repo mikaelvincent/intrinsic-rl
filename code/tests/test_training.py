@@ -1,4 +1,3 @@
-# tests/test_training.py
 from __future__ import annotations
 
 import csv
@@ -100,7 +99,11 @@ class _ObsNormCountEnv(gym.Env):
         return
 
 
-for _id, _cls in (("StepBudget-v0", _StepBudgetEnv), ("TimeoutMask-v0", _TimeoutMaskEnv), ("ObsNormCount-v0", _ObsNormCountEnv)):
+for _id, _cls in (
+    ("StepBudget-v0", _StepBudgetEnv),
+    ("TimeoutMask-v0", _TimeoutMaskEnv),
+    ("ObsNormCount-v0", _ObsNormCountEnv),
+):
     try:
         register(id=_id, entry_point=_cls)
     except Exception:
@@ -164,7 +167,7 @@ def test_train_refuses_dirty_run_dir_without_resume(tmp_path: Path) -> None:
         run_train(Config(), total_steps=1, run_dir=run_dir, resume=False)
 
 
-def test_total_steps_aligns_to_vec_envs_budget(tmp_path: Path) -> None:
+def test_total_steps_aligns_to_vec_envs_budget_and_logs(tmp_path: Path) -> None:
     cfg = _make_cfg(
         env_id="StepBudget-v0",
         method="vanilla",
@@ -174,12 +177,18 @@ def test_total_steps_aligns_to_vec_envs_budget(tmp_path: Path) -> None:
         epochs=1,
         eta=0.0,
     )
-    out_dir = run_train(cfg, total_steps=5, run_dir=tmp_path / "run_budget", resume=False)
+    cfg = replace(cfg, logging=replace(cfg.logging, csv_interval=10_000))
 
+    out_dir = run_train(cfg, total_steps=5, run_dir=tmp_path / "run_budget", resume=False)
     payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
     step = int(payload.get("step", -1))
     assert step == 4
     assert step % int(cfg.env.vec_envs) == 0
+
+    csv_path = out_dir / "logs" / "scalars.csv"
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert rows
 
 
 def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
@@ -193,7 +202,6 @@ def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
         eta=0.0,
     )
     out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_obs_norm_count", resume=False)
-
     payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
     step = int(payload.get("step", -1))
     assert step == 4
@@ -203,28 +211,6 @@ def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
     count = float(obs_norm.get("count", float("nan")))
     assert np.isfinite(count)
     assert abs(count - float(step)) < 1e-6
-
-
-def test_metrics_logged_when_interval_exceeds_total_steps(tmp_path: Path) -> None:
-    cfg = _make_cfg(
-        env_id="StepBudget-v0",
-        method="vanilla",
-        vec_envs=1,
-        steps_per_update=2,
-        minibatches=1,
-        epochs=1,
-        eta=0.0,
-    )
-    cfg = replace(cfg, logging=replace(cfg.logging, csv_interval=10_000))
-
-    out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_csv_interval", resume=False)
-
-    csv_path = out_dir / "logs" / "scalars.csv"
-    assert csv_path.exists()
-
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    assert len(rows) >= 1
 
 
 def test_intrinsic_not_masked_on_truncations(tmp_path: Path) -> None:
