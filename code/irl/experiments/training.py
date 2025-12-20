@@ -44,10 +44,15 @@ def _discover_configs(
     return sorted(candidates)
 
 
+def _run_dir_name(cfg: Config, cfg_path: Path, seed: int) -> str:
+    method_tag = str(cfg.method).strip().lower()
+    env_tag = str(cfg.env.id).strip().replace("/", "-")
+    cfg_tag = str(cfg_path.stem).strip()
+    return f"{method_tag}__{env_tag}__seed{int(seed)}__{cfg_tag}"
+
+
 def _run_dir_for(cfg: Config, cfg_path: Path, seed: int, runs_root: Path) -> Path:
-    env_tag = str(cfg.env.id).replace("/", "-")
-    name = f"{cfg.method}__{env_tag}__seed{int(seed)}__{cfg_path.stem}"
-    return runs_root / name
+    return Path(runs_root) / _run_dir_name(cfg, cfg_path, seed)
 
 
 def _format_steps(step: int) -> str:
