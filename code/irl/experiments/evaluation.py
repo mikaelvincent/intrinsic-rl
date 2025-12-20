@@ -1,3 +1,4 @@
+# code/irl/experiments/evaluation.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -56,6 +57,11 @@ _COVERAGE_COLS: list[str] = [
     "ckpt_step_mean",
     "ckpt_step_median",
     "ckpt_step_std",
+    "latest_ckpt_step_min",
+    "latest_ckpt_step_max",
+    "latest_ckpt_step_mean",
+    "latest_ckpt_step_median",
+    "latest_ckpt_step_std",
 ]
 
 
@@ -115,6 +121,30 @@ def _coverage_from_results(
             step_median = -1
             step_std = 0.0
 
+        latest_by_seed: dict[int, int] = {}
+        for r in rs:
+            s = int(r.ckpt_step)
+            if s < 0:
+                continue
+            sid = int(r.seed)
+            prev = latest_by_seed.get(sid)
+            if prev is None or s > prev:
+                latest_by_seed[sid] = s
+
+        latest_steps = [int(s) for s in latest_by_seed.values() if int(s) >= 0]
+        if latest_steps:
+            latest_min = min(latest_steps)
+            latest_max = max(latest_steps)
+            latest_mean = int(round(mean(latest_steps)))
+            latest_median = int(round(median(latest_steps)))
+            latest_std = float(pstdev(latest_steps)) if len(latest_steps) > 1 else 0.0
+        else:
+            latest_min = -1
+            latest_max = -1
+            latest_mean = -1
+            latest_median = -1
+            latest_std = 0.0
+
         rows.append(
             {
                 "env_id": env_id,
@@ -128,6 +158,11 @@ def _coverage_from_results(
                 "ckpt_step_mean": int(step_mean),
                 "ckpt_step_median": int(step_median),
                 "ckpt_step_std": float(step_std),
+                "latest_ckpt_step_min": int(latest_min),
+                "latest_ckpt_step_max": int(latest_max),
+                "latest_ckpt_step_mean": int(latest_mean),
+                "latest_ckpt_step_median": int(latest_median),
+                "latest_ckpt_step_std": float(latest_std),
             }
         )
 
@@ -142,48 +177,102 @@ def _coverage_msg_seed(env_id: str, missing_by_method: dict[str, list[int]]) -> 
     return f"[suite]    ! Seed coverage mismatch for env={env_id}: " + "; ".join(bits)
 
 
-def _coverage_msg_step(env_id: str, step_mean_by_method: dict[str, int]) -> str:
-    bits = [f"{m}≈{s}" for m, s in sorted(step_mean_by_method.items(), key=lambda kv: kv[0])]
-    return f"[suite]    ! Step parity mismatch for env={env_id}: " + ", ".join(bits)
+def _fmt_int_list(xs: list[int], *, limit: int = 8) -> str:
+    if not xs:
+        return "[]"
+    if len(xs) <= limit:
+        return str(xs)
+    head = xs[:limit]
+    return "[" + ", ".join(str(x) for x in head) + ", ...]"
 
 
-def _enforce_coverage_and_step_parity(
-    seeds_by_env: Mapping[str, Mapping[str, set[int]]],
-    steps_by_env: Mapping[str, Mapping[str, list[int]]],
-) -> None:
+def _coverage_msg_latest_step(env_id: str, seed: int, latest_by_method: Mapping[str, int]) -> str:
+    bits = [f"{m}={int(s)}" for m, s in sorted(latest_by_method.items(), key=lambda kv: kv[0])]
+    return f"[suite]    ! Step parity mismatch for env={env_id} seed={int(seed)}: " + ", ".join(bits)
+
+
+def _coverage_msg_step_sets(env_id: str, union_steps: set[int], missing_by_method: Mapping[str, list[int]]) -> str:
+    union_sorted = sorted(int(s) for s in union_steps if int(s) >= 0)
+    if union_sorted:
+        union_desc = f"{union_sorted[0]}..{union_sorted[-1]} (n={len(union_sorted)})"
+    else:
+        union_desc = "empty"
+
+    bits: list[str] = []
+    for m, miss in sorted(missing_by_method.items(), key=lambda kv: kv[0]):
+        if miss:
+            bits.append(f"{m} missing {_fmt_int_list(miss)}")
+    return (
+        f"[suite]    ! Step parity mismatch for env={env_id}: "
+        f"evaluated step sets differ (union={union_desc}) — "
+        + "; ".join(bits)
+    )
+
+
+def _enforce_coverage_and_step_parity(results: list[RunResult]) -> None:
+    seeds_by_env: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    steps_by_env: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    latest_by_env: dict[str, dict[str, dict[int, int]]] = defaultdict(lambda: defaultdict(dict))
+
+    for r in results:
+        env_id = str(r.env_id)
+        method = str(r.method)
+        seed = int(r.seed)
+        step = int(r.ckpt_step)
+
+        seeds_by_env[env_id][method].add(seed)
+
+        if step >= 0:
+            steps_by_env[env_id][method].add(step)
+            prev = latest_by_env[env_id][method].get(seed)
+            if prev is None or step > prev:
+                latest_by_env[env_id][method][seed] = step
+
     for env_id in sorted(seeds_by_env.keys()):
         methods = seeds_by_env[env_id]
         if len(methods) <= 1:
             continue
 
-        union: set[int] = set()
+        union_seeds: set[int] = set()
         for ss in methods.values():
-            union |= set(ss)
+            union_seeds |= set(ss)
 
         missing_by_method: dict[str, list[int]] = {}
         for m, ss in methods.items():
-            miss = sorted(union - set(ss))
+            miss = sorted(union_seeds - set(ss))
             if miss:
                 missing_by_method[str(m)] = miss
 
         if missing_by_method:
             raise RuntimeError(_coverage_msg_seed(str(env_id), missing_by_method))
 
-        step_means: dict[str, int] = {}
-        for m, steps in steps_by_env.get(env_id, {}).items():
-            steps_ok = [int(s) for s in steps if int(s) >= 0]
-            if not steps_ok:
+        method_names = sorted((str(m) for m in methods.keys()), key=lambda s: s)
+
+        for seed in sorted(union_seeds):
+            latest_by_method: dict[str, int] = {}
+            for m in method_names:
+                latest_by_method[m] = int(latest_by_env.get(env_id, {}).get(m, {}).get(int(seed), -1))
+
+            vals = [int(v) for v in latest_by_method.values() if int(v) >= 0]
+            if not vals:
                 continue
-            step_means[str(m)] = int(round(mean(steps_ok)))
 
-        if len(step_means) <= 1:
-            continue
+            if max(vals) != min(vals):
+                raise RuntimeError(_coverage_msg_latest_step(str(env_id), int(seed), latest_by_method))
 
-        max_step = max(step_means.values())
-        min_step = min(step_means.values())
-        thresh = max(1000, int(round(0.05 * max_step)))
-        if (max_step - min_step) > thresh:
-            raise RuntimeError(_coverage_msg_step(str(env_id), step_means))
+        union_steps: set[int] = set()
+        for m in method_names:
+            union_steps |= set(steps_by_env.get(env_id, {}).get(m, set()))
+
+        missing_steps_by_method: dict[str, list[int]] = {}
+        for m in method_names:
+            have = set(steps_by_env.get(env_id, {}).get(m, set()))
+            miss = sorted(int(s) for s in (union_steps - have))
+            if miss:
+                missing_steps_by_method[m] = miss
+
+        if missing_steps_by_method:
+            raise RuntimeError(_coverage_msg_step_sets(str(env_id), union_steps, missing_steps_by_method))
 
 
 def _write_eval_meta(
@@ -390,23 +479,10 @@ def run_eval_suite(
 
     results_root.mkdir(parents=True, exist_ok=True)
     raw_path = results_root / "summary_raw.csv"
-    summary_path = results_root / "summary.csv"
-
     write_raw_csv(results, raw_path)
-    agg_rows = aggregate_results(results)
-    write_summary_csv(agg_rows, summary_path)
-
     typer.echo(f"[suite] Wrote per-checkpoint results to {raw_path}")
-    typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
 
-    unique_steps = sorted({int(r.ckpt_step) for r in results if int(r.ckpt_step) >= 0})
-    if len(unique_steps) > 1:
-        by_step_path = results_root / "summary_by_step.csv"
-        by_step_rows = aggregate_results_by_step(results)
-        write_summary_by_step_csv(by_step_rows, by_step_path)
-        typer.echo(f"[suite] Wrote step-grouped summary to {by_step_path}")
-
-    coverage_rows, seeds_by_env, steps_by_env = _coverage_from_results(results)
+    coverage_rows, _seeds_by_env, _steps_by_env = _coverage_from_results(results)
     coverage_path = results_root / "coverage.csv"
     _write_coverage_csv(coverage_rows, coverage_path)
     typer.echo(f"[suite] Wrote coverage report to {coverage_path}")
@@ -421,7 +497,16 @@ def run_eval_suite(
     )
     typer.echo(f"[suite] Wrote eval metadata to {meta_path}")
 
-    _enforce_coverage_and_step_parity(
-        seeds_by_env,
-        steps_by_env,
-    )
+    _enforce_coverage_and_step_parity(results)
+
+    summary_path = results_root / "summary.csv"
+    agg_rows = aggregate_results(results)
+    write_summary_csv(agg_rows, summary_path)
+    typer.echo(f"[suite] Wrote aggregated summary to {summary_path}")
+
+    unique_steps = sorted({int(r.ckpt_step) for r in results if int(r.ckpt_step) >= 0})
+    if len(unique_steps) > 1:
+        by_step_path = results_root / "summary_by_step.csv"
+        by_step_rows = aggregate_results_by_step(results)
+        write_summary_by_step_csv(by_step_rows, by_step_path)
+        typer.echo(f"[suite] Wrote step-grouped summary to {by_step_path}")
