@@ -174,7 +174,6 @@ class MetricLogger:
         self.csv = CSVLogger(self.csv_path)
 
         self._last_csv_write_step: Optional[int] = None
-        self._last_finite: dict[str, float] = {}
 
     @staticmethod
     def _num(v: object) -> float | None:
@@ -192,13 +191,6 @@ class MetricLogger:
         s = int(step)
         last = self._last_csv_write_step
 
-        for k, v in metrics.items():
-            x = self._num(v)
-            if x is None:
-                continue
-            if math.isfinite(x):
-                self._last_finite[str(k)] = float(x)
-
         should_write_csv = False
         if last is None:
             if s == 0 or s >= interval:
@@ -210,20 +202,19 @@ class MetricLogger:
         if not should_write_csv:
             return False
 
+        nonfinite_keys: list[str] = []
         out: dict[str, object] = {}
+
         for k, v in metrics.items():
             kk = str(k)
             x = self._num(v)
-            if x is None:
-                out[kk] = v
-                continue
-            if math.isfinite(x):
-                out[kk] = v
-                continue
-            if kk in self._last_finite:
-                out[kk] = float(self._last_finite[kk])
-            else:
-                out[kk] = 0.0
+            if x is not None and not math.isfinite(x):
+                nonfinite_keys.append(kk)
+            out[kk] = v
+
+        out["nonfinite_any"] = 1 if nonfinite_keys else 0
+        out["nonfinite_count"] = int(len(nonfinite_keys))
+        out["nonfinite_keys"] = ",".join(sorted(nonfinite_keys)) if nonfinite_keys else ""
 
         self.csv.log_row(s, out)
         self._last_csv_write_step = s
