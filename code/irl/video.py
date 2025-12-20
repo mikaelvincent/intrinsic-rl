@@ -8,11 +8,11 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
+from irl.checkpoints.runtime import build_obs_normalizer, extract_env_settings
 from irl.cli.validators import normalize_policy_mode
 from irl.envs.builder import make_env
 from irl.models import PolicyNetwork
 from irl.pipelines.policy_rollout import iter_policy_rollout
-from irl.pipelines.runtime import build_obs_normalizer, extract_env_runtime
 from irl.trainer.build import ensure_mujoco_gl, single_spaces
 from irl.utils.checkpoint import load_checkpoint
 from irl.utils.determinism import seed_everything
@@ -170,7 +170,7 @@ def render_rollout_video(
     ensure_mujoco_gl(env_id)
     seed_everything(int(seed), deterministic=True)
 
-    runtime = extract_env_runtime(cfg)
+    runtime = extract_env_settings(cfg)
     frame_skip = int(runtime["frame_skip"])
     discrete_actions = bool(runtime["discrete_actions"])
     car_action_set = runtime["car_action_set"]
