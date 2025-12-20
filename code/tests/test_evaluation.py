@@ -1,3 +1,4 @@
+# code/tests/test_evaluation.py
 from __future__ import annotations
 
 import csv
@@ -287,6 +288,47 @@ def test_eval_suite_reports_coverage_and_step_parity(
 
     with pytest.raises(RuntimeError, match="Step parity mismatch"):
         run_eval_suite(runs_root=runs_root2, results_dir=results_dir2)
+
+
+def test_eval_suite_latest_step_parity_catches_mean_trick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
+    runs_root = tmp_path / "runs_suite_mean_trick"
+    results_dir = tmp_path / "results_suite_mean_trick"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    r_a = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    r_b = runs_root / "glpe__DummyEval-v0__seed1__cfgA"
+    for rd in (r_a, r_b):
+        rd.mkdir(parents=True, exist_ok=True)
+
+    for step in (0, 100):
+        _ = _write_step_ckpt(
+            r_a,
+            env_id="DummyEval-v0",
+            method="vanilla",
+            seed=1,
+            step=step,
+            eval_interval_steps=100,
+            episodes=1,
+        )
+
+    _write_latest_ckpt(
+        r_b,
+        env_id="DummyEval-v0",
+        method="glpe",
+        seed=1,
+        step=50,
+        eval_interval_steps=0,
+        episodes=1,
+    )
+
+    with pytest.raises(RuntimeError, match="Step parity mismatch"):
+        run_eval_suite(runs_root=runs_root, results_dir=results_dir)
 
 
 def test_eval_suite_every_k_selects_expected_ckpts(
