@@ -200,7 +200,7 @@ def cli_full(
     quick: bool = typer.Option(False, "--quick/--no-quick"),
     strict_coverage: bool = typer.Option(True, "--strict-coverage/--no-strict-coverage"),
     strict_step_parity: bool = typer.Option(True, "--strict-step-parity/--no-strict-step-parity"),
-    paper: bool = typer.Option(False, "--paper/--no-paper"),
+    paper: bool = typer.Option(True, "--paper/--no-paper"),
 ) -> None:
     run_training_suite(
         configs_dir=configs_dir,
