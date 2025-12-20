@@ -16,6 +16,7 @@ def save_trajectory_npz(
     gates: Sequence[int],
     intrinsic: Sequence[float],
     gate_source: str | None,
+    intrinsic_semantics: str | None,
 ) -> Path | None:
     if not obs:
         return None
@@ -33,6 +34,10 @@ def save_trajectory_npz(
     if gate_src_out is None:
         gate_src_out = "recomputed" if is_glpe_family else "n/a"
 
+    sem_out = intrinsic_semantics
+    if sem_out is None:
+        sem_out = "missing_intrinsic" if str(gate_src_out) == "missing_intrinsic" else "none"
+
     np.savez_compressed(
         traj_file,
         obs=np.stack([np.asarray(o) for o in obs]),
@@ -42,5 +47,6 @@ def save_trajectory_npz(
         env_id=np.asarray([str(env_id)], dtype=np.str_),
         method=np.asarray([str(method)], dtype=np.str_),
         gate_source=np.asarray([str(gate_src_out)], dtype=np.str_),
+        intrinsic_semantics=np.asarray([str(sem_out)], dtype=np.str_),
     )
     return traj_file
