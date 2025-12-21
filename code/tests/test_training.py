@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from irl.intrinsic.icm import ICMConfig
 from irl.intrinsic.ride import RIDE
 from irl.trainer import train as run_train
 from irl.trainer.rollout import collect_rollout
+from irl.utils.checkpoint import load_checkpoint
 from irl.utils.loggers import get_logger
 
 
@@ -77,7 +80,31 @@ class _ObsNormCountEnv(gym.Env):
         return
 
 
-for _id, _cls in (("TimeoutMask-v0", _TimeoutMaskEnv), ("ObsNormCount-v0", _ObsNormCountEnv)):
+class _NeverTerminatingEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+
+    def reset(self, *, seed=None, options=None):
+        _ = seed, options
+        return np.zeros((4,), dtype=np.float32), {}
+
+    def step(self, action):
+        _ = action
+        return np.zeros((4,), dtype=np.float32), 0.0, False, False, {}
+
+    def close(self) -> None:
+        return
+
+
+for _id, _cls in (
+    ("TimeoutMask-v0", _TimeoutMaskEnv),
+    ("ObsNormCount-v0", _ObsNormCountEnv),
+    ("NeverTerminating-v0", _NeverTerminatingEnv),
+):
     try:
         register(id=_id, entry_point=_cls)
     except Exception:
@@ -324,3 +351,40 @@ def test_glpe_intrinsic_taper_weight_reaches_zero(tmp_path: Path) -> None:
     assert abs(w6) < 1e-12
     assert abs(float(rows[6]["r_int_mean"])) < 1e-12
     assert abs(float(rows[6]["intrinsic_eta_effective"])) < 1e-12
+
+
+def test_episode_metrics_nan_when_no_episodes(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="NeverTerminating-v0",
+        method="vanilla",
+        vec_envs=1,
+        steps_per_update=1,
+        minibatches=1,
+        epochs=1,
+        eta=0.0,
+    )
+    out_dir = run_train(cfg, total_steps=1, run_dir=tmp_path / "run_no_episodes", resume=False)
+
+    rows = _read_scalars_by_step(out_dir / "logs" / "scalars.csv")
+    r = rows[max(rows.keys())]
+    assert int(float(r["episode_count"])) == 0
+    assert math.isnan(float(r["episode_return_mean"]))
+    assert math.isnan(float(r["episode_length_mean"]))
+
+
+def test_run_meta_written_and_embedded(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="MountainCar-v0",
+        method="vanilla",
+        vec_envs=1,
+        steps_per_update=1,
+        minibatches=1,
+        epochs=1,
+        eta=0.0,
+    )
+    out_dir = run_train(cfg, total_steps=1, run_dir=tmp_path / "run_meta", resume=False)
+
+    meta_path = out_dir / "run_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
+    assert payload.get("run_meta") == meta
