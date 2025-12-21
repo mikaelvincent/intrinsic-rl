@@ -361,3 +361,79 @@ def test_ride_binning_reset_applies_on_episode_start_in_rollout() -> None:
         assert np.isclose(float(v2[0]), float(v[0]), atol=1e-6)
     finally:
         env.close()
+
+
+def _read_scalars_by_step(path: Path) -> dict[int, dict[str, str]]:
+    out: dict[int, dict[str, str]] = {}
+    with Path(path).open("r", newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            try:
+                out[int(r["step"])] = dict(r)
+            except Exception:
+                continue
+    return out
+
+
+def test_glpe_intrinsic_taper_weight_reaches_zero(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="ObsNormCount-v0",
+        method="glpe",
+        vec_envs=1,
+        steps_per_update=2,
+        minibatches=1,
+        epochs=1,
+        eta=0.1,
+    )
+    cfg = replace(cfg, intrinsic=replace(cfg.intrinsic, taper_start_frac=0.0, taper_end_frac=0.5))
+
+    out_dir = run_train(cfg, total_steps=8, run_dir=tmp_path / "run_glpe_taper", resume=False)
+
+    rows = _read_scalars_by_step(out_dir / "logs" / "scalars.csv")
+    w2 = float(rows[2]["intrinsic_taper_weight"])
+    w4 = float(rows[4]["intrinsic_taper_weight"])
+    w6 = float(rows[6]["intrinsic_taper_weight"])
+
+    assert w2 > w4 > w6
+    assert abs(w6) < 1e-12
+
+    r_int6 = float(rows[6]["r_int_mean"])
+    assert abs(r_int6) < 1e-12
+
+    eta_eff6 = float(rows[6]["intrinsic_eta_effective"])
+    assert abs(eta_eff6) < 1e-12
+
+
+def test_glpe_intrinsic_taper_inactive_logs_one(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="ObsNormCount-v0",
+        method="glpe",
+        vec_envs=1,
+        steps_per_update=2,
+        minibatches=1,
+        epochs=1,
+        eta=0.1,
+    )
+    out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_glpe_no_taper", resume=False)
+
+    rows = _read_scalars_by_step(out_dir / "logs" / "scalars.csv")
+    for step, r in rows.items():
+        _ = step
+        assert abs(float(r["intrinsic_taper_weight"]) - 1.0) < 1e-12
+
+
+def test_non_glpe_taper_weight_stays_one(tmp_path: Path) -> None:
+    cfg = _make_cfg(
+        env_id="ObsNormCount-v0",
+        method="vanilla",
+        vec_envs=1,
+        steps_per_update=2,
+        minibatches=1,
+        epochs=1,
+        eta=0.0,
+    )
+    out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_vanilla_taper_weight", resume=False)
+
+    rows = _read_scalars_by_step(out_dir / "logs" / "scalars.csv")
+    for step, r in rows.items():
+        _ = step
+        assert abs(float(r["intrinsic_taper_weight"]) - 1.0) < 1e-12
