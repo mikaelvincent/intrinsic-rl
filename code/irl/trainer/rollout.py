@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import gymnasium as gym
 import numpy as np
 import torch
 
@@ -258,6 +259,12 @@ def collect_rollout(
     )
     manual_reset_on_done = (int(B) == 1) and not bool(is_vector_env)
 
+    is_gym_vector_env = False
+    try:
+        is_gym_vector_env = isinstance(env, gym.vector.VectorEnv)
+    except Exception:
+        is_gym_vector_env = False
+
     def _reset_single_env() -> Any:
         try:
             out = env.reset()
@@ -335,10 +342,21 @@ def collect_rollout(
             next_obs_env, done_flags, infos
         )
         applied_final_b = np.asarray(applied_final, dtype=bool).reshape(B)
+
         if manual_reset_on_done:
             applied_final_b = applied_final_b | done_flags.astype(bool, copy=False)
 
-        no_final_timeout = truncs_b & (~applied_final_b)
+        has_final_obs_key = False
+        if isinstance(infos, dict):
+            has_final_obs_key = ("final_observation" in infos) or ("final_observations" in infos)
+
+        if manual_reset_on_done:
+            no_final_timeout = np.zeros((B,), dtype=bool)
+        elif has_final_obs_key:
+            no_final_timeout = truncs_b & (~applied_final_b)
+        else:
+            no_final_timeout = truncs_b if not bool(is_gym_vector_env) else np.zeros((B,), dtype=bool)
+
         if bool(no_final_timeout.any()):
             missing_final_obs_truncs += int(no_final_timeout.sum())
         timeouts_no_final_obs_seq[t] = no_final_timeout.astype(np.float32, copy=False)
