@@ -303,6 +303,10 @@ def test_eval_suite_enforces_coverage_and_selects_ckpts(
     steps = sorted({int(r["ckpt_step"]) for r in raw_rows})
     assert steps == [0, 20, 30]
 
+    meta_path = results_dir3 / "eval_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta.get("selected_ckpt_steps_union") == [0, 20, 30]
+
 
 _PLOT_DET_SCRIPT = r"""
 import json
