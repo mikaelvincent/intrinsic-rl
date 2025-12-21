@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from .schema import (
-    AdaptationConfig,
     Config,
     EnvConfig,
     EvaluationConfig,
@@ -19,7 +18,6 @@ __all__ = [
     "PPOConfig",
     "IntrinsicConfig",
     "GateConfig",
-    "AdaptationConfig",
     "EvaluationConfig",
     "LoggingConfig",
     "ExperimentConfig",
