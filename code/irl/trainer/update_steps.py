@@ -38,12 +38,38 @@ def _coerce_metrics_to_floats(metrics: dict[str, Any]) -> dict[str, float]:
     return out
 
 
+def _cosine_taper_weight(progress_frac: np.ndarray, start_frac: float, end_frac: float) -> np.ndarray:
+    p = np.asarray(progress_frac, dtype=np.float64).reshape(-1)
+    if p.size == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    start = float(start_frac)
+    end = float(end_frac)
+    denom = float(end - start)
+    if not np.isfinite(denom) or denom <= 0.0:
+        return np.ones_like(p, dtype=np.float32)
+
+    out = np.ones_like(p, dtype=np.float32)
+    out[p >= end] = 0.0
+
+    mid = (p > start) & (p < end)
+    if bool(mid.any()):
+        x = (p[mid] - start) / denom
+        w = 0.5 * (1.0 + np.cos(np.pi * x))
+        w = np.clip(w, 0.0, 1.0)
+        out[mid] = w.astype(np.float32)
+
+    return out
+
+
 @dataclass(frozen=True)
 class IntrinsicRewards:
     rewards_total_seq: np.ndarray
     r_int_raw_flat: np.ndarray | None
     r_int_scaled_flat: np.ndarray | None
     module_metrics: dict[str, float]
+    intrinsic_taper_weight_mean: float
+    intrinsic_eta_effective_mean: float
     time_compute_s: float
     time_update_s: float
 
@@ -60,8 +86,33 @@ def compute_intrinsic_rewards(
     device: torch.device,
     profile_cuda_sync: bool,
     maybe_cuda_sync: Callable[[torch.device, bool], None],
+    total_steps: int,
+    global_step_start: int,
+    taper_start_frac: float | None,
+    taper_end_frac: float | None,
 ) -> IntrinsicRewards:
     T, B = int(rollout.T), int(rollout.B)
+    N = int(T * B)
+
+    taper_weight_mean = 1.0
+    eta_used = float(eta) if (intrinsic_module is not None and bool(use_intrinsic)) else 0.0
+    eta_effective_mean = float(eta_used)
+
+    taper_active = (
+        str(method_l).startswith("glpe")
+        and taper_start_frac is not None
+        and taper_end_frac is not None
+        and int(total_steps) > 0
+        and N > 0
+    )
+
+    taper_w: np.ndarray | None = None
+    if taper_active:
+        idx = np.arange(N, dtype=np.int64)
+        progress = (float(global_step_start) + idx.astype(np.float64)) / float(int(total_steps))
+        taper_w = _cosine_taper_weight(progress, float(taper_start_frac), float(taper_end_frac))
+        taper_weight_mean = float(np.mean(taper_w)) if taper_w.size else 1.0
+        eta_effective_mean = float(eta_used) * float(taper_weight_mean)
 
     r_int_raw_flat = None
     r_int_scaled_flat = None
@@ -75,23 +126,23 @@ def compute_intrinsic_rewards(
 
         if str(method_l) == "ride":
             r_seq = rollout.r_int_raw_seq
-            r_int_raw_flat = r_seq.reshape(T * B).astype(np.float32)
-            obs_flat = rollout.obs_seq.reshape((T * B,) + tuple(rollout.obs_shape))
-            next_obs_flat = rollout.next_obs_seq.reshape((T * B,) + tuple(rollout.obs_shape))
+            r_int_raw_flat = r_seq.reshape(N).astype(np.float32)
+            obs_flat = rollout.obs_seq.reshape((N,) + tuple(rollout.obs_shape))
+            next_obs_flat = rollout.next_obs_seq.reshape((N,) + tuple(rollout.obs_shape))
             acts_flat = (
-                rollout.actions_seq.reshape(T * B)
+                rollout.actions_seq.reshape(N)
                 if bool(rollout.is_discrete)
-                else rollout.actions_seq.reshape(T * B, -1)
+                else rollout.actions_seq.reshape(N, -1)
             )
         else:
             maybe_cuda_sync(device, bool(profile_cuda_sync))
 
-            obs_flat = rollout.obs_seq.reshape((T * B,) + tuple(rollout.obs_shape))
-            next_obs_flat = rollout.next_obs_seq.reshape((T * B,) + tuple(rollout.obs_shape))
+            obs_flat = rollout.obs_seq.reshape((N,) + tuple(rollout.obs_shape))
+            next_obs_flat = rollout.next_obs_seq.reshape((N,) + tuple(rollout.obs_shape))
             acts_flat = (
-                rollout.actions_seq.reshape(T * B)
+                rollout.actions_seq.reshape(N)
                 if bool(rollout.is_discrete)
-                else rollout.actions_seq.reshape(T * B, -1)
+                else rollout.actions_seq.reshape(N, -1)
             )
 
             r_int_raw_t = compute_intrinsic_batch(
@@ -103,7 +154,7 @@ def compute_intrinsic_rewards(
             )
             r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
-        term_mask_flat = rollout.terminals_seq.reshape(T * B) > 0.0
+        term_mask_flat = rollout.terminals_seq.reshape(N) > 0.0
         r_int_raw_flat = np.asarray(r_int_raw_flat, dtype=np.float32)
         r_int_raw_flat[term_mask_flat] = 0.0
 
@@ -116,6 +167,9 @@ def compute_intrinsic_rewards(
             r_int_scaled_flat = float(eta) * np.clip(
                 r_int_norm_flat, -float(r_clip), float(r_clip)
             )
+
+        if taper_w is not None and r_int_scaled_flat is not None and int(taper_w.size) == int(N):
+            r_int_scaled_flat = r_int_scaled_flat * taper_w.astype(np.float32, copy=False)
 
         maybe_cuda_sync(device, bool(profile_cuda_sync))
         t_intrinsic_compute = time.perf_counter() - intrinsic_compute_t0
@@ -155,6 +209,8 @@ def compute_intrinsic_rewards(
         r_int_raw_flat=r_int_raw_flat,
         r_int_scaled_flat=r_int_scaled_flat,
         module_metrics=mod_metrics,
+        intrinsic_taper_weight_mean=float(taper_weight_mean),
+        intrinsic_eta_effective_mean=float(eta_effective_mean),
         time_compute_s=float(t_intrinsic_compute),
         time_update_s=float(t_intrinsic_update),
     )
