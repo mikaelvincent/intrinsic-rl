@@ -62,6 +62,22 @@ def _cosine_taper_weight(progress_frac: np.ndarray, start_frac: float, end_frac:
     return out
 
 
+def _timeouts_no_final_obs_mask(rollout: RolloutBatch, N: int) -> np.ndarray | None:
+    try:
+        nf = getattr(rollout, "timeouts_no_final_obs_seq", None)
+    except Exception:
+        nf = None
+    if nf is None:
+        return None
+    try:
+        flat = np.asarray(nf, dtype=np.float32).reshape(-1)
+    except Exception:
+        return None
+    if int(flat.size) != int(N):
+        return None
+    return flat > 0.0
+
+
 @dataclass(frozen=True)
 class IntrinsicRewards:
     rewards_total_seq: np.ndarray
@@ -94,9 +110,18 @@ def compute_intrinsic_rewards(
     T, B = int(rollout.T), int(rollout.B)
     N = int(T * B)
 
+    invalid_mask = _timeouts_no_final_obs_mask(rollout, N)
+    invalid_count = int(invalid_mask.sum()) if invalid_mask is not None else 0
+    invalid_frac = float(invalid_count) / float(N) if N > 0 else 0.0
+
+    valid_mask: np.ndarray | None = None
+    valid_idx: np.ndarray | None = None
+    if invalid_mask is not None and invalid_count > 0:
+        valid_mask = ~invalid_mask
+        valid_idx = np.flatnonzero(valid_mask).astype(np.int64, copy=False)
+
     taper_weight_mean = 1.0
     eta_used = float(eta) if (intrinsic_module is not None and bool(use_intrinsic)) else 0.0
-    eta_effective_mean = float(eta_used)
 
     taper_active = (
         str(method_l).startswith("glpe")
@@ -112,21 +137,57 @@ def compute_intrinsic_rewards(
         progress = (float(global_step_start) + idx.astype(np.float64)) / float(int(total_steps))
         taper_w = _cosine_taper_weight(progress, float(taper_start_frac), float(taper_end_frac))
         taper_weight_mean = float(np.mean(taper_w)) if taper_w.size else 1.0
-        eta_effective_mean = float(eta_used) * float(taper_weight_mean)
+
+    if eta_used <= 0.0 or N <= 0:
+        eta_effective_mean = 0.0
+    else:
+        base_w = taper_w if taper_w is not None else np.ones((N,), dtype=np.float32)
+        if valid_mask is None:
+            eta_effective_mean = float(eta_used) * float(np.mean(base_w))
+        else:
+            eta_effective_mean = float(eta_used) * float(
+                np.mean(base_w * valid_mask.astype(np.float32))
+            )
 
     r_int_raw_flat = None
     r_int_scaled_flat = None
-    mod_metrics: dict[str, float] = {}
+
+    mod_metrics: dict[str, float] = {
+        "invalid_timeouts_no_final_obs_count": float(invalid_count),
+        "invalid_timeouts_no_final_obs_frac": float(invalid_frac),
+    }
 
     t_intrinsic_compute = 0.0
     t_intrinsic_update = 0.0
 
     if intrinsic_module is not None and bool(use_intrinsic):
+        if valid_mask is not None and invalid_count >= N:
+            r_int_raw_flat = np.zeros((N,), dtype=np.float32)
+            r_int_scaled_flat = np.zeros((N,), dtype=np.float32)
+            rewards_total_seq = rollout.rewards_ext_seq
+            return IntrinsicRewards(
+                rewards_total_seq=rewards_total_seq,
+                r_int_raw_flat=r_int_raw_flat,
+                r_int_scaled_flat=r_int_scaled_flat,
+                module_metrics=mod_metrics,
+                intrinsic_taper_weight_mean=float(taper_weight_mean),
+                intrinsic_eta_effective_mean=float(eta_effective_mean),
+                time_compute_s=0.0,
+                time_update_s=0.0,
+            )
+
         intrinsic_compute_t0 = time.perf_counter()
 
         if str(method_l) == "ride":
             r_seq = rollout.r_int_raw_seq
-            r_int_raw_flat = r_seq.reshape(N).astype(np.float32)
+            if r_seq is None:
+                r_int_raw_flat = np.zeros((N,), dtype=np.float32)
+            else:
+                r_int_raw_flat = np.asarray(r_seq, dtype=np.float32).reshape(N)
+            if invalid_mask is not None and invalid_count > 0:
+                r_int_raw_flat = np.array(r_int_raw_flat, copy=True)
+                r_int_raw_flat[invalid_mask] = 0.0
+
             obs_flat = rollout.obs_seq.reshape((N,) + tuple(rollout.obs_shape))
             next_obs_flat = rollout.next_obs_seq.reshape((N,) + tuple(rollout.obs_shape))
             acts_flat = (
@@ -145,24 +206,44 @@ def compute_intrinsic_rewards(
                 else rollout.actions_seq.reshape(N, -1)
             )
 
-            r_int_raw_t = compute_intrinsic_batch(
-                intrinsic_module,
-                str(method_l),
-                obs_flat,
-                next_obs_flat,
-                acts_flat,
-            )
-            r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
+            if valid_idx is not None:
+                obs_in = obs_flat[valid_idx]
+                next_in = next_obs_flat[valid_idx]
+                acts_in = acts_flat[valid_idx]
+                r_valid_t = compute_intrinsic_batch(
+                    intrinsic_module,
+                    str(method_l),
+                    obs_in,
+                    next_in,
+                    acts_in,
+                )
+                r_valid = r_valid_t.detach().cpu().numpy().astype(np.float32)
+                r_int_raw_flat = np.zeros((N,), dtype=np.float32)
+                r_int_raw_flat[valid_idx] = r_valid
+            else:
+                r_int_raw_t = compute_intrinsic_batch(
+                    intrinsic_module,
+                    str(method_l),
+                    obs_flat,
+                    next_obs_flat,
+                    acts_flat,
+                )
+                r_int_raw_flat = r_int_raw_t.detach().cpu().numpy().astype(np.float32)
 
         term_mask_flat = rollout.terminals_seq.reshape(N) > 0.0
         r_int_raw_flat = np.asarray(r_int_raw_flat, dtype=np.float32)
         r_int_raw_flat[term_mask_flat] = 0.0
+        if invalid_mask is not None and invalid_count > 0:
+            r_int_raw_flat[invalid_mask] = 0.0
 
         outputs_norm = bool(getattr(intrinsic_module, "outputs_normalized", False))
         if outputs_norm:
             r_int_scaled_flat = float(eta) * np.clip(r_int_raw_flat, -float(r_clip), float(r_clip))
         else:
-            int_rms.update(r_int_raw_flat)
+            rms_mask = np.ones((N,), dtype=bool)
+            if invalid_mask is not None and invalid_count > 0:
+                rms_mask &= ~invalid_mask
+            int_rms.update(r_int_raw_flat[rms_mask])
             r_int_norm_flat = int_rms.normalize(r_int_raw_flat)
             r_int_scaled_flat = float(eta) * np.clip(
                 r_int_norm_flat, -float(r_clip), float(r_clip)
@@ -177,19 +258,28 @@ def compute_intrinsic_rewards(
         intrinsic_update_t0 = time.perf_counter()
         try:
             maybe_cuda_sync(device, bool(profile_cuda_sync))
+
+            obs_u = obs_flat
+            next_u = next_obs_flat
+            acts_u = acts_flat
+            if valid_idx is not None:
+                obs_u = obs_flat[valid_idx]
+                next_u = next_obs_flat[valid_idx]
+                acts_u = acts_flat[valid_idx]
+
             raw_metrics = dict(
                 update_module(
                     intrinsic_module,
                     str(method_l),
-                    obs_flat,
-                    next_obs_flat,
-                    acts_flat,
+                    obs_u,
+                    next_u,
+                    acts_u,
                 )
             )
             maybe_cuda_sync(device, bool(profile_cuda_sync))
-            mod_metrics = _coerce_metrics_to_floats(raw_metrics)
+            mod_metrics.update(_coerce_metrics_to_floats(raw_metrics))
         except Exception:
-            mod_metrics = {}
+            pass
 
         expected = _expected_intrinsic_update_keys(str(method_l))
         if expected:
