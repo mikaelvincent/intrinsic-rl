@@ -114,7 +114,6 @@ def _make_cfg(
     intrinsic_cfg = replace(base.intrinsic, eta=float(eta))
     log_cfg = replace(base.logging, csv_interval=1, checkpoint_interval=100_000)
     eval_cfg = replace(base.evaluation, interval_steps=100_000, episodes=1)
-    adapt_cfg = replace(base.adaptation, enabled=False)
     cfg = replace(
         base,
         device="cpu",
@@ -124,7 +123,7 @@ def _make_cfg(
         intrinsic=intrinsic_cfg,
         logging=log_cfg,
         evaluation=eval_cfg,
-        adaptation=adapt_cfg,
+        exp=replace(base.exp, deterministic=True),
     )
     validate_config(cfg)
     return cfg
