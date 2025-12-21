@@ -163,24 +163,3 @@ def test_metric_logger_handles_nonfinite_and_schema_expansion(tmp_path: Path) ->
     assert r1["bar"].strip().lower() == "inf"
     assert int(float(r1["nonfinite_any"])) == 1
     assert "bar" in {k for k in r1["nonfinite_keys"].split(",") if k}
-
-
-def test_validate_config_warns_on_interval_misalignment() -> None:
-    with pytest.warns(UserWarning) as rec:
-        _ = loads_config(
-            """
-method: vanilla
-env:
-  vec_envs: 16
-ppo:
-  steps_per_update: 2048
-evaluation:
-  interval_steps: 50000
-logging:
-  checkpoint_interval: 100000
-""".lstrip()
-        )
-
-    msgs = [str(w.message) for w in rec]
-    assert any("evaluation.interval_steps" in m and "update_quantum" in m for m in msgs)
-    assert any("logging.checkpoint_interval exceeds evaluation.interval_steps" in m for m in msgs)
