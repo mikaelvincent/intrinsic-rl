@@ -282,7 +282,71 @@ def _write_eval_meta(
     device: str,
     policy_mode: str,
     interval_steps_values: list[int],
+    results: list[RunResult],
 ) -> Path:
+    runs_root_r = Path(runs_root).resolve()
+    results_root_r = Path(results_root).resolve()
+
+    selected_steps_union = sorted({int(r.ckpt_step) for r in results if int(r.ckpt_step) >= 0})
+
+    by_run: dict[str, dict[str, object]] = {}
+    for r in results:
+        ckpt_path = Path(r.ckpt_path)
+        run_dir = ckpt_path.parent.parent
+        try:
+            run_key = str(run_dir.resolve().relative_to(runs_root_r))
+        except Exception:
+            run_key = str(run_dir)
+
+        try:
+            ckpt_rel = str(ckpt_path.resolve().relative_to(runs_root_r))
+        except Exception:
+            ckpt_rel = str(ckpt_path.resolve())
+
+        rec = by_run.setdefault(
+            run_key,
+            {
+                "env_id": str(r.env_id),
+                "method": str(r.method),
+                "seed": int(r.seed),
+                "ckpts": [],
+            },
+        )
+
+        ckpts = rec.get("ckpts")
+        if isinstance(ckpts, list):
+            ckpts.append({"step": int(r.ckpt_step), "path": str(ckpt_rel)})
+
+    selected_by_run: list[dict[str, object]] = []
+    for run_key in sorted(by_run.keys()):
+        rec = by_run[run_key]
+        ckpts_in = rec.get("ckpts")
+        uniq: dict[tuple[int, str], dict[str, object]] = {}
+        if isinstance(ckpts_in, list):
+            for item in ckpts_in:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    step = int(item.get("step"))
+                except Exception:
+                    continue
+                path = str(item.get("path") or "")
+                uniq[(step, path)] = {"step": int(step), "path": path}
+
+        ckpts_sorted = [uniq[k] for k in sorted(uniq.keys(), key=lambda t: (t[0], t[1]))]
+        steps_sorted = sorted({int(c.get("step")) for c in ckpts_sorted if isinstance(c, dict)})
+
+        selected_by_run.append(
+            {
+                "run_dir": str(run_key),
+                "env_id": str(rec.get("env_id", "")),
+                "method": str(rec.get("method", "")),
+                "seed": int(rec.get("seed", 0) or 0),
+                "ckpt_steps": steps_sorted,
+                "ckpts": ckpts_sorted,
+            }
+        )
+
     meta = {
         "ckpt_policy": "every_k",
         "every_k_source": "cfg.evaluation.interval_steps",
@@ -292,10 +356,12 @@ def _write_eval_meta(
         "policy_mode": str(policy_mode),
         "strict_coverage": True,
         "strict_step_parity": True,
-        "runs_root": str(Path(runs_root).resolve()),
-        "results_dir": str(Path(results_root).resolve()),
+        "runs_root": str(runs_root_r),
+        "results_dir": str(results_root_r),
+        "selected_ckpt_steps_union": [int(x) for x in selected_steps_union],
+        "selected_ckpts_by_run": selected_by_run,
     }
-    out_path = Path(results_root) / "eval_meta.json"
+    out_path = Path(results_root_r) / "eval_meta.json"
     atomic_write_text(out_path, json.dumps(meta, indent=2, sort_keys=True) + "\n")
     return out_path
 
@@ -493,6 +559,7 @@ def run_eval_suite(
         device=str(device),
         policy_mode=str(pm),
         interval_steps_values=sorted({int(v) for v in intervals_by_run.values()}),
+        results=results,
     )
     typer.echo(f"[suite] Wrote eval metadata to {meta_path}")
 
