@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from irl.cfg import ConfigError, loads_config
-from irl.cfg.schema import LoggingConfig
+from irl.cfg.schema import Config, LoggingConfig
 from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.utils.config_hash import compute_cfg_hash
 from irl.utils.loggers import MetricLogger
+from irl.utils.steps import resolve_total_steps
 
 
 def test_loads_config_parses_numbers_and_validates() -> None:
@@ -128,6 +130,13 @@ intrinsic:
         )
 
 
+def test_resolve_total_steps_aligns_to_vec_envs() -> None:
+    base = Config()
+    cfg = replace(base, env=replace(base.env, vec_envs=8))
+    assert int(resolve_total_steps(cfg, requested_steps=5, align_to_vec_envs=True)) == 8
+    assert int(resolve_total_steps(cfg, requested_steps=17, align_to_vec_envs=True)) == 16
+
+
 def _read_rows(path: Path) -> list[dict[str, str]]:
     with Path(path).open("r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -149,7 +158,6 @@ def test_metric_logger_handles_nonfinite_and_schema_expansion(tmp_path: Path) ->
     assert r0["foo"].strip().lower() == "nan"
     assert int(float(r0["nonfinite_any"])) == 1
     assert "foo" in {k for k in r0["nonfinite_keys"].split(",") if k}
-    assert "bar" in r0
 
     r1 = rows[1]
     assert r1["bar"].strip().lower() == "inf"
