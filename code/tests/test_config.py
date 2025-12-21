@@ -117,6 +117,17 @@ def test_build_intrinsic_kwargs_enforces_glpe_gate_cache_rules() -> None:
         assert int(out["gate_median_cache_interval"]) == 1
 
 
+def test_glpe_requires_normalize_inside_true() -> None:
+    with pytest.raises(ConfigError, match=r"normalize_inside"):
+        loads_config(
+            """
+method: glpe
+intrinsic:
+  normalize_inside: false
+""".lstrip()
+        )
+
+
 def _read_rows(path: Path) -> list[dict[str, str]]:
     with Path(path).open("r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
