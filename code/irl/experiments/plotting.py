@@ -117,13 +117,23 @@ def run_plots_suite(
         else:
             typer.echo("[suite] No trajectories found; skipping GLPE trajectory plots.")
 
+        timing_groups = _groups_for_timing(root)
+
         try:
             from irl.visualization.timing_figures import plot_timing_breakdown
 
-            timing_groups = _groups_for_timing(root)
             plot_timing_breakdown(timing_groups, plots_root=plots_root, tail_frac=0.25)
         except Exception as exc:
             typer.echo(f"[suite] Timing plots skipped ({type(exc).__name__}: {exc})")
+
+        try:
+            from irl.visualization.timing_figures import plot_intrinsic_taper_weight
+
+            taper_written = plot_intrinsic_taper_weight(timing_groups, plots_root=plots_root)
+            if not taper_written:
+                typer.echo("[suite] Intrinsic taper plot skipped (no taper active).")
+        except Exception as exc:
+            typer.echo(f"[suite] Intrinsic taper plot skipped ({type(exc).__name__}: {exc})")
 
     except Exception as exc:
         typer.echo(f"[suite] Plotting failed ({type(exc).__name__}: {exc})")
