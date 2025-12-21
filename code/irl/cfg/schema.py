@@ -23,6 +23,8 @@ class IntrinsicConfig:
     alpha_impact: float = 1.0
     alpha_lp: float = 0.5
     r_clip: float = 5.0
+    taper_start_frac: float | None = None
+    taper_end_frac: float | None = None
     bin_size: float = 0.25
     region_capacity: int = 200
     depth_max: int = 12
