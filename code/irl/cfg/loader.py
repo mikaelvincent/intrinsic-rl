@@ -134,6 +134,40 @@ def validate_config(cfg: Config) -> None:
     method = str(cfg.method).lower()
     method_base = "glpe" if method.startswith("glpe_") else method
 
+    is_glpe_family = method.startswith("glpe")
+    start = getattr(cfg.intrinsic, "taper_start_frac", None)
+    end = getattr(cfg.intrinsic, "taper_end_frac", None)
+
+    if (start is not None) or (end is not None):
+        if not is_glpe_family:
+            raise ConfigError(
+                "`intrinsic.taper_start_frac` and `intrinsic.taper_end_frac` apply only to glpe* methods."
+            )
+
+        if (start is None) or (end is None):
+            raise ConfigError(
+                "Set both `intrinsic.taper_start_frac` and `intrinsic.taper_end_frac`, or omit both."
+            )
+
+        if isinstance(start, bool) or isinstance(end, bool):
+            raise ConfigError(
+                "`intrinsic.taper_start_frac` and `intrinsic.taper_end_frac` must be float values."
+            )
+
+        try:
+            s = float(start)
+            e = float(end)
+        except Exception as exc:
+            raise ConfigError(
+                "`intrinsic.taper_start_frac` and `intrinsic.taper_end_frac` must be float values."
+            ) from exc
+
+        if not (0.0 <= s < e <= 1.0):
+            raise ConfigError(
+                "`intrinsic.taper_start_frac` and `intrinsic.taper_end_frac` must satisfy "
+                f"0.0 <= start < end <= 1.0; got start={s}, end={e}."
+            )
+
     if method == "glpe_lp_only":
         if cfg.intrinsic.alpha_impact != 0.0:
             raise ConfigError("intrinsic.alpha_impact must be 0 for method 'glpe_lp_only'")
@@ -392,6 +426,8 @@ def _coerce_value_to_type(value: Any, typ: Any, path: str) -> Any:
         raise ConfigError(f"Expected int at {path}, got {value!r}")
 
     if typ is float:
+        if isinstance(value, bool):
+            raise ConfigError(f"Expected float at {path}, got bool")
         if isinstance(value, (int, float)):
             return float(value)
         if isinstance(value, str):
