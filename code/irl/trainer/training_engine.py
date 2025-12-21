@@ -298,11 +298,11 @@ def run_training_loop(
             )
         else:
             log_payload["episode_count"] = 0
-            log_payload["episode_return_mean"] = 0.0
-            log_payload["episode_return_std"] = 0.0
-            log_payload["episode_length_mean"] = 0.0
-            log_payload["episode_length_std"] = 0.0
-            log_payload["success_rate"] = 0.0
+            log_payload["episode_return_mean"] = float("nan")
+            log_payload["episode_return_std"] = float("nan")
+            log_payload["episode_length_mean"] = float("nan")
+            log_payload["episode_length_std"] = float("nan")
+            log_payload["success_rate"] = float("nan")
 
         ml_t0 = time.perf_counter()
         wrote_csv = ml.log(step=int(global_step), **log_payload)
