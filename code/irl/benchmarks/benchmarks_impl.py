@@ -446,7 +446,7 @@ def _bench_ppo_update(
     vt = torch.as_tensor(rng.standard_normal((int(N),)).astype(np.float32), device=device)
 
     cfg = PPOConfig(
-        steps_per_update=int(N),
+        rollout_steps_per_env=int(N),
         minibatches=int(minibatches),
         epochs=int(epochs),
         learning_rate=float(lr),
