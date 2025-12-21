@@ -21,13 +21,13 @@ method: vanilla
 env:
   vec_envs: "8"
 ppo:
-  steps_per_update: "2_048"
+  rollout_steps_per_env: "2_048"
   minibatches: 3_2
   learning_rate: "3e-4"
 """.lstrip()
     )
     assert int(cfg.env.vec_envs) == 8
-    assert int(cfg.ppo.steps_per_update) == 2048
+    assert int(cfg.ppo.rollout_steps_per_env) == 2048
     assert int(cfg.ppo.minibatches) == 32
     assert abs(float(cfg.ppo.learning_rate) - 3e-4) < 1e-12
 
@@ -44,7 +44,7 @@ method: vanilla
 env:
   vec_envs: 8
 ppo:
-  steps_per_update: 130
+  rollout_steps_per_env: 130
   minibatches: 64
 """.lstrip()
         )
