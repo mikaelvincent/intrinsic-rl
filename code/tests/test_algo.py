@@ -160,7 +160,7 @@ def test_ppo_update_kl_penalty_changes_policy() -> None:
     value_targets = rng.standard_normal(64).astype(np.float32)
 
     cfg = PPOConfig(
-        steps_per_update=64,
+        rollout_steps_per_env=64,
         minibatches=2,
         epochs=2,
         learning_rate=3.0e-4,
@@ -559,7 +559,7 @@ def test_ppo_uses_old_log_probs_from_rollout() -> None:
         acts_flat = rollout.actions_seq.reshape(N)
 
         cfg = PPOConfig(
-            steps_per_update=int(N),
+            rollout_steps_per_env=int(N),
             minibatches=2,
             epochs=1,
             learning_rate=3.0e-4,
