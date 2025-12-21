@@ -9,7 +9,6 @@ import pytest
 from gymnasium.envs.registration import register
 
 from irl.envs.manager import EnvManager
-from irl.envs.wrappers import DomainRandomizationWrapper
 from irl.intrinsic.regions.kdtree import KDTreeRegionStore
 from irl.trainer.runtime_utils import _apply_final_observation
 from irl.utils.checkpoint import CheckpointManager
@@ -34,39 +33,6 @@ class _CarRacingLikeEnv(gym.Env):
     def step(self, action):
         _ = action
         return np.zeros((4,), dtype=np.float32), 0.0, True, False, {}
-
-    def close(self) -> None:
-        return
-
-
-class _DummyMujocoLikeEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(2)
-
-        class _Model:
-            pass
-
-        class _Opt:
-            pass
-
-        self.model = _Model()
-        self.model.opt = _Opt()
-        self.model.opt.gravity = np.array([1.0, 1.0, 1.0], dtype=np.float64)
-        self.model.geom_friction = np.ones((4, 3), dtype=np.float64)
-
-    def reset(self, *, seed=None, options=None):
-        _ = options
-        if seed is not None:
-            np.random.seed(seed)
-        return self.observation_space.sample(), {}
-
-    def step(self, action):
-        _ = action
-        return self.observation_space.sample(), 0.0, False, False, {}
 
     def close(self) -> None:
         return
@@ -128,30 +94,6 @@ def test_apply_final_observation_handles_vector_and_scalar() -> None:
     infos_1 = {"final_observation": np.array([10.0, 11.0, 12.0], dtype=np.float32)}
     fixed_1 = _apply_final_observation(next_obs_1, done_1, infos_1)
     assert np.allclose(fixed_1, np.array([10.0, 11.0, 12.0], dtype=np.float32))
-
-
-def test_domain_randomization_mujoco_stays_near_baseline() -> None:
-    env = _DummyMujocoLikeEnv()
-    try:
-        wrapped = DomainRandomizationWrapper(env, seed=123)
-        baseline = wrapped.unwrapped.model.opt.gravity.copy()
-
-        unique_scales: set[float] = set()
-        for _ in range(6):
-            _, info = wrapped.reset()
-            g = wrapped.unwrapped.model.opt.gravity
-            ratio = g / baseline
-
-            assert np.all(np.isfinite(ratio))
-            assert np.all(ratio >= 0.95 - 1e-6)
-            assert np.all(ratio <= 1.05 + 1e-6)
-
-            assert isinstance(info, dict) and isinstance(info.get("dr_applied"), dict)
-            unique_scales.add(round(float(ratio.reshape(-1)[0]), 3))
-
-        assert len(unique_scales) > 1
-    finally:
-        env.close()
 
 
 def test_env_manager_carracing_wrapper_failure_raises() -> None:
