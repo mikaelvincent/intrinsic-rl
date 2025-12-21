@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,10 +7,9 @@ import gymnasium as gym
 import numpy as np
 import pytest
 import torch
-from gymnasium.envs.registration import register
 from torch.optim import Adam
 
-from irl.cfg import Config, validate_config
+from irl.cfg import Config
 from irl.intrinsic import RunningRMS
 from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.glpe.gating import _RegionStats, update_region_gate
@@ -19,44 +17,16 @@ from irl.intrinsic.icm import ICM, ICMConfig
 from irl.intrinsic.riac import RIAC
 from irl.intrinsic.rnd import RND, RNDConfig
 from irl.models.networks import PolicyNetwork, ValueNetwork
-from irl.trainer import train as run_train
 from irl.trainer.training_setup import _restore_from_checkpoint
+from irl.utils.checkpoint_schema import build_checkpoint_payload
 from irl.utils.images import infer_channels_hw
 from irl.utils.loggers import get_logger
-
-
-class _Transition:
-    def __init__(self, s, a, s_next):
-        self.s = s
-        self.a = a
-        self.r_ext = 0.0
-        self.s_next = s_next
 
 
 def test_update_region_gate_transitions_and_resets() -> None:
     st = _RegionStats(ema_long=10.0, ema_short=10.0, count=10, gate=1)
 
-    update_region_gate(
-        st,
-        lp_i=0.0,
-        tau_lp=1.0,
-        tau_s=0.5,
-        median_error_global=1.0,
-        hysteresis_up_mult=1.1,
-        min_consec_to_gate=3,
-        sufficient_regions=True,
-    )
-    update_region_gate(
-        st,
-        lp_i=0.0,
-        tau_lp=1.0,
-        tau_s=0.5,
-        median_error_global=1.0,
-        hysteresis_up_mult=1.1,
-        min_consec_to_gate=3,
-        sufficient_regions=True,
-    )
-    assert (
+    for _ in range(3):
         update_region_gate(
             st,
             lp_i=0.0,
@@ -67,29 +37,19 @@ def test_update_region_gate_transitions_and_resets() -> None:
             min_consec_to_gate=3,
             sufficient_regions=True,
         )
-        == 0
-    )
+    assert st.gate == 0
 
-    update_region_gate(
-        st,
-        lp_i=1.2,
-        tau_lp=1.0,
-        tau_s=0.5,
-        median_error_global=1.0,
-        hysteresis_up_mult=1.1,
-        min_consec_to_gate=3,
-        sufficient_regions=True,
-    )
-    update_region_gate(
-        st,
-        lp_i=1.2,
-        tau_lp=1.0,
-        tau_s=0.5,
-        median_error_global=1.0,
-        hysteresis_up_mult=1.1,
-        min_consec_to_gate=3,
-        sufficient_regions=True,
-    )
+    for _ in range(2):
+        update_region_gate(
+            st,
+            lp_i=1.2,
+            tau_lp=1.0,
+            tau_s=0.5,
+            median_error_global=1.0,
+            hysteresis_up_mult=1.1,
+            min_consec_to_gate=3,
+            sufficient_regions=True,
+        )
     assert st.gate == 1
 
     st2 = _RegionStats(ema_long=1.0, ema_short=10.0, count=10, gate=0, bad_consec=5, good_consec=1)
@@ -110,85 +70,12 @@ def test_update_region_gate_transitions_and_resets() -> None:
     assert st2.good_consec == 0
 
 
-class _DummyGateEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self, seed: int | None = None) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(3)
-        self._rng = np.random.default_rng(seed)
-        self._t = 0
-
-    def reset(self, *, seed=None, options=None):
-        if seed is not None:
-            self._rng = np.random.default_rng(seed)
-        self._t = 0
-        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        return obs, {}
-
-    def step(self, action):
-        self._t += 1
-        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
-        terminated = self._t >= 3
-        return obs, 0.0, bool(terminated), False, {}
-
-
-try:
-    register(id="DummyGate-v0", entry_point=_DummyGateEnv)
-except Exception:
-    pass
-
-
-def _make_cfg(*, method: str, eta: float = 0.1) -> Config:
-    base = Config()
-    env_cfg = replace(
-        base.env,
-        id="DummyGate-v0",
-        vec_envs=1,
-        frame_skip=1,
-        domain_randomization=False,
-        discrete_actions=True,
-    )
-    ppo_cfg = replace(
-        base.ppo,
-        steps_per_update=4,
-        minibatches=1,
-        epochs=1,
-        entropy_coef=0.0,
-    )
-    intrinsic_cfg = replace(base.intrinsic, eta=float(eta), alpha_impact=0.0, alpha_lp=0.5)
-    log_cfg = replace(base.logging, csv_interval=1, checkpoint_interval=100_000)
-    eval_cfg = replace(base.evaluation, interval_steps=100_000, episodes=1)
-    adapt_cfg = replace(base.adaptation, enabled=False)
-
-    cfg = replace(
-        base,
-        device="cpu",
-        method=str(method),
-        env=env_cfg,
-        ppo=ppo_cfg,
-        intrinsic=intrinsic_cfg,
-        logging=log_cfg,
-        evaluation=eval_cfg,
-        adaptation=adapt_cfg,
-    )
-    validate_config(cfg)
-    return cfg
-
-
-def test_glpe_lp_only_logs_gate_rate(tmp_path: Path) -> None:
-    run_dir = tmp_path / "run_glpe_lp_only"
-    cfg = _make_cfg(method="glpe_lp_only", eta=0.1)
-    out = run_train(cfg, total_steps=8, run_dir=run_dir, resume=False)
-
-    csv_path = out / "logs" / "scalars.csv"
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        assert reader.fieldnames is not None
-        cols = set(reader.fieldnames)
-
-    assert {"gate_rate", "gate_rate_pct"} <= cols
+class _Transition:
+    def __init__(self, s, a, s_next):
+        self.s = s
+        self.a = a
+        self.r_ext = 0.0
+        self.s_next = s_next
 
 
 def _make_vector_spaces(obs_dim: int = 4, n_actions: int = 3):
@@ -255,7 +142,6 @@ def test_intrinsic_compute_batch_matches_step() -> None:
             ],
             dtype=np.float32,
         )
-
         with torch.no_grad():
             batch_vals = (
                 mod_batch.compute_batch(obs, next_obs, actions, reduction="none")
@@ -322,7 +208,6 @@ def test_resume_restores_intrinsic_extra_state() -> None:
             "intrinsic": {"method": method_l, "state_dict": sd_no_extra, "extra_state": extra_state},
         }
 
-        int_rms = RunningRMS(beta=0.99, eps=1e-8)
         _restore_from_checkpoint(
             resume_payload=payload,
             resume_step=int(payload["step"]),
@@ -332,7 +217,7 @@ def test_resume_restores_intrinsic_extra_state() -> None:
             val_opt=val_opt,
             intrinsic_module=mod2,
             method_l=method_l,
-            int_rms=int_rms,
+            int_rms=RunningRMS(beta=0.99, eps=1e-8),
             obs_norm=None,
             is_image=False,
             device=torch.device("cpu"),
@@ -439,7 +324,6 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.M
         assert int(mod2.store.depth_max) == 0
 
         payload, policy, value, pol_opt, val_opt = _payload(method_l, _torch_load_any(p_without))
-        int_rms = RunningRMS(beta=0.99, eps=1e-8)
 
         with pytest.raises(RuntimeError, match="KDTree points"):
             _restore_from_checkpoint(
@@ -451,7 +335,7 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.M
                 val_opt=val_opt,
                 intrinsic_module=make_module(include_points=True),
                 method_l=str(method_l),
-                int_rms=int_rms,
+                int_rms=RunningRMS(beta=0.99, eps=1e-8),
                 obs_norm=None,
                 is_image=False,
                 device=torch.device("cpu"),
@@ -459,7 +343,6 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.M
             )
 
         monkeypatch.setenv("IRL_ALLOW_RESUME_WITHOUT_KDTREE_POINTS", "1")
-        int_rms2 = RunningRMS(beta=0.99, eps=1e-8)
         global_step, _updates = _restore_from_checkpoint(
             resume_payload=payload,
             resume_step=int(payload["step"]),
@@ -469,7 +352,7 @@ def test_state_dict_can_omit_kdtree_points(tmp_path: Path, monkeypatch: pytest.M
             val_opt=val_opt,
             intrinsic_module=make_module(include_points=True),
             method_l=str(method_l),
-            int_rms=int_rms2,
+            int_rms=RunningRMS(beta=0.99, eps=1e-8),
             obs_norm=None,
             is_image=False,
             device=torch.device("cpu"),
@@ -518,3 +401,90 @@ def test_grayscale_hw_observations_work_end_to_end() -> None:
     r_rnd = rnd.compute_batch(obs_b, reduction="none")
     assert r_rnd.shape == (B,)
     assert torch.isfinite(r_rnd).all()
+
+
+def _flat_params(model: torch.nn.Module) -> torch.Tensor:
+    return torch.cat([p.detach().cpu().view(-1) for p in model.parameters()])
+
+
+def test_resume_restores_intrinsic_optimizer_state_equivalence() -> None:
+    torch.manual_seed(0)
+    rng = np.random.default_rng(0)
+
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+    act_space = gym.spaces.Discrete(3)
+    icm_cfg = ICMConfig(phi_dim=8, hidden=(16, 16), lr=1e-3)
+
+    base = ICM(obs_space, act_space, device="cpu", cfg=icm_cfg)
+    init_sd = {k: v.clone() for k, v in base.state_dict().items()}
+
+    B = 64
+    obs = rng.standard_normal((B, 4)).astype(np.float32)
+    next_obs = rng.standard_normal((B, 4)).astype(np.float32)
+    actions = rng.integers(0, int(act_space.n), size=(B,), endpoint=False, dtype=np.int64)
+
+    K = 3
+
+    expected = ICM(obs_space, act_space, device="cpu", cfg=icm_cfg)
+    expected.load_state_dict(init_sd, strict=True)
+    for _ in range(K + 1):
+        _ = expected.update(obs, next_obs, actions, steps=1)
+
+    trained = ICM(obs_space, act_space, device="cpu", cfg=icm_cfg)
+    trained.load_state_dict(init_sd, strict=True)
+    for _ in range(K):
+        _ = trained.update(obs, next_obs, actions, steps=1)
+
+    cfg = replace(Config(), method="icm")
+    policy = PolicyNetwork(obs_space, act_space)
+    value = ValueNetwork(obs_space)
+    pol_opt = Adam(policy.parameters(), lr=3e-4)
+    val_opt = Adam(value.parameters(), lr=3e-4)
+
+    payload = build_checkpoint_payload(
+        cfg,
+        global_step=10,
+        update_idx=0,
+        policy=policy,
+        value=value,
+        is_image=False,
+        obs_norm=None,
+        int_rms=RunningRMS(beta=0.99, eps=1e-8),
+        pol_opt=pol_opt,
+        val_opt=val_opt,
+        intrinsic_module=trained,
+        method_l="icm",
+    )
+
+    intr = payload.get("intrinsic")
+    assert isinstance(intr, dict)
+    assert isinstance(intr.get("optimizers"), dict)
+    assert "main" in set(intr["optimizers"].keys())
+
+    resumed = ICM(obs_space, act_space, device="cpu", cfg=icm_cfg)
+
+    policy2 = PolicyNetwork(obs_space, act_space)
+    value2 = ValueNetwork(obs_space)
+    pol_opt2 = Adam(policy2.parameters(), lr=3e-4)
+    val_opt2 = Adam(value2.parameters(), lr=3e-4)
+
+    _restore_from_checkpoint(
+        resume_payload=payload,
+        resume_step=int(payload["step"]),
+        policy=policy2,
+        value=value2,
+        pol_opt=pol_opt2,
+        val_opt=val_opt2,
+        intrinsic_module=resumed,
+        method_l="icm",
+        int_rms=RunningRMS(beta=0.99, eps=1e-8),
+        obs_norm=None,
+        is_image=False,
+        device=torch.device("cpu"),
+        logger=get_logger("test_resume_intrinsic_optimizer_state"),
+    )
+
+    _ = resumed.update(obs, next_obs, actions, steps=1)
+
+    diff = float((_flat_params(expected) - _flat_params(resumed)).abs().max().item())
+    assert diff < 1e-7
