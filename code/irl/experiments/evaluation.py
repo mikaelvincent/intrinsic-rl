@@ -25,6 +25,7 @@ from irl.results.summary import (
 )
 from irl.utils.checkpoint import atomic_write_text, load_checkpoint
 from irl.utils.io import atomic_write_csv
+from irl.utils.run_meta import collect_run_meta, read_run_meta
 from irl.utils.runs import parse_run_name
 
 
@@ -347,6 +348,48 @@ def _write_eval_meta(
             }
         )
 
+    run_meta_by_run: dict[str, object] = {}
+    run_meta_paths_by_run: dict[str, str] = {}
+
+    for rec in selected_by_run:
+        run_key = str(rec.get("run_dir") or "").strip()
+        if not run_key or run_key in run_meta_by_run:
+            continue
+
+        run_dir = Path(run_key)
+        if not run_dir.is_absolute():
+            run_dir = runs_root_r / run_dir
+
+        meta_path = run_dir / "run_meta.json"
+        meta = read_run_meta(meta_path)
+
+        if meta is None:
+            ckpts = rec.get("ckpts")
+            if isinstance(ckpts, list) and ckpts:
+                cand = ckpts[-1]
+                if isinstance(cand, dict):
+                    ckpt_rel = str(cand.get("path") or "").strip()
+                    if ckpt_rel:
+                        ckpt_abs = Path(ckpt_rel)
+                        if not ckpt_abs.is_absolute():
+                            ckpt_abs = runs_root_r / ckpt_abs
+                        try:
+                            payload = load_checkpoint(ckpt_abs, map_location="cpu")
+                            pm = payload.get("run_meta")
+                            if isinstance(pm, Mapping):
+                                meta = dict(pm)
+                        except Exception:
+                            meta = None
+
+        if meta is not None:
+            run_meta_by_run[run_key] = dict(meta)
+
+        try:
+            if meta_path.exists() and meta_path.is_file() and meta_path.stat().st_size > 0:
+                run_meta_paths_by_run[run_key] = str(meta_path.resolve().relative_to(runs_root_r))
+        except Exception:
+            pass
+
     meta = {
         "ckpt_policy": "every_k",
         "every_k_source": "cfg.evaluation.interval_steps",
@@ -360,6 +403,9 @@ def _write_eval_meta(
         "results_dir": str(results_root_r),
         "selected_ckpt_steps_union": [int(x) for x in selected_steps_union],
         "selected_ckpts_by_run": selected_by_run,
+        "eval_host": collect_run_meta(device=str(device), seed=None),
+        "run_meta_by_run": run_meta_by_run,
+        "run_meta_paths_by_run": run_meta_paths_by_run,
     }
     out_path = Path(results_root_r) / "eval_meta.json"
     atomic_write_text(out_path, json.dumps(meta, indent=2, sort_keys=True) + "\n")
