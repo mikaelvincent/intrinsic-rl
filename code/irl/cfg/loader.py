@@ -229,6 +229,14 @@ def validate_config(cfg: Config) -> None:
             )
 
     if method_base == "glpe":
+        try:
+            if hasattr(cfg.intrinsic, "normalize_inside") and not bool(cfg.intrinsic.normalize_inside):
+                raise ConfigError(
+                    "`intrinsic.normalize_inside` must be True for glpe* methods (required for impact_rms/lp_rms logging)."
+                )
+        except AttributeError:
+            pass
+
         gate_enabled = True
         try:
             gate_enabled = bool(cfg.intrinsic.gate.enabled)
