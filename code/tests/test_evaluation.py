@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
+import os
+import pickle
+import subprocess
+import sys
 from pathlib import Path
 
 import gymnasium as gym
@@ -9,10 +15,13 @@ import pytest
 import torch
 from gymnasium.envs.registration import register
 
+from irl.evaluation.rollout import run_eval_episodes
 from irl.evaluator import evaluate
 from irl.experiments.evaluation import run_eval_suite
 from irl.intrinsic.config import build_intrinsic_kwargs
 from irl.intrinsic.factory import create_intrinsic_module
+from irl.intrinsic.icm import ICMConfig
+from irl.intrinsic.riac import RIAC
 from irl.models.networks import PolicyNetwork
 
 
@@ -293,3 +302,148 @@ def test_eval_suite_enforces_coverage_and_selects_ckpts(
         raw_rows = list(csv.DictReader(f))
     steps = sorted({int(r["ckpt_step"]) for r in raw_rows})
     assert steps == [0, 20, 30]
+
+
+_PLOT_DET_SCRIPT = r"""
+import json
+from irl.visualization.paper.eval_plots import _color_for_method
+from irl.visualization.paper.glpe_plots import _sample_idx, _sample_seed
+
+methods = ["icm", "rnd", "ride", "riac", "foo", "bar", "glpe"]
+
+out = {
+    "colors": [_color_for_method(m) for m in methods],
+    "seed_gate": int(_sample_seed("glpe_gate_map", "MountainCar-v0")),
+    "seed_extint": int(_sample_seed("glpe_extint", "MountainCar-v0")),
+    "idx_gate": _sample_idx(100, 10, seed=_sample_seed("glpe_gate_map", "MountainCar-v0")).tolist(),
+    "idx_extint": _sample_idx(100, 10, seed=_sample_seed("glpe_extint", "MountainCar-v0")).tolist(),
+}
+
+print(json.dumps(out, sort_keys=True))
+"""
+
+
+def _run_with_hashseed(hash_seed: str) -> dict:
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONHASHSEED"] = str(hash_seed)
+
+    py_path = str(root)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = py_path if not existing else (py_path + os.pathsep + existing)
+
+    out = subprocess.check_output(
+        [sys.executable, "-c", _PLOT_DET_SCRIPT],
+        env=env,
+        cwd=str(root),
+        text=True,
+    ).strip()
+    return json.loads(out)
+
+
+def test_plots_deterministic_across_pythonhashseed() -> None:
+    a = _run_with_hashseed("1")
+    b = _run_with_hashseed("2")
+    assert a == b
+
+
+class _TinyEvalEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        self.action_space = gym.spaces.Discrete(2)
+        self._t = 0
+        self._rng = np.random.default_rng(0)
+
+    def reset(self, *, seed=None, options=None):
+        _ = options
+        if seed is not None:
+            self._rng = np.random.default_rng(int(seed))
+        self._t = 0
+        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
+        return obs, {}
+
+    def step(self, action):
+        _ = action
+        self._t += 1
+        obs = self._rng.uniform(low=-1.0, high=1.0, size=(4,)).astype(np.float32)
+        terminated = self._t >= 3
+        return obs, 0.0, bool(terminated), False, {}
+
+    def close(self) -> None:
+        return
+
+
+def _module_digest(mod: torch.nn.Module) -> str:
+    sd = mod.state_dict()
+    h = hashlib.sha256()
+    for k in sorted(sd.keys()):
+        h.update(str(k).encode("utf-8"))
+        v = sd[k]
+        if torch.is_tensor(v):
+            t = v.detach().cpu()
+            h.update(str(tuple(t.shape)).encode("utf-8"))
+            h.update(str(t.dtype).encode("utf-8"))
+            h.update(t.numpy().tobytes())
+        else:
+            h.update(pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL))
+    return h.hexdigest()
+
+
+def test_riac_eval_trajectory_does_not_mutate_state() -> None:
+    torch.manual_seed(0)
+
+    env = _TinyEvalEnv()
+    try:
+        obs_space = env.observation_space
+        act_space = env.action_space
+        device = torch.device("cpu")
+
+        policy = PolicyNetwork(obs_space, act_space).to(device)
+        policy.eval()
+
+        riac = RIAC(
+            obs_space,
+            act_space,
+            device="cpu",
+            icm_cfg=ICMConfig(phi_dim=8, hidden=(16, 16)),
+            region_capacity=64,
+            depth_max=4,
+            alpha_lp=0.5,
+            checkpoint_include_points=True,
+        )
+        riac.eval()
+
+        rng = np.random.default_rng(0)
+        obs = rng.standard_normal((32, 4)).astype(np.float32)
+        next_obs = rng.standard_normal((32, 4)).astype(np.float32)
+        actions = rng.integers(0, int(act_space.n), size=(32,), endpoint=False, dtype=np.int64)
+        _ = riac.compute_batch(obs, next_obs, actions, reduction="none")
+
+        before = _module_digest(riac)
+
+        def _norm(x: np.ndarray) -> np.ndarray:
+            return np.asarray(x, dtype=np.float32)
+
+        rr = run_eval_episodes(
+            env=env,
+            policy=policy,
+            act_space=act_space,
+            device=device,
+            policy_mode="mode",
+            episode_seeds=[123],
+            normalize_obs=_norm,
+            save_traj=True,
+            is_image=False,
+            intrinsic_module=riac,
+            method="riac",
+        )
+
+        after = _module_digest(riac)
+        assert before == after
+        assert rr.trajectory is not None
+        assert rr.trajectory.intrinsic_semantics == "frozen_checkpoint"
+    finally:
+        env.close()
