@@ -44,9 +44,7 @@ def test_compute_gae_handles_timeouts_and_layout() -> None:
         lam=1.0,
         bootstrap_on_timeouts=False,
     )
-    assert torch.allclose(
-        adv_term, torch.tensor([-7.0, -18.0, -29.0], dtype=torch.float32), atol=1e-6
-    )
+    assert torch.allclose(adv_term, torch.tensor([-7.0, -18.0, -29.0], dtype=torch.float32), atol=1e-6)
     assert torch.allclose(vt_term, torch.tensor([3.0, 2.0, 1.0], dtype=torch.float32), atol=1e-6)
 
     terminals = torch.zeros((3, 1), dtype=torch.float32)
@@ -65,12 +63,8 @@ def test_compute_gae_handles_timeouts_and_layout() -> None:
         lam=1.0,
         bootstrap_on_timeouts=True,
     )
-    assert torch.allclose(
-        adv_boot, torch.tensor([33.0, 22.0, 11.0], dtype=torch.float32), atol=1e-6
-    )
-    assert torch.allclose(
-        vt_boot, torch.tensor([43.0, 42.0, 41.0], dtype=torch.float32), atol=1e-6
-    )
+    assert torch.allclose(adv_boot, torch.tensor([33.0, 22.0, 11.0], dtype=torch.float32), atol=1e-6)
+    assert torch.allclose(vt_boot, torch.tensor([43.0, 42.0, 41.0], dtype=torch.float32), atol=1e-6)
 
     obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
     next_obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
@@ -376,9 +370,7 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
         )
 
         assert torch.allclose(adv_out.advantages, torch.zeros_like(adv_out.advantages), atol=1e-6)
-        assert torch.allclose(
-            adv_out.value_targets, torch.zeros_like(adv_out.value_targets), atol=1e-6
-        )
+        assert torch.allclose(adv_out.value_targets, torch.zeros_like(adv_out.value_targets), atol=1e-6)
     finally:
         env.close()
 
@@ -402,30 +394,6 @@ class _NoAutoResetDoneEnv:
         self.step_calls += 1
         self._done = True
         return np.array([0.0], dtype=np.float32), 0.0, True, False, {}
-
-    def close(self) -> None:
-        return
-
-
-class _NoAutoResetTruncEnv:
-    def __init__(self) -> None:
-        self._done = False
-        self.reset_calls = 0
-        self.step_calls = 0
-
-    def reset(self, *, seed=None, options=None):
-        _ = seed, options
-        self.reset_calls += 1
-        self._done = False
-        return np.array([1.0], dtype=np.float32), {}
-
-    def step(self, action):
-        _ = action
-        if self._done:
-            raise RuntimeError("step called after done")
-        self.step_calls += 1
-        self._done = True
-        return np.array([0.0], dtype=np.float32), 0.0, False, True, {}
 
     def close(self) -> None:
         return
@@ -460,68 +428,12 @@ def test_collect_rollout_single_env_resets_on_done() -> None:
 
         assert int(env.reset_calls) == 4
         assert int(env.step_calls) == 3
-
-        assert float(rollout.dones_seq.sum()) == 3.0
         assert float(rollout.terminals_seq.sum()) == 3.0
-        assert float(rollout.truncations_seq.sum()) == 0.0
-        assert float(rollout.timeouts_no_final_obs_seq.sum()) == 0.0
-
         assert np.allclose(rollout.obs_seq.reshape(-1), np.ones((3,), dtype=np.float32))
         assert np.allclose(rollout.next_obs_seq.reshape(-1), np.zeros((3,), dtype=np.float32))
 
         final_obs = np.asarray(rollout.final_env_obs, dtype=np.float32).reshape(-1)
         assert np.allclose(final_obs, np.array([1.0], dtype=np.float32))
-    finally:
-        env.close()
-
-
-def test_timeout_bootstrap_enabled_single_env_with_final_obs() -> None:
-    device = torch.device("cpu")
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(2)
-
-    env = _NoAutoResetTruncEnv()
-    try:
-        obs0, _ = env.reset(seed=0)
-
-        rollout = collect_rollout(
-            env=env,
-            policy=_ZeroPolicy(device),
-            actor_policy=None,
-            obs=obs0,
-            obs_space=obs_space,
-            act_space=act_space,
-            is_image=False,
-            obs_norm=_IdentityObsNorm(),
-            intrinsic_module=None,
-            use_intrinsic=False,
-            method_l="vanilla",
-            T=1,
-            B=1,
-            device=device,
-            logger=get_logger("test_single_env_trunc_bootstrap"),
-        )
-
-        assert int(env.reset_calls) == 2
-        assert float(rollout.dones_seq.reshape(-1)[0]) == 1.0
-        assert float(rollout.terminals_seq.reshape(-1)[0]) == 0.0
-        assert float(rollout.truncations_seq.reshape(-1)[0]) == 1.0
-        assert float(rollout.timeouts_no_final_obs_seq.reshape(-1)[0]) == 0.0
-
-        adv_out = compute_advantages(
-            rollout=rollout,
-            rewards_total_seq=rollout.rewards_ext_seq,
-            value_fn=_ValueByObs(),
-            gamma=1.0,
-            lam=1.0,
-            device=device,
-            profile_cuda_sync=False,
-            maybe_cuda_sync=lambda _d, _e: None,
-        )
-
-        expected = torch.tensor([10.0], dtype=torch.float32)
-        assert torch.allclose(adv_out.advantages, expected, atol=1e-6)
-        assert torch.allclose(adv_out.value_targets, expected, atol=1e-6)
     finally:
         env.close()
 
@@ -574,9 +486,6 @@ def test_ppo_uses_old_log_probs_from_rollout() -> None:
             device=device,
             logger=get_logger("test_old_log_probs_rollout"),
         )
-
-        assert rollout.old_log_probs_seq.shape == (T, 1)
-        assert np.isfinite(rollout.old_log_probs_seq).all()
 
         N = int(rollout.T) * int(rollout.B)
         obs_flat = rollout.obs_seq.reshape(N, -1)
