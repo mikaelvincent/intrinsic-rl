@@ -8,10 +8,12 @@ from torch import nn
 from irl.algo.advantage import compute_gae
 from irl.algo.ppo import ppo_update
 from irl.cfg.schema import PPOConfig
+from irl.intrinsic import RunningRMS
+from irl.intrinsic.icm import ICM
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.pipelines.policy_rollout import iter_policy_rollout
 from irl.trainer.rollout import collect_rollout
-from irl.trainer.update_steps import compute_advantages
+from irl.trainer.update_steps import compute_advantages, compute_intrinsic_rewards
 from irl.utils.loggers import get_logger
 
 
@@ -371,6 +373,71 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
 
         assert torch.allclose(adv_out.advantages, torch.zeros_like(adv_out.advantages), atol=1e-6)
         assert torch.allclose(adv_out.value_targets, torch.zeros_like(adv_out.value_targets), atol=1e-6)
+    finally:
+        env.close()
+
+
+def test_intrinsic_skips_timeouts_without_final_observation() -> None:
+    device = torch.device("cpu")
+    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
+    act_space = gym.spaces.Discrete(2)
+
+    env = _AutoResetNoFinalObsEnv()
+    try:
+        obs0, _ = env.reset(seed=0)
+
+        rollout = collect_rollout(
+            env=env,
+            policy=_ZeroPolicy(device),
+            actor_policy=None,
+            obs=obs0,
+            obs_space=obs_space,
+            act_space=act_space,
+            is_image=False,
+            obs_norm=_IdentityObsNorm(),
+            intrinsic_module=None,
+            use_intrinsic=False,
+            method_l="vanilla",
+            T=1,
+            B=1,
+            device=device,
+            logger=get_logger("test_intrinsic_timeout_mask"),
+        )
+
+        icm = ICM(obs_space, act_space, device="cpu")
+        before_sd = {k: v.detach().clone() for k, v in icm.state_dict().items()}
+        before_opt_states = len(getattr(icm, "_opt").state)
+
+        out = compute_intrinsic_rewards(
+            rollout=rollout,
+            intrinsic_module=icm,
+            use_intrinsic=True,
+            method_l="icm",
+            eta=0.1,
+            r_clip=5.0,
+            int_rms=RunningRMS(beta=0.99, eps=1e-8),
+            device=device,
+            profile_cuda_sync=False,
+            maybe_cuda_sync=lambda _d, _e: None,
+            total_steps=10,
+            global_step_start=0,
+            taper_start_frac=None,
+            taper_end_frac=None,
+        )
+
+        assert int(out.module_metrics.get("invalid_timeouts_no_final_obs_count", 0.0)) == 1
+        assert np.allclose(out.rewards_total_seq, rollout.rewards_ext_seq)
+
+        if out.r_int_raw_flat is not None:
+            assert np.allclose(out.r_int_raw_flat, np.zeros((1,), dtype=np.float32))
+        if out.r_int_scaled_flat is not None:
+            assert np.allclose(out.r_int_scaled_flat, np.zeros((1,), dtype=np.float32))
+
+        after_sd = icm.state_dict()
+        for k, v in before_sd.items():
+            assert torch.equal(after_sd[k], v)
+
+        assert len(getattr(icm, "_opt").state) == before_opt_states == 0
     finally:
         env.close()
 
