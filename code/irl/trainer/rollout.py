@@ -30,7 +30,6 @@ def _coerce_vec(x: Any, B: int, *, dtype: Any | None = None) -> np.ndarray | Non
     try:
         arr = np.asarray(x, dtype=dtype) if dtype is not None else np.asarray(x)
     except Exception:
-        # Vector envs can pad missing per-env entries with None, which breaks dtype coercion.
         try:
             arr = np.asarray(x, dtype=object)
         except Exception:
@@ -252,6 +251,20 @@ def collect_rollout(
 
     missing_final_obs_truncs = 0
 
+    is_vector_env = hasattr(env, "num_envs") or hasattr(env, "single_observation_space") or hasattr(
+        env, "single_action_space"
+    )
+    manual_reset_on_done = (int(B) == 1) and not bool(is_vector_env)
+
+    def _reset_single_env() -> Any:
+        try:
+            out = env.reset()
+        except TypeError:
+            out = env.reset(seed=None)
+        if isinstance(out, tuple) and len(out) == 2:
+            return out[0]
+        return out
+
     t_rollout_start = time.perf_counter()
 
     prev_done_flags: np.ndarray | None = None
@@ -315,11 +328,18 @@ def collect_rollout(
         next_obs_rollout, applied_final = _apply_final_observation_with_mask(
             next_obs_env, done_flags, infos
         )
+        applied_final_b = np.asarray(applied_final, dtype=bool).reshape(B)
+        if manual_reset_on_done:
+            applied_final_b = applied_final_b | done_flags.astype(bool, copy=False)
 
-        no_final_timeout = truncs_b & (~np.asarray(applied_final, dtype=bool).reshape(B))
+        no_final_timeout = truncs_b & (~applied_final_b)
         if bool(no_final_timeout.any()):
             missing_final_obs_truncs += int(no_final_timeout.sum())
         timeouts_no_final_obs_seq[t] = no_final_timeout.astype(np.float32, copy=False)
+
+        obs_next_state = next_obs_env
+        if manual_reset_on_done and bool(done_flags.reshape(-1)[0]):
+            obs_next_state = _reset_single_env()
 
         next_obs_b = next_obs_rollout if B > 1 else next_obs_rollout[None, ...]
         if not is_image:
@@ -354,9 +374,11 @@ def collect_rollout(
             if prev_done_flags is not None:
                 prev_done_flags = done_flags.astype(bool, copy=False)
 
-        obs_var = next_obs_env
+        obs_var = obs_next_state
 
-    if missing_final_obs_truncs > 0 and not bool(getattr(collect_rollout, "_warned_no_final_obs", False)):
+    if missing_final_obs_truncs > 0 and not bool(
+        getattr(collect_rollout, "_warned_no_final_obs", False)
+    ):
         if hasattr(logger, "warning"):
             logger.warning(
                 "Timeout bootstrapping disabled for %d truncation(s) without final_observation.",
