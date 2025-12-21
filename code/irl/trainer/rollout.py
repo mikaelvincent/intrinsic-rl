@@ -170,6 +170,7 @@ class RolloutBatch:
     obs_seq: np.ndarray
     next_obs_seq: np.ndarray
     actions_seq: np.ndarray
+    old_log_probs_seq: np.ndarray
     rewards_ext_seq: np.ndarray
     dones_seq: np.ndarray
     terminals_seq: np.ndarray
@@ -233,6 +234,7 @@ def collect_rollout(
         if is_discrete
         else np.zeros((T, B, int(act_space.shape[0])), dtype=np.float32)
     )
+    old_logp_seq = np.zeros((T, B), dtype=np.float32)
     rew_ext_seq = np.zeros((T, B), dtype=np.float32)
     dones_seq = np.zeros((T, B), dtype=np.float32)
     terminals_seq = np.zeros((T, B), dtype=np.float32)
@@ -296,21 +298,25 @@ def collect_rollout(
         pi_t0 = time.perf_counter()
         with torch.no_grad():
             if actor_policy is not None:
-                a_tensor, _ = actor_policy.act(obs_b_norm)
+                a_tensor, logp_tensor = actor_policy.act(obs_b_norm)
                 a_np = a_tensor.detach().numpy()
+                logp_np = logp_tensor.detach().numpy()
             else:
                 if is_image:
-                    a_tensor, _ = policy.act(obs_b_norm)
+                    a_tensor, logp_tensor = policy.act(obs_b_norm)
                 else:
                     obs_tensor = torch.as_tensor(obs_b_norm, device=device, dtype=torch.float32)
-                    a_tensor, _ = policy.act(obs_tensor)
+                    a_tensor, logp_tensor = policy.act(obs_tensor)
                 a_np = a_tensor.detach().cpu().numpy()
+                logp_np = logp_tensor.detach().cpu().numpy()
         t_rollout_policy += time.perf_counter() - pi_t0
 
         if is_discrete:
             a_np = a_np.astype(np.int64).reshape(B)
         else:
             a_np = a_np.reshape(B, -1).astype(np.float32)
+
+        old_logp_seq[t] = np.asarray(logp_np, dtype=np.float32).reshape(B)
 
         env_t0 = time.perf_counter()
         next_obs_env, rewards, terms, truncs, infos = env.step(a_np if B > 1 else a_np[0])
@@ -423,6 +429,7 @@ def collect_rollout(
 
     obs_seq_final = _ensure_time_major_np(obs_seq_final, T, B, "obs_seq")
     next_obs_seq_final = _ensure_time_major_np(next_obs_seq_final, T, B, "next_obs_seq")
+    old_logp_seq = _ensure_time_major_np(old_logp_seq, T, B, "old_log_probs")
     rew_ext_seq = _ensure_time_major_np(rew_ext_seq, T, B, "rewards")
     dones_seq = _ensure_time_major_np(dones_seq, T, B, "dones")
     terminals_seq = _ensure_time_major_np(terminals_seq, T, B, "terminals")
@@ -444,6 +451,7 @@ def collect_rollout(
         obs_seq=obs_seq_final,
         next_obs_seq=next_obs_seq_final,
         actions_seq=actions_seq,
+        old_log_probs_seq=old_logp_seq,
         rewards_ext_seq=rew_ext_seq,
         dones_seq=dones_seq,
         terminals_seq=terminals_seq,
