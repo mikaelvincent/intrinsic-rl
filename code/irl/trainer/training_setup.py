@@ -10,8 +10,9 @@ from torch.optim import Adam
 from irl.cfg import Config, to_dict
 from irl.models import PolicyNetwork, ValueNetwork
 from irl.utils.determinism import seed_everything
-from irl.utils.spaces import is_image_space
 from irl.utils.loggers import MetricLogger
+from irl.utils.run_meta import collect_run_meta, read_run_meta, write_run_meta
+from irl.utils.spaces import is_image_space
 
 from .build import default_run_dir, ensure_mujoco_gl, single_spaces
 from .obs_norm import RunningObsNorm
@@ -132,6 +133,12 @@ def build_training_session(
         pass
 
     run_dir_resolved, ckpt = _init_run_dir_and_ckpt(cfg, run_dir_candidate)
+
+    run_meta_path = Path(run_dir_resolved) / "run_meta.json"
+    existing_meta = read_run_meta(run_meta_path)
+    if existing_meta is None:
+        write_run_meta(run_meta_path, collect_run_meta(device=device, seed=int(cfg.seed)))
+
     resume_payload, resume_step = _maybe_load_resume_payload(cfg, ckpt, resume)
 
     env = _build_env(cfg, logger=logger)
