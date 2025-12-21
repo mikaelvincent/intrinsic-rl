@@ -20,7 +20,6 @@ def test_run_meta_written_and_embedded(tmp_path: Path) -> None:
         ppo=replace(base.ppo, steps_per_update=1, minibatches=1, epochs=1),
         logging=replace(base.logging, csv_interval=1, checkpoint_interval=100_000),
         evaluation=replace(base.evaluation, interval_steps=0, episodes=1),
-        adaptation=replace(base.adaptation, enabled=False),
         exp=replace(base.exp, deterministic=True),
     )
     validate_config(cfg)
