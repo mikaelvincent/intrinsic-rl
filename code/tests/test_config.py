@@ -8,6 +8,7 @@ import pytest
 from irl.cfg import ConfigError, loads_config
 from irl.cfg.schema import LoggingConfig
 from irl.intrinsic.config import build_intrinsic_kwargs
+from irl.utils.config_hash import compute_cfg_hash
 from irl.utils.loggers import MetricLogger
 
 
@@ -47,8 +48,62 @@ ppo:
         )
 
 
+def test_taper_fracs_validate_for_glpe_only() -> None:
+    cfg = loads_config(
+        """
+method: glpe
+intrinsic:
+  taper_start_frac: 0.1
+  taper_end_frac: 0.9
+""".lstrip()
+    )
+    assert cfg.intrinsic.taper_start_frac == pytest.approx(0.1)
+    assert cfg.intrinsic.taper_end_frac == pytest.approx(0.9)
+
+    with pytest.raises(
+        ConfigError,
+        match=r"Set both `intrinsic\.taper_start_frac` and `intrinsic\.taper_end_frac`, or omit both\.",
+    ):
+        loads_config(
+            """
+method: glpe
+intrinsic:
+  taper_start_frac: 0.1
+""".lstrip()
+        )
+
+    for bad_start, bad_end in ((-0.1, 0.5), (0.1, 1.1), (0.5, 0.5), (0.7, 0.6)):
+        with pytest.raises(ConfigError, match=r"0\.0 <= start < end <= 1\.0"):
+            loads_config(
+                f"""
+method: glpe
+intrinsic:
+  taper_start_frac: {bad_start}
+  taper_end_frac: {bad_end}
+""".lstrip()
+            )
+
+    with pytest.raises(ConfigError, match=r"glpe\* methods"):
+        loads_config(
+            """
+method: vanilla
+intrinsic:
+  taper_start_frac: 0.1
+  taper_end_frac: 0.9
+""".lstrip()
+        )
+
+
+def test_compute_cfg_hash_ignores_none_taper_keys() -> None:
+    a = {"intrinsic": {}}
+    b = {"intrinsic": {"taper_start_frac": None, "taper_end_frac": None}}
+    assert compute_cfg_hash(a) == compute_cfg_hash(b)
+
+
 def test_build_intrinsic_kwargs_enforces_glpe_gate_cache_rules() -> None:
-    out_nogate = build_intrinsic_kwargs({"method": "glpe_nogate", "intrinsic": {"gate": {"enabled": True}}})
+    out_nogate = build_intrinsic_kwargs(
+        {"method": "glpe_nogate", "intrinsic": {"gate": {"enabled": True}}}
+    )
     assert out_nogate["gating_enabled"] is False
 
     cache_interval = 64
