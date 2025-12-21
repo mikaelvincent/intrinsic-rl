@@ -234,6 +234,7 @@ def run_training_loop(
         batch = {
             "obs": obs_flat_for_ppo,
             "actions": acts_flat_for_ppo,
+            "old_log_probs": rollout.old_log_probs_seq.reshape(T * B2),
             "rewards": rewards_total_seq.reshape(T * B2),
             "dones": rollout.dones_seq.reshape(T * B2),
         }
@@ -283,7 +284,9 @@ def run_training_loop(
         if ep_buf_returns:
             ret = np.asarray(ep_buf_returns, dtype=np.float64).reshape(-1)
             lens = (
-                np.asarray(ep_buf_lengths, dtype=np.float64).reshape(-1) if ep_buf_lengths else ret * 0.0
+                np.asarray(ep_buf_lengths, dtype=np.float64).reshape(-1)
+                if ep_buf_lengths
+                else ret * 0.0
             )
             log_payload["episode_count"] = int(ret.size)
             log_payload["episode_return_mean"] = float(ret.mean()) if ret.size else 0.0
