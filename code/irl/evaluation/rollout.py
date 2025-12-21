@@ -64,6 +64,35 @@ def glpe_gate_and_intrinsic_no_update(
         return None
 
 
+def riac_intrinsic_no_update(mod: object, obs_1d: torch.Tensor) -> float | None:
+    if not (hasattr(mod, "icm") and hasattr(mod, "store")):
+        return None
+    stats = getattr(mod, "_stats", None)
+    if not isinstance(stats, dict):
+        return None
+    if not hasattr(mod, "_lp_rms"):
+        return None
+    try:
+        with torch.no_grad():
+            b_obs = obs_1d.unsqueeze(0)
+            phi_t = mod.icm._phi(b_obs)
+            rid = int(mod.store.locate(phi_t.detach().cpu().numpy().reshape(-1)))
+
+            st = stats.get(rid)
+            lp_raw = 0.0
+            if st is not None and int(getattr(st, "count", 0)) > 0:
+                lp_raw = max(
+                    0.0,
+                    float(getattr(st, "ema_long", 0.0) - getattr(st, "ema_short", 0.0)),
+                )
+
+            alpha_lp = float(getattr(mod, "alpha_lp", 0.0))
+            lp_norm = float(mod._lp_rms.normalize_scalar(float(lp_raw)))
+            return alpha_lp * lp_norm
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class Trajectory:
     obs: list[np.ndarray]
@@ -149,6 +178,8 @@ def run_eval_episodes(
                 else:
                     if is_glpe_family:
                         intrinsic_semantics = "frozen_checkpoint"
+                    elif method_l == "riac":
+                        intrinsic_semantics = "frozen_checkpoint"
                     elif method_l == "ride":
                         intrinsic_semantics = "unbinned_impact"
                     else:
@@ -156,13 +187,12 @@ def run_eval_episodes(
 
                 if intrinsic_module is not None:
                     try:
-                        next_t = torch.as_tensor(
-                            normalize_obs(step_rec.next_obs_raw),
-                            dtype=torch.float32,
-                            device=device,
-                        )
-
                         if is_glpe_family:
+                            next_t = torch.as_tensor(
+                                normalize_obs(step_rec.next_obs_raw),
+                                dtype=torch.float32,
+                                device=device,
+                            )
                             res = glpe_gate_and_intrinsic_no_update(
                                 intrinsic_module, step_rec.obs_t, next_t
                             )
@@ -172,7 +202,19 @@ def run_eval_episodes(
                                 intrinsic_semantics = "frozen_checkpoint"
                             else:
                                 intrinsic_semantics = "unavailable"
+                        elif method_l == "riac":
+                            res = riac_intrinsic_no_update(intrinsic_module, step_rec.obs_t)
+                            if res is not None:
+                                int_val = float(res)
+                                intrinsic_semantics = "frozen_checkpoint"
+                            else:
+                                intrinsic_semantics = "unavailable"
                         else:
+                            next_t = torch.as_tensor(
+                                normalize_obs(step_rec.next_obs_raw),
+                                dtype=torch.float32,
+                                device=device,
+                            )
                             r_out = _compute_intrinsic_batch(
                                 intrinsic_module,
                                 method_l,
