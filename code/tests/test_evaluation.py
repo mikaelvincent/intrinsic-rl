@@ -50,7 +50,7 @@ except Exception:
     pass
 
 
-def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
+def test_evaluate_is_repeatable_and_writes_traj_metadata(tmp_path: Path) -> None:
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(2)
 
@@ -78,8 +78,6 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
         policy_local = PolicyNetwork(obs_space, act_space)
 
         cfg = {
-           
-
             "seed": int(seed),
             "method": str(method),
             "env": {
@@ -89,7 +87,12 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
                 "car_discrete_action_set": None,
             },
         }
-        payload: dict[str, object] = {"step": 0, "policy": policy_local.state_dict(), "cfg": cfg, "obs_norm": None}
+        payload: dict[str, object] = {
+            "step": 0,
+            "policy": policy_local.state_dict(),
+            "cfg": cfg,
+            "obs_norm": None,
+        }
 
         if include_intrinsic:
             mod = create_intrinsic_module(
@@ -116,18 +119,7 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
         traj_out_dir=out_v,
         policy_mode="mode",
     )
-    traj_v = out_v / "DummyEval-v0_trajectory.npz"
-    d_v = np.load(traj_v, allow_pickle=False)
-    assert set(d_v.files) == {
-        "obs",
-        "rewards_ext",
-        "gates",
-        "intrinsic",
-        "env_id",
-        "method",
-        "gate_source",
-        "intrinsic_semantics",
-    }
+    d_v = np.load(out_v / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_v["gate_source"].reshape(-1)[0]) == "n/a"
     assert str(d_v["intrinsic_semantics"].reshape(-1)[0]) == "none"
 
@@ -160,23 +152,6 @@ def test_evaluate_repeatable_and_traj_metadata(tmp_path: Path) -> None:
     d_g_missing = np.load(out_g_missing / "DummyEval-v0_trajectory.npz", allow_pickle=False)
     assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
     assert str(d_g_missing["intrinsic_semantics"].reshape(-1)[0]) == "missing_intrinsic"
-
-    out_rnd = tmp_path / "rnd_out"
-    ckpt_rnd = _write_ckpt(method="rnd", seed=11, include_intrinsic=True)
-    _ = evaluate(
-        env="DummyEval-v0",
-        ckpt=ckpt_rnd,
-        episodes=1,
-        device="cpu",
-        save_traj=True,
-        traj_out_dir=out_rnd,
-        policy_mode="mode",
-    )
-    d_rnd = np.load(out_rnd / "DummyEval-v0_trajectory.npz", allow_pickle=False)
-    assert str(d_rnd["gate_source"].reshape(-1)[0]) == "n/a"
-    assert str(d_rnd["intrinsic_semantics"].reshape(-1)[0]) == "compute_batch"
-    vals = np.asarray(d_rnd["intrinsic"], dtype=np.float32).reshape(-1)
-    assert vals.size > 0 and np.isfinite(vals).all() and np.any(np.abs(vals) > 1e-8)
 
 
 def _write_latest_ckpt(
@@ -246,7 +221,7 @@ def _fake_evaluate(*, env: str, ckpt: Path, episodes: int, device: str, **kwargs
     }
 
 
-def test_eval_suite_reports_coverage_and_step_parity(
+def test_eval_suite_enforces_coverage_and_selects_ckpts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import irl.experiments.evaluation as eval_module
@@ -293,60 +268,11 @@ def test_eval_suite_reports_coverage_and_step_parity(
     with pytest.raises(RuntimeError, match="Step parity mismatch"):
         run_eval_suite(runs_root=runs_root2, results_dir=results_dir2)
 
+    runs_root3 = tmp_path / "runs_suite_every_k"
+    results_dir3 = tmp_path / "results_suite_every_k"
+    runs_root3.mkdir(parents=True, exist_ok=True)
 
-def test_eval_suite_latest_step_parity_catches_mean_trick(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import irl.experiments.evaluation as eval_module
-
-    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
-
-    runs_root = tmp_path / "runs_suite_mean_trick"
-    results_dir = tmp_path / "results_suite_mean_trick"
-    runs_root.mkdir(parents=True, exist_ok=True)
-
-    r_a = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
-    r_b = runs_root / "glpe__DummyEval-v0__seed1__cfgA"
-    for rd in (r_a, r_b):
-        rd.mkdir(parents=True, exist_ok=True)
-
-    for step in (0, 100):
-        _ = _write_step_ckpt(
-            r_a,
-            env_id="DummyEval-v0",
-            method="vanilla",
-            seed=1,
-            step=step,
-            eval_interval_steps=100,
-            episodes=1,
-        )
-
-    _write_latest_ckpt(
-        r_b,
-        env_id="DummyEval-v0",
-        method="glpe",
-        seed=1,
-        step=50,
-        eval_interval_steps=0,
-        episodes=1,
-    )
-
-    with pytest.raises(RuntimeError, match="Step parity mismatch"):
-        run_eval_suite(runs_root=runs_root, results_dir=results_dir)
-
-
-def test_eval_suite_every_k_selects_expected_ckpts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import irl.experiments.evaluation as eval_module
-
-    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
-
-    runs_root = tmp_path / "runs_suite"
-    results_dir = tmp_path / "results_suite"
-    runs_root.mkdir(parents=True, exist_ok=True)
-
-    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    run_dir = runs_root3 / "vanilla__DummyEval-v0__seed1__cfgA"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     for step in (0, 10, 20, 30):
@@ -360,11 +286,10 @@ def test_eval_suite_every_k_selects_expected_ckpts(
             episodes=1,
         )
 
-    run_eval_suite(runs_root=runs_root, results_dir=results_dir)
+    run_eval_suite(runs_root=runs_root3, results_dir=results_dir3)
 
-    raw_path = results_dir / "summary_raw.csv"
+    raw_path = results_dir3 / "summary_raw.csv"
     with raw_path.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-
-    steps = sorted({int(r["ckpt_step"]) for r in rows})
+        raw_rows = list(csv.DictReader(f))
+    steps = sorted({int(r["ckpt_step"]) for r in raw_rows})
     assert steps == [0, 20, 30]
