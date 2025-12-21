@@ -10,6 +10,7 @@ KEY_POLICY = "policy"
 KEY_VALUE = "value"
 KEY_CFG = "cfg"
 KEY_CFG_HASH = "cfg_hash"
+KEY_RUN_META = "run_meta"
 KEY_OBS_NORM = "obs_norm"
 KEY_INTRINSIC_NORM = "intrinsic_norm"
 KEY_META = "meta"
@@ -82,6 +83,7 @@ def build_checkpoint_payload(
     val_opt: Any,
     intrinsic_module: Any | None,
     method_l: str,
+    run_meta: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg_dict = to_dict(cfg)
     payload: dict[str, Any] = {
@@ -98,6 +100,9 @@ def build_checkpoint_payload(
             OPT_VALUE: val_opt.state_dict(),
         },
     }
+
+    if run_meta is not None and isinstance(run_meta, Mapping):
+        payload[KEY_RUN_META] = dict(run_meta)
 
     if intrinsic_module is not None and hasattr(intrinsic_module, "state_dict"):
         try:
