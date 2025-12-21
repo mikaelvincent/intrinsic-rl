@@ -27,6 +27,8 @@ def build_log_payload(
     intrinsic_module: Any | None,
     method_l: str,
     intrinsic_norm_mode: str,
+    intrinsic_taper_weight: float,
+    intrinsic_eta_effective: float,
     intrinsic_outputs_normalized_flag: bool | None,
     int_rms: Any,
     r_int_raw_flat: np.ndarray | None,
@@ -102,6 +104,8 @@ def build_log_payload(
         "episode_length_std": float(ep_length_std),
         "success_rate": float(ep_success_rate),
         "intrinsic_norm_mode": str(intrinsic_norm_mode),
+        "intrinsic_taper_weight": float(intrinsic_taper_weight),
+        "intrinsic_eta_effective": float(intrinsic_eta_effective),
     }
     if intrinsic_outputs_normalized_flag is not None:
         log_payload["intrinsic_outputs_normalized"] = bool(intrinsic_outputs_normalized_flag)
