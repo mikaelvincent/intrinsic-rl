@@ -47,13 +47,11 @@ def cli_videos() -> None:
 
 
 @app.command("validate")
-def cli_validate(
-    strict: bool = typer.Option(True, "--strict/--no-strict"),
-) -> None:
+def cli_validate() -> None:
     ok = run_validate_results(
         runs_root=RUNS_ROOT,
         results_dir=RESULTS_DIR,
-        strict=bool(strict),
+        strict=True,
     )
     if not ok:
         raise typer.Exit(code=1)
@@ -65,6 +63,7 @@ def cli_full() -> None:
     cli_eval()
     cli_plots()
     cli_videos()
+    cli_validate()
 
 
 def main(argv: list[str] | None = None) -> None:
