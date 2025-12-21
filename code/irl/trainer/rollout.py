@@ -374,6 +374,8 @@ def collect_rollout(
             )
             r_step_np = r_step.detach().cpu().numpy().reshape(B).astype(np.float32)
             r_step_np[terms_b] = 0.0
+            if bool(no_final_timeout.any()):
+                r_step_np[no_final_timeout] = 0.0
             r_int_raw_seq[t] = r_step_np
             t_rollout_intrinsic_step += time.perf_counter() - int_step_t0
 
