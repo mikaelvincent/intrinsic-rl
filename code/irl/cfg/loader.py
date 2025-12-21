@@ -323,52 +323,6 @@ def validate_config(cfg: Config) -> None:
     except Exception as exc:
         raise ConfigError(f"Invalid exp.total_steps: {exc}") from exc
 
-    eval_interval = 0
-    try:
-        ev = getattr(cfg, "evaluation", None)
-        eval_interval = int(getattr(ev, "interval_steps", 0) or 0) if ev is not None else 0
-    except Exception:
-        eval_interval = 0
-
-    ckpt_interval = 0
-    try:
-        lg = getattr(cfg, "logging", None)
-        ckpt_interval = int(getattr(lg, "checkpoint_interval", 0) or 0) if lg is not None else 0
-    except Exception:
-        ckpt_interval = 0
-
-    update_quantum = 0
-    try:
-        update_quantum = int(cfg.ppo.steps_per_update) * int(cfg.env.vec_envs)
-    except Exception:
-        update_quantum = 0
-
-    if eval_interval > 0 and update_quantum > 0 and (eval_interval % update_quantum != 0):
-        lower = (eval_interval // update_quantum) * update_quantum
-        higher = lower + update_quantum
-        sugg: list[str] = []
-        if lower > 0:
-            sugg.append(str(lower))
-        if higher > 0 and higher != lower:
-            sugg.append(str(higher))
-
-        msg = (
-            "evaluation.interval_steps is not divisible by ppo.steps_per_update*env.vec_envs "
-            f"(interval_steps={eval_interval}, update_quantum={update_quantum}). "
-            "Evaluated checkpoints may be selected at the nearest available step."
-        )
-        if sugg:
-            msg += f" Consider using: {', '.join(sugg)}."
-        warnings.warn(msg, UserWarning)
-
-    if eval_interval > 0 and ckpt_interval > 0 and ckpt_interval > eval_interval:
-        warnings.warn(
-            "logging.checkpoint_interval exceeds evaluation.interval_steps "
-            f"(checkpoint_interval={ckpt_interval}, interval_steps={eval_interval}). "
-            "Evaluation may skip intended intervals unless checkpoints are saved more frequently.",
-            UserWarning,
-        )
-
 
 def to_dict(cfg: Config) -> dict:
     return asdict(cfg)
