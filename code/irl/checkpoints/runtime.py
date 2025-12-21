@@ -16,6 +16,25 @@ class EvalSettings:
     device: str
 
 
+def _normalize_eval_device(raw: Any) -> str:
+    if raw is None:
+        return "cpu"
+
+    dev = str(raw).strip() or "cpu"
+    low = dev.lower()
+
+    if low.startswith("cuda"):
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                return "cpu"
+        except Exception:
+            return "cpu"
+
+    return dev
+
+
 def extract_eval_settings(payload: Any) -> EvalSettings:
     cfg = payload.get("cfg") if isinstance(payload, ABCMapping) else None
     if not isinstance(cfg, ABCMapping):
@@ -42,10 +61,7 @@ def extract_eval_settings(payload: Any) -> EvalSettings:
         episodes = int(DEFAULT_EVAL_EPISODES)
 
     raw_device = cfg.get("device", None) if isinstance(cfg, ABCMapping) else None
-    if raw_device is None:
-        device = "cpu"
-    else:
-        device = str(raw_device).strip() or "cpu"
+    device = _normalize_eval_device(raw_device)
 
     return EvalSettings(
         interval_steps=int(interval_steps),
