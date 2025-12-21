@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -21,6 +22,11 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+def _stable_u32(*parts: str) -> int:
+    blob = "|".join(str(p) for p in parts).encode("utf-8")
+    return int(hashlib.sha256(blob).hexdigest()[:8], 16)
+
+
 def _color_for_method(method_key: str) -> str:
     mk = str(method_key).strip().lower()
     if mk == "vanilla":
@@ -37,7 +43,7 @@ def _color_for_method(method_key: str) -> str:
         "#bcbd22",
         "#17becf",
     ]
-    idx = abs(hash(mk)) % len(palette)
+    idx = _stable_u32("method_color", mk) % len(palette)
     return palette[idx]
 
 
