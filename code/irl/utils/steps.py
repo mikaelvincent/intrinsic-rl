@@ -43,6 +43,9 @@ def resolve_total_steps(
     if bool(align_to_vec_envs):
         vec_envs = _get_vec_envs(cfg)
         if int(vec_envs) > 1:
-            steps = (int(steps) // int(vec_envs)) * int(vec_envs)
+            if int(steps) > 0 and int(steps) < int(vec_envs):
+                steps = int(vec_envs)
+            else:
+                steps = (int(steps) // int(vec_envs)) * int(vec_envs)
 
     return int(steps)
