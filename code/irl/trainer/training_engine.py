@@ -73,6 +73,28 @@ def run_training_loop(
     except Exception:
         profile_cuda_sync = False
 
+    taper_start = getattr(getattr(cfg, "intrinsic", None), "taper_start_frac", None)
+    taper_end = getattr(getattr(cfg, "intrinsic", None), "taper_end_frac", None)
+    taper_active = (
+        str(method_l).startswith("glpe") and taper_start is not None and taper_end is not None
+    )
+    if taper_active and hasattr(logger, "info"):
+        try:
+            start_step = int(float(taper_start) * float(int(total_steps)))
+            end_step = int(float(taper_end) * float(int(total_steps)))
+        except Exception:
+            start_step = -1
+            end_step = -1
+
+        logger.info(
+            "GLPE intrinsic taper active: start_frac=%.3f end_frac=%.3f (steps %d..%d of %d).",
+            float(taper_start),
+            float(taper_end),
+            int(start_step),
+            int(end_step),
+            int(total_steps),
+        )
+
     obs = session.obs
     global_step = int(session.global_step)
     update_idx = int(session.update_idx)
@@ -108,6 +130,7 @@ def run_training_loop(
     ep_buf_successes: list[float] = []
 
     while global_step < int(total_steps):
+        global_step_start = int(global_step)
         t_update_start = time.perf_counter()
 
         t_intrinsic_compute = 0.0
@@ -170,6 +193,10 @@ def run_training_loop(
             device=device,
             profile_cuda_sync=bool(profile_cuda_sync),
             maybe_cuda_sync=_maybe_cuda_sync,
+            total_steps=int(total_steps),
+            global_step_start=int(global_step_start),
+            taper_start_frac=taper_start,
+            taper_end_frac=taper_end,
         )
         rewards_total_seq = intrinsic_out.rewards_total_seq
         r_int_raw_flat = intrinsic_out.r_int_raw_flat
@@ -238,6 +265,8 @@ def run_training_loop(
             intrinsic_module=intrinsic_module,
             method_l=str(method_l),
             intrinsic_norm_mode=str(intrinsic_norm_mode),
+            intrinsic_taper_weight=float(intrinsic_out.intrinsic_taper_weight_mean),
+            intrinsic_eta_effective=float(intrinsic_out.intrinsic_eta_effective_mean),
             intrinsic_outputs_normalized_flag=intrinsic_outputs_normalized_flag,
             int_rms=int_rms,
             r_int_raw_flat=r_int_raw_flat,
@@ -253,7 +282,9 @@ def run_training_loop(
 
         if ep_buf_returns:
             ret = np.asarray(ep_buf_returns, dtype=np.float64).reshape(-1)
-            lens = np.asarray(ep_buf_lengths, dtype=np.float64).reshape(-1) if ep_buf_lengths else ret * 0.0
+            lens = (
+                np.asarray(ep_buf_lengths, dtype=np.float64).reshape(-1) if ep_buf_lengths else ret * 0.0
+            )
             log_payload["episode_count"] = int(ret.size)
             log_payload["episode_return_mean"] = float(ret.mean()) if ret.size else 0.0
             log_payload["episode_return_std"] = float(ret.std(ddof=0)) if ret.size > 1 else 0.0
