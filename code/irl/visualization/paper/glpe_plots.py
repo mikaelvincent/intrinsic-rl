@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,15 @@ def _npz_str(data: Any, key: str) -> str | None:
         return str(arr.reshape(-1)[0])
     except Exception:
         return None
+
+
+def _stable_u32(*parts: str) -> int:
+    blob = "|".join(str(p) for p in parts).encode("utf-8")
+    return int(hashlib.sha256(blob).hexdigest()[:8], 16)
+
+
+def _sample_seed(tag: str, env_id: str) -> int:
+    return int(_stable_u32(str(tag).strip(), str(env_id).strip()))
 
 
 def _sample_idx(n: int, k: int, *, seed: int) -> np.ndarray:
@@ -113,7 +123,7 @@ def plot_glpe_state_gate_map(
         y = obs_cat[:, int(yi)]
         g = gates_cat >= 0.5
 
-        idx = _sample_idx(x.shape[0], int(max_points), seed=abs(hash(env_id)) & 0x7FFFFFFF)
+        idx = _sample_idx(x.shape[0], int(max_points), seed=_sample_seed("glpe_gate_map", env_id))
         x = x[idx]
         y = y[idx]
         g = g[idx]
@@ -231,9 +241,7 @@ def plot_glpe_extrinsic_vs_intrinsic(
         y = np.concatenate(ys, axis=0).astype(np.float32, copy=False)
         g = np.concatenate(gs, axis=0) >= 0.5
 
-        idx = _sample_idx(
-            x.shape[0], int(max_points), seed=abs(hash(("extint", env_id))) & 0x7FFFFFFF
-        )
+        idx = _sample_idx(x.shape[0], int(max_points), seed=_sample_seed("glpe_extint", env_id))
         x = x[idx]
         y = y[idx]
         g = g[idx]
