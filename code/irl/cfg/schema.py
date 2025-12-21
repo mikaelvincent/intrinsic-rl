@@ -64,13 +64,6 @@ class PPOConfig:
 
 
 @dataclass(frozen=True)
-class AdaptationConfig:
-    enabled: bool = True
-    interval_steps: int = 50_000
-    entropy_low_frac: float = 0.3
-
-
-@dataclass(frozen=True)
 class EvaluationConfig:
     interval_steps: int = 50_000
     episodes: int = 20
@@ -113,7 +106,6 @@ class Config:
     env: EnvConfig = field(default_factory=EnvConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     intrinsic: IntrinsicConfig = field(default_factory=IntrinsicConfig)
-    adaptation: AdaptationConfig = field(default_factory=AdaptationConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     exp: ExperimentConfig = field(default_factory=ExperimentConfig)
