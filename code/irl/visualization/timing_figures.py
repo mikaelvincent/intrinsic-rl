@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import typer
 
+from .data import aggregate_runs, read_scalars
 from .plot_utils import apply_rcparams_paper, save_fig_atomic
-from .data import read_scalars
 
 
 def _style():
@@ -249,5 +249,139 @@ def plot_timing_breakdown(
 
         written.append(out_path)
         typer.echo(f"[suite] Saved timing plot: {out_path}")
+
+    return written
+
+
+def _is_effectively_one(vals: np.ndarray, *, tol: float) -> bool:
+    arr = np.asarray(vals, dtype=np.float64).reshape(-1)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return True
+    return float(np.max(np.abs(arr - 1.0))) <= float(tol)
+
+
+def plot_intrinsic_taper_weight(
+    groups_by_env: Mapping[str, Mapping[str, list[Path]]],
+    *,
+    plots_root: Path,
+    smooth: int = 1,
+    shade: bool = True,
+    align: str = "interpolate",
+    inactive_tol: float = 1e-6,
+) -> list[Path]:
+    if not isinstance(groups_by_env, Mapping):
+        return []
+
+    plots_root = Path(plots_root)
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    align_mode = str(align).strip().lower() or "interpolate"
+    if align_mode not in {"union", "intersection", "interpolate"}:
+        raise ValueError("align must be one of: union, intersection, interpolate")
+
+    plt = _style()
+
+    written: list[Path] = []
+
+    for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: str(kv[0])):
+        if not isinstance(by_method, Mapping):
+            continue
+
+        glpe_methods: dict[str, list[Path]] = {}
+        for m, dirs in by_method.items():
+            ml = str(m).strip().lower()
+            if ml.startswith("glpe") and isinstance(dirs, (list, tuple)) and dirs:
+                glpe_methods[ml] = [Path(p) for p in dirs]
+
+        if not glpe_methods:
+            continue
+
+        aggs: list[tuple[str, object]] = []
+        any_active = False
+
+        for m in _method_order(glpe_methods.keys()):
+            dirs = glpe_methods.get(m, [])
+            if not dirs:
+                continue
+
+            try:
+                agg = aggregate_runs(dirs, metric="intrinsic_taper_weight", smooth=int(smooth), align=align_mode)
+            except Exception:
+                continue
+
+            if getattr(agg, "n_runs", 0) <= 0 or getattr(agg, "steps", np.array([])).size == 0:
+                continue
+
+            mean_vals = np.asarray(getattr(agg, "mean"), dtype=np.float64)
+            if not _is_effectively_one(mean_vals, tol=float(inactive_tol)):
+                any_active = True
+
+            aggs.append((m, agg))
+
+        if not aggs or not any_active:
+            continue
+
+        fig, ax = plt.subplots(figsize=(8.6, 4.6))
+
+        palette = list(getattr(plt, "cm").tab10.colors) if hasattr(getattr(plt, "cm"), "tab10") else None
+        color_idx = 0
+
+        for m, agg in aggs:
+            steps = np.asarray(getattr(agg, "steps"), dtype=np.int64)
+            mean = np.asarray(getattr(agg, "mean"), dtype=np.float64)
+
+            if steps.size == 0 or mean.size == 0:
+                continue
+
+            if m == "glpe":
+                color = "#d62728"
+            elif palette is not None:
+                color = palette[color_idx % len(palette)]
+                color_idx += 1
+            else:
+                color = None
+
+            n_runs = int(getattr(agg, "n_runs", 0) or 0)
+            label = f"{m} (n={n_runs})"
+
+            line = ax.plot(
+                steps,
+                mean,
+                label=label,
+                linewidth=2.0 if m == "glpe" else 1.7,
+                alpha=0.95,
+                color=color,
+            )[0]
+
+            if bool(shade) and n_runs > 1:
+                std = np.asarray(getattr(agg, "std"), dtype=np.float64)
+                if std.size == mean.size:
+                    ci = 1.96 * (std / np.sqrt(float(n_runs)))
+                    lo = np.clip(mean - ci, 0.0, 1.0)
+                    hi = np.clip(mean + ci, 0.0, 1.0)
+                    ax.fill_between(
+                        steps,
+                        lo,
+                        hi,
+                        alpha=0.12,
+                        color=line.get_color(),
+                        linewidth=0.0,
+                    )
+
+        ax.set_xlabel("Environment steps")
+        ax.set_ylabel("Intrinsic taper weight")
+        ax.set_title(f"{env_id} — GLPE intrinsic taper weight", loc="left", fontweight="bold")
+        ax.set_ylim(-0.05, 1.05)
+        ax.grid(True, alpha=0.25, linestyle="--")
+        ax.legend(loc="best")
+
+        env_tag = str(env_id).replace("/", "-")
+        out_path = plots_root / f"{env_tag}__glpe_intrinsic_taper.png"
+        _save_fig(fig, out_path)
+        plt.close(fig)
+
+        written.append(out_path)
+        typer.echo(f"[suite] Saved taper plot: {out_path}")
 
     return written
