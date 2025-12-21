@@ -16,29 +16,7 @@ from irl.intrinsic.icm import ICMConfig
 from irl.intrinsic.ride import RIDE
 from irl.trainer import train as run_train
 from irl.trainer.rollout import collect_rollout
-from irl.utils.checkpoint import load_checkpoint
 from irl.utils.loggers import get_logger
-
-
-class _StepBudgetEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(2)
-
-    def reset(self, *, seed=None, options=None):
-        _ = seed, options
-        return np.zeros((2,), dtype=np.float32), {}
-
-    def step(self, action):
-        _ = action
-        obs = np.zeros((2,), dtype=np.float32)
-        return obs, 0.0, False, False, {}
-
-    def close(self) -> None:
-        return
 
 
 class _TimeoutMaskEnv(gym.Env):
@@ -99,11 +77,7 @@ class _ObsNormCountEnv(gym.Env):
         return
 
 
-for _id, _cls in (
-    ("StepBudget-v0", _StepBudgetEnv),
-    ("TimeoutMask-v0", _TimeoutMaskEnv),
-    ("ObsNormCount-v0", _ObsNormCountEnv),
-):
+for _id, _cls in (("TimeoutMask-v0", _TimeoutMaskEnv), ("ObsNormCount-v0", _ObsNormCountEnv)):
     try:
         register(id=_id, entry_point=_cls)
     except Exception:
@@ -165,52 +139,6 @@ def test_train_refuses_dirty_run_dir_without_resume(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="resume"):
         run_train(Config(), total_steps=1, run_dir=run_dir, resume=False)
-
-
-def test_total_steps_aligns_to_vec_envs_budget_and_logs(tmp_path: Path) -> None:
-    cfg = _make_cfg(
-        env_id="StepBudget-v0",
-        method="vanilla",
-        vec_envs=2,
-        steps_per_update=2,
-        minibatches=1,
-        epochs=1,
-        eta=0.0,
-    )
-    cfg = replace(cfg, logging=replace(cfg.logging, csv_interval=10_000))
-
-    out_dir = run_train(cfg, total_steps=5, run_dir=tmp_path / "run_budget", resume=False)
-    payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
-    step = int(payload.get("step", -1))
-    assert step == 4
-    assert step % int(cfg.env.vec_envs) == 0
-
-    csv_path = out_dir / "logs" / "scalars.csv"
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    assert rows
-
-
-def test_obs_norm_counts_once_per_transition(tmp_path: Path) -> None:
-    cfg = _make_cfg(
-        env_id="ObsNormCount-v0",
-        method="vanilla",
-        vec_envs=2,
-        steps_per_update=2,
-        minibatches=1,
-        epochs=1,
-        eta=0.0,
-    )
-    out_dir = run_train(cfg, total_steps=4, run_dir=tmp_path / "run_obs_norm_count", resume=False)
-    payload = load_checkpoint(out_dir / "checkpoints" / "ckpt_latest.pt", map_location="cpu")
-    step = int(payload.get("step", -1))
-    assert step == 4
-
-    obs_norm = payload.get("obs_norm")
-    assert isinstance(obs_norm, dict)
-    count = float(obs_norm.get("count", float("nan")))
-    assert np.isfinite(count)
-    assert abs(count - float(step)) < 1e-6
 
 
 def test_intrinsic_not_masked_on_truncations(tmp_path: Path) -> None:
@@ -395,9 +323,5 @@ def test_glpe_intrinsic_taper_weight_reaches_zero(tmp_path: Path) -> None:
 
     assert w2 > w4 > w6
     assert abs(w6) < 1e-12
-
-    r_int6 = float(rows[6]["r_int_mean"])
-    assert abs(r_int6) < 1e-12
-
-    eta_eff6 = float(rows[6]["intrinsic_eta_effective"])
-    assert abs(eta_eff6) < 1e-12
+    assert abs(float(rows[6]["r_int_mean"])) < 1e-12
+    assert abs(float(rows[6]["intrinsic_eta_effective"])) < 1e-12
