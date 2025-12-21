@@ -49,7 +49,7 @@ class EnvConfig:
 
 @dataclass(frozen=True)
 class PPOConfig:
-    steps_per_update: int = 2048
+    rollout_steps_per_env: int = 2048
     minibatches: int = 32
     epochs: int = 10
     learning_rate: float = 3.0e-4
