@@ -110,8 +110,8 @@ def validate_config(cfg: Config) -> None:
         raise ConfigError("env.vec_envs must be >= 1")
     if cfg.env.frame_skip < 1:
         raise ConfigError("env.frame_skip must be >= 1")
-    if cfg.ppo.steps_per_update <= 0:
-        raise ConfigError("ppo.steps_per_update must be > 0")
+    if cfg.ppo.rollout_steps_per_env <= 0:
+        raise ConfigError("ppo.rollout_steps_per_env must be > 0")
     if cfg.ppo.minibatches <= 0:
         raise ConfigError("ppo.minibatches must be > 0")
     if not (0.0 < cfg.ppo.gamma <= 1.0):
@@ -279,8 +279,8 @@ def validate_config(cfg: Config) -> None:
                     UserWarning,
                 )
 
-    total_a = cfg.ppo.steps_per_update
-    total_b = cfg.ppo.steps_per_update * cfg.env.vec_envs
+    total_a = cfg.ppo.rollout_steps_per_env
+    total_b = cfg.ppo.rollout_steps_per_env * cfg.env.vec_envs
     if (total_a % cfg.ppo.minibatches != 0) and (total_b % cfg.ppo.minibatches != 0):
         valid = sorted(set(_divisors(total_a) + _divisors(total_b)))
         try:
@@ -306,9 +306,9 @@ def validate_config(cfg: Config) -> None:
         hint = " — " + "; ".join(hint_bits) if hint_bits else ""
 
         raise ConfigError(
-            "Minibatch divisibility violated: either `ppo.steps_per_update` or "
-            "`ppo.steps_per_update * env.vec_envs` must be divisible by `ppo.minibatches`.\n"
-            f"(steps_per_update={total_a}, vec_envs={cfg.env.vec_envs}, "
+            "Minibatch divisibility violated: either `ppo.rollout_steps_per_env` or "
+            "`ppo.rollout_steps_per_env * env.vec_envs` must be divisible by `ppo.minibatches`.\n"
+            f"(rollout_steps_per_env={total_a}, vec_envs={cfg.env.vec_envs}, "
             f"minibatches={cfg.ppo.minibatches}){hint}"
         )
 
