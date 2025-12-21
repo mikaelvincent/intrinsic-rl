@@ -144,7 +144,7 @@ def run_training_loop(
         actor_sync.sync_from(policy)
 
         remaining_steps = int(total_steps) - int(global_step)
-        per_env_steps = min(int(cfg.ppo.steps_per_update), remaining_steps // B)
+        per_env_steps = min(int(cfg.ppo.rollout_steps_per_env), remaining_steps // B)
         if per_env_steps <= 0:
             break
 
