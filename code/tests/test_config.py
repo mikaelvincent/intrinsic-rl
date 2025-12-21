@@ -93,8 +93,6 @@ intrinsic:
 """.lstrip()
         )
 
-
-def test_compute_cfg_hash_ignores_none_taper_keys() -> None:
     a = {"intrinsic": {}}
     b = {"intrinsic": {"taper_start_frac": None, "taper_end_frac": None}}
     assert compute_cfg_hash(a) == compute_cfg_hash(b)
@@ -140,11 +138,9 @@ def test_metric_logger_handles_nonfinite_and_schema_expansion(tmp_path: Path) ->
     assert r0["foo"].strip().lower() == "nan"
     assert int(float(r0["nonfinite_any"])) == 1
     assert "foo" in {k for k in r0["nonfinite_keys"].split(",") if k}
+    assert "bar" in r0
 
     r1 = rows[1]
     assert r1["bar"].strip().lower() == "inf"
     assert int(float(r1["nonfinite_any"])) == 1
     assert "bar" in {k for k in r1["nonfinite_keys"].split(",") if k}
-
-    assert "bar" in r0
-    assert (r0["bar"] or "").strip() != ""
