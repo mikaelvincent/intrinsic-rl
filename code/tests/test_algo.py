@@ -524,3 +524,108 @@ def test_timeout_bootstrap_enabled_single_env_with_final_obs() -> None:
         assert torch.allclose(adv_out.value_targets, expected, atol=1e-6)
     finally:
         env.close()
+
+
+class _NeverDoneEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        self.action_space = gym.spaces.Discrete(3)
+
+    def reset(self, *, seed=None, options=None):
+        _ = seed, options
+        return np.zeros((4,), dtype=np.float32), {}
+
+    def step(self, action):
+        _ = action
+        return np.zeros((4,), dtype=np.float32), 0.0, False, False, {}
+
+    def close(self) -> None:
+        return
+
+
+def test_ppo_uses_old_log_probs_from_rollout() -> None:
+    device = torch.device("cpu")
+    env = _NeverDoneEnv()
+    try:
+        obs0, _ = env.reset(seed=0)
+        policy = PolicyNetwork(env.observation_space, env.action_space).to(device)
+        value = ValueNetwork(env.observation_space).to(device)
+        policy.eval()
+        value.eval()
+
+        T = 4
+        rollout = collect_rollout(
+            env=env,
+            policy=policy,
+            actor_policy=None,
+            obs=obs0,
+            obs_space=env.observation_space,
+            act_space=env.action_space,
+            is_image=False,
+            obs_norm=_IdentityObsNorm(),
+            intrinsic_module=None,
+            use_intrinsic=False,
+            method_l="vanilla",
+            T=T,
+            B=1,
+            device=device,
+            logger=get_logger("test_old_log_probs_rollout"),
+        )
+
+        assert rollout.old_log_probs_seq.shape == (T, 1)
+        assert np.isfinite(rollout.old_log_probs_seq).all()
+
+        N = int(rollout.T) * int(rollout.B)
+        obs_flat = rollout.obs_seq.reshape(N, -1)
+        acts_flat = rollout.actions_seq.reshape(N)
+
+        cfg = PPOConfig(
+            steps_per_update=int(N),
+            minibatches=2,
+            epochs=1,
+            learning_rate=3.0e-4,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            entropy_coef=0.0,
+            value_coef=0.5,
+            value_clip_range=0.0,
+            kl_penalty_coef=0.0,
+            kl_stop=0.0,
+        )
+
+        batch = {
+            "obs": obs_flat,
+            "actions": acts_flat,
+            "old_log_probs": rollout.old_log_probs_seq.reshape(N).astype(np.float32),
+        }
+
+        advantages = np.zeros((N,), dtype=np.float32)
+        value_targets = np.zeros((N,), dtype=np.float32)
+
+        calls = 0
+        orig = policy.distribution
+
+        def _wrapped(obs, orig=orig):
+            nonlocal calls
+            calls += 1
+            return orig(obs)
+
+        policy.distribution = _wrapped
+
+        _ = ppo_update(
+            policy,
+            value,
+            batch,
+            advantages,
+            value_targets,
+            cfg,
+            return_stats=False,
+        )
+
+        assert int(calls) == int(cfg.minibatches) * int(cfg.epochs)
+    finally:
+        env.close()
