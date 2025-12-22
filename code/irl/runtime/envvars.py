@@ -22,6 +22,8 @@ def disable_nnpack() -> None:
 def ensure_sdl_dummy() -> None:
     if "SDL_VIDEODRIVER" not in os.environ:
         os.environ["SDL_VIDEODRIVER"] = "dummy"
+    if "SDL_AUDIODRIVER" not in os.environ:
+        os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 
 def ensure_mujoco_gl(env_id: str) -> str:
