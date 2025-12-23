@@ -58,7 +58,7 @@ intrinsic:
     median_cache_interval: 1
 
 evaluation:
-  interval_steps: 0
+  interval_steps: 16384
   episodes: 20
 
 logging:
