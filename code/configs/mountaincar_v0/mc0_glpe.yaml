@@ -60,12 +60,12 @@ intrinsic:
     median_cache_interval: 1
 
 evaluation:
-  interval_steps: 250000
+  interval_steps: 0
   episodes: 20
 
 logging:
-  csv_interval: 10000
-  checkpoint_interval: 125000
+  csv_interval: 40000
+  checkpoint_interval: 200000
   checkpoint_max_to_keep: null
 
 exp:
