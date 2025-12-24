@@ -1,0 +1,70 @@
+seed:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+device: cpu
+method: riac
+
+env:
+  id: BipedalWalker-v3
+  vec_envs: 8
+  frame_skip: 1
+  domain_randomization: false
+  discrete_actions: false
+  car_discrete_action_set: null
+  async_vector: false
+
+ppo:
+  rollout_steps_per_env: 2048
+  minibatches: 16
+  epochs: 5
+  learning_rate: 5.0e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.25
+  entropy_coef: 0.0
+  value_coef: 0.5
+  value_clip_range: 0.0
+  kl_penalty_coef: 0.0
+  kl_stop: 0.06
+
+intrinsic:
+  eta: 0.08
+  alpha_impact: 1.0
+  alpha_lp: 0.5
+  r_clip: 4.0
+  bin_size: 0.25
+  region_capacity: 200
+  depth_max: 12
+  ema_beta_long: 0.995
+  ema_beta_short: 0.9
+  normalize_inside: true
+  fail_on_error: true
+  checkpoint_include_points: true
+  gate:
+    enabled: true
+    tau_lp_mult: 0.01
+    tau_s: 2.0
+    hysteresis_up_mult: 2.0
+    min_consec_to_gate: 5
+    min_regions_for_gating: 16
+    median_cache_interval: 1
+
+evaluation:
+  interval_steps: 16384
+  episodes: 20
+
+logging:
+  csv_interval: 140000
+  checkpoint_interval: 700000
+  checkpoint_max_to_keep: null
+
+exp:
+  deterministic: true
+  total_steps: 7000000
+  profile_cuda_sync: false
