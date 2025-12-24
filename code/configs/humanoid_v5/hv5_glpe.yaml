@@ -61,7 +61,7 @@ evaluation:
 logging:
   csv_interval: 600000
   checkpoint_interval: 3000000
-  checkpoint_max_to_keep: 20
+  checkpoint_max_to_keep: null
 
 exp:
   deterministic: true
