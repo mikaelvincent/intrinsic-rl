@@ -1,0 +1,65 @@
+seed:
+  - 0
+device: cpu
+method: glpe
+
+env:
+  id: Humanoid-v5
+  vec_envs: 8
+  frame_skip: 1
+  domain_randomization: false
+  discrete_actions: false
+  car_discrete_action_set: null
+  async_vector: false
+
+ppo:
+  rollout_steps_per_env: 2048
+  minibatches: 32
+  epochs: 10
+  learning_rate: 1.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.15
+  entropy_coef: 0.01
+  value_coef: 0.5
+  value_clip_range: 0.2
+  kl_penalty_coef: 0.0
+  kl_stop: 0.03
+
+intrinsic:
+  eta: 0.05
+  alpha_impact: 1.0
+  alpha_lp: 0.5
+  r_clip: 5.0
+  taper_start_frac: 0.05
+  taper_end_frac: 0.95
+  bin_size: 0.25
+  region_capacity: 256
+  depth_max: 12
+  ema_beta_long: 0.997
+  ema_beta_short: 0.90
+  normalize_inside: true
+  fail_on_error: true
+  checkpoint_include_points: true
+  gate:
+    enabled: true
+    tau_lp_mult: 0.005
+    tau_s: 2.5
+    hysteresis_up_mult: 2.5
+    min_consec_to_gate: 8
+    min_regions_for_gating: 64
+    median_cache_interval: 1
+
+evaluation:
+  interval_steps: 1000000
+  episodes: 20
+
+logging:
+  csv_interval: 10000
+  checkpoint_interval: 1000000
+  checkpoint_max_to_keep: null
+
+exp:
+  deterministic: true
+  total_steps: 30000000
+  profile_cuda_sync: false
