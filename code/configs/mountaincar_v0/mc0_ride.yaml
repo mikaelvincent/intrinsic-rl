@@ -17,8 +17,6 @@ env:
   vec_envs: 16
   frame_skip: 1
   domain_randomization: false
-  discrete_actions: true
-  car_discrete_action_set: null
   async_vector: false
 
 ppo:
@@ -38,24 +36,9 @@ ppo:
 intrinsic:
   eta: 0.05
   alpha_impact: 1.0
-  alpha_lp: 0.5
   r_clip: 4.0
   bin_size: 0.25
-  region_capacity: 128
-  depth_max: 10
-  ema_beta_long: 0.995
-  ema_beta_short: 0.90
-  normalize_inside: true
   fail_on_error: true
-  checkpoint_include_points: true
-  gate:
-    enabled: true
-    tau_lp_mult: 0.01
-    tau_s: 2.0
-    hysteresis_up_mult: 2.0
-    min_consec_to_gate: 5
-    min_regions_for_gating: 8
-    median_cache_interval: 1
 
 evaluation:
   interval_steps: 16384
