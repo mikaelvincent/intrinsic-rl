@@ -12,8 +12,6 @@ env:
   vec_envs: 4
   frame_skip: 1
   domain_randomization: false
-  discrete_actions: false
-  car_discrete_action_set: null
   async_vector: false
 
 ppo:
@@ -37,7 +35,6 @@ intrinsic:
   r_clip: 5.0
   taper_start_frac: 0.05
   taper_end_frac: 0.80
-  bin_size: 0.25
   region_capacity: 256
   depth_max: 12
   ema_beta_long: 0.998
