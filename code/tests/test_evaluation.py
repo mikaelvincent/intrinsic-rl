@@ -305,6 +305,60 @@ def test_eval_suite_enforces_coverage_and_selects_ckpts(
     assert meta.get("selected_ckpt_steps_union") == [0, 20, 30]
 
 
+def test_eval_suite_does_not_preload_all_ckpts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import irl.experiments.evaluation as eval_module
+
+    monkeypatch.setattr(eval_module, "evaluate", _fake_evaluate)
+
+    runs_root = tmp_path / "runs_suite_lazy_ckpt"
+    results_dir = tmp_path / "results_suite_lazy_ckpt"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    run_dir = runs_root / "vanilla__DummyEval-v0__seed1__cfgA"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    ckpt_paths = []
+    for step in (0, 10, 20, 30):
+        ckpt_paths.append(
+            _write_step_ckpt(
+                run_dir,
+                env_id="DummyEval-v0",
+                method="vanilla",
+                seed=1,
+                step=step,
+                eval_interval_steps=25,
+                episodes=1,
+            )
+        )
+
+    latest = ckpt_paths[-1].resolve()
+
+    started_eval = False
+    orig_load = eval_module.load_checkpoint
+
+    def _guarded_load(path: Path, map_location: str = "cpu"):
+        nonlocal started_eval
+        p = Path(path).resolve()
+        if not started_eval and p != latest:
+            raise AssertionError(f"Preloaded non-latest checkpoint: {p.name}")
+        return orig_load(path, map_location=map_location)
+
+    monkeypatch.setattr(eval_module, "load_checkpoint", _guarded_load)
+
+    orig_eval_ckpts = eval_module.evaluate_checkpoints
+
+    def _wrapped_eval_ckpts(*args, **kwargs):
+        nonlocal started_eval
+        started_eval = True
+        return orig_eval_ckpts(*args, **kwargs)
+
+    monkeypatch.setattr(eval_module, "evaluate_checkpoints", _wrapped_eval_ckpts)
+
+    run_eval_suite(runs_root=runs_root, results_dir=results_dir)
+
+
 class _TinyEvalEnv(gym.Env):
     metadata = {"render_modes": []}
 
