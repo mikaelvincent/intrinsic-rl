@@ -45,6 +45,23 @@ def _eval_device(payload: Mapping[str, Any]) -> str:
     return str(_extract_eval_settings(payload).device)
 
 
+def _read_run_cfg_json(run_dir: Path) -> Mapping[str, Any] | None:
+    cfg_path = Path(run_dir) / "config.json"
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None
+
+    if not isinstance(data, Mapping):
+        return None
+    return data
+
+
 _COVERAGE_COLS: list[str] = [
     "env_id",
     "method",
@@ -204,7 +221,7 @@ def _coverage_msg_step_sets(env_id: str, union_steps: set[int], missing_by_metho
             bits.append(f"{m} missing {_fmt_int_list(miss)}")
     return (
         f"[suite]    ! Step parity mismatch for env={env_id}: "
-        f"evaluated step sets differ (union={union_desc}) — "
+        f"evaluated step sets differ (union={union_desc}) â€” "
         + "; ".join(bits)
     )
 
@@ -437,19 +454,30 @@ def run_eval_suite(
     intervals_by_run: dict[Path, int] = {}
     episodes_by_run: dict[Path, int] = {}
     devices_by_run: dict[Path, str] = {}
+    cfg_fields_by_run: dict[Path, tuple[str | None, str | None, int | None]] = {}
     selected: list[tuple[Path, Path]] = []
 
     for rd, ckpt_latest in discovered:
-        try:
-            payload_latest = load_checkpoint(ckpt_latest, map_location="cpu")
-        except Exception as exc:
-            typer.echo(f"[suite]    ! {rd.name}: failed to load {ckpt_latest.name} ({exc})")
-            continue
+        cfg_map = _read_run_cfg_json(rd)
+        if cfg_map is not None:
+            payload_like = {"cfg": cfg_map}
+            episodes_by_run[rd] = int(_eval_episodes(payload_like))
+            interval = int(_eval_interval_steps(payload_like))
+            intervals_by_run[rd] = int(interval)
+            devices_by_run[rd] = str(_eval_device(payload_like))
+            cfg_fields_by_run[rd] = _cfg_fields(payload_like)
+        else:
+            try:
+                payload_latest = load_checkpoint(ckpt_latest, map_location="cpu")
+            except Exception as exc:
+                typer.echo(f"[suite]    ! {rd.name}: failed to load {ckpt_latest.name} ({exc})")
+                continue
 
-        episodes_by_run[rd] = int(_eval_episodes(payload_latest))
-        interval = int(_eval_interval_steps(payload_latest))
-        intervals_by_run[rd] = int(interval)
-        devices_by_run[rd] = str(_eval_device(payload_latest))
+            episodes_by_run[rd] = int(_eval_episodes(payload_latest))
+            interval = int(_eval_interval_steps(payload_latest))
+            intervals_by_run[rd] = int(interval)
+            devices_by_run[rd] = str(_eval_device(payload_latest))
+            cfg_fields_by_run[rd] = _cfg_fields(payload_latest)
 
         if interval > 0:
             ckpts = select_ckpts_for_run(rd, policy="every_k", every_k=int(interval))
@@ -496,8 +524,7 @@ def run_eval_suite(
 
     for rd, ckpt in selected:
         try:
-            payload = load_checkpoint(ckpt, map_location="cpu")
-            cfg_env_id, cfg_method, cfg_seed = _cfg_fields(payload)
+            cfg_env_id, cfg_method, cfg_seed = cfg_fields_by_run.get(rd, (None, None, None))
 
             info = parse_run_name(rd)
             run_env_tag = info.get("env")
@@ -513,7 +540,7 @@ def run_eval_suite(
 
             if cfg_env_id is None:
                 notes.append(
-                    f"[suite]    ! {rd.name}: cfg.env.id missing in checkpoint; "
+                    f"[suite]    ! {rd.name}: cfg.env.id missing in checkpoint/config; "
                     f"falling back to run dir label {run_env_tag!r}."
                 )
 
@@ -551,7 +578,6 @@ def run_eval_suite(
                     seed=int(cfg_seed) if cfg_seed is not None else None,
                     save_traj=True,
                     traj_out_dir=traj_out_dir,
-                    payload=payload,
                     notes=tuple(notes),
                     label=f"{rd.name}/{ckpt.stem}",
                 )
