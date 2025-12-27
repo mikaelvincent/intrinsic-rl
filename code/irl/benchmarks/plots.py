@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
 
 
@@ -116,6 +117,9 @@ def _plot_throughput(
     height = max(3.0, 1.2 * n_units + 0.28 * total_rows)
     fig, axes = plt.subplots(n_units, 1, figsize=(9.0, height), squeeze=False)
 
+    glpe_color = _color_for_method("glpe")
+    other_color = "#1f77b4"
+
     for ax, unit in zip(axes[:, 0], units):
         rows = list(rows_by_unit[unit])
         rows.sort(key=lambda x: float(x["median"]), reverse=True)
@@ -128,7 +132,7 @@ def _plot_throughput(
         hi = np.maximum(hi, 0.0)
 
         y = np.arange(len(rows), dtype=np.float64)
-        colors = ["#d62728" if str(r["name"]).startswith("glpe") else "#1f77b4" for r in rows]
+        colors = [glpe_color if str(r["name"]).startswith("glpe") else other_color for r in rows]
 
         ax.barh(y, medians, color=colors, alpha=0.85, edgecolor="white", linewidth=0.5)
         ax.errorbar(
@@ -171,9 +175,7 @@ def _plot_throughput(
     return True
 
 
-def _get_result_by_name(
-    results: list[Mapping[str, Any]], name: str
-) -> Mapping[str, Any] | None:
+def _get_result_by_name(results: list[Mapping[str, Any]], name: str) -> Mapping[str, Any] | None:
     target = str(name).strip()
     for r in results:
         if not isinstance(r, Mapping):
@@ -238,7 +240,7 @@ def _plot_cache_comparison(
     ax.bar(
         x,
         medians,
-        color=["#7f7f7f", "#d62728"],
+        color=[_color_for_method("vanilla"), _color_for_method("glpe")],
         alpha=0.85,
         edgecolor="white",
         linewidth=0.6,
@@ -340,7 +342,14 @@ def _plot_speedup(
     x = np.arange(len(rows), dtype=np.float64)
     fig, ax = plt.subplots(figsize=(max(5.0, 1.6 + 0.6 * len(rows)), 3.8))
 
-    ax.bar(x, medians, color="#d62728", alpha=0.85, edgecolor="white", linewidth=0.5)
+    ax.bar(
+        x,
+        medians,
+        color=_color_for_method("glpe"),
+        alpha=0.85,
+        edgecolor="white",
+        linewidth=0.5,
+    )
     ax.errorbar(
         x,
         medians,
