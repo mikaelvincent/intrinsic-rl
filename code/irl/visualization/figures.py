@@ -286,29 +286,38 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     gate_source = _as_str_scalar(data.get("gate_source")) if hasattr(data, "get") else None
 
     env_disp = env_id or npz_path.stem.replace("_trajectory", "")
-    proj = trajectory_projection(env_id, np.asarray(obs))
+    obs_arr = np.asarray(obs)
+    if obs_arr.ndim != 2:
+        return False
+
+    proj = trajectory_projection(env_id, obs_arr)
     if proj is None:
         return False
 
-    xi, yi, xlab, ylab = proj
-    obs_arr = np.asarray(obs)
-    if obs_arr.ndim != 2 or obs_arr.shape[1] <= max(xi, yi):
-        return False
-
-    N = int(obs_arr.shape[0])
-    if N > max_points:
-        idx = np.linspace(0, N - 1, max_points, dtype=int)
-        obs_arr = obs_arr[idx]
-        gates = np.asarray(gates).reshape(-1)[idx]
-    else:
-        gates = np.asarray(gates).reshape(-1)
-
-    x = obs_arr[:, int(xi)]
-    y = obs_arr[:, int(yi)]
+    x, y, xlab, ylab, proj_note = proj
 
     g = np.asarray(gates).reshape(-1)
-    if g.size != x.shape[0]:
+    if int(g.size) != int(x.shape[0]):
         return False
+
+    N = int(x.shape[0])
+    if N > max_points:
+        idx = np.linspace(0, N - 1, int(max_points), dtype=int)
+        x = np.asarray(x[idx], dtype=np.float64)
+        y = np.asarray(y[idx], dtype=np.float64)
+        g = np.asarray(g[idx], dtype=np.float32)
+    else:
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        g = np.asarray(g, dtype=np.float32)
+
+    finite = np.isfinite(x) & np.isfinite(y)
+    if not bool(finite.any()):
+        return False
+
+    x = x[finite]
+    y = y[finite]
+    g = g[finite]
 
     active = g >= 0.5
     gated = ~active
@@ -354,6 +363,9 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
     ax.set_title(" — ".join(title_bits))
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
+
+    if proj_note:
+        fig.text(0.01, 0.01, str(proj_note), ha="left", va="bottom", fontsize=8, alpha=0.9)
 
     ensure_parent(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
