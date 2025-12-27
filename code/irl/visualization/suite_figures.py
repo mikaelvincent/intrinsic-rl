@@ -14,6 +14,8 @@ from irl.utils.checkpoint import atomic_replace
 from irl.visualization.data import aggregate_runs
 from irl.visualization.figures import plot_trajectory_heatmap
 
+from .palette import color_for_method as _color_for_method
+
 
 def _meta_tags(*, smooth: int, align: str) -> tuple[str, str, str]:
     a = str(align).strip().lower() or "interpolate"
@@ -60,13 +62,11 @@ def _generate_comparison_plot(
             lw = 2.5 if is_main_glpe else 1.5
             alpha = 1.0 if is_main_glpe else 0.4
             zorder = 10 if is_main_glpe else 2
-            color = "#d62728" if is_main_glpe else None
 
             if neutral:
                 lw = 1.8
                 alpha = 0.9
                 zorder = 2
-                color = None
 
             label = f"{method} (n={agg.n_runs})"
             line = ax.plot(
@@ -76,7 +76,7 @@ def _generate_comparison_plot(
                 linewidth=lw,
                 alpha=alpha,
                 zorder=zorder,
-                color=color,
+                color=_color_for_method(method),
             )[0]
 
             if shade and agg.n_runs > 1:
