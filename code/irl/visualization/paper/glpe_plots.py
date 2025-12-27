@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from ..palette import color_for_method as _color_for_method
 from ..plot_utils import apply_rcparams_paper, save_fig_atomic
 from ..trajectory_projection import trajectory_projection
 
@@ -130,6 +131,8 @@ def plot_glpe_state_gate_map(
 
         fig, ax = plt.subplots(figsize=(7.8, 6.0))
 
+        glpe_c = _color_for_method("glpe")
+
         if (~g).any():
             ax.scatter(
                 x[~g],
@@ -144,7 +147,7 @@ def plot_glpe_state_gate_map(
             ax.scatter(
                 x[g],
                 y[g],
-                c="#d62728",
+                c=glpe_c,
                 s=10,
                 alpha=0.75,
                 label="Active/On",
@@ -253,6 +256,8 @@ def plot_glpe_extrinsic_vs_intrinsic(
 
         fig, ax = plt.subplots(figsize=(6.8, 5.6))
 
+        glpe_c = _color_for_method("glpe")
+
         if (~g).any():
             ax.scatter(
                 x[~g],
@@ -269,7 +274,7 @@ def plot_glpe_extrinsic_vs_intrinsic(
                 y[g],
                 s=12,
                 alpha=0.65,
-                c="#d62728",
+                c=glpe_c,
                 edgecolor="none",
                 label="Active/On",
             )
