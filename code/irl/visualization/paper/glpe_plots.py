@@ -119,10 +119,16 @@ def plot_glpe_state_gate_map(
         if proj is None:
             continue
 
-        xi, yi, xlab, ylab = proj
-        x = obs_cat[:, int(xi)]
-        y = obs_cat[:, int(yi)]
+        x, y, xlab, ylab, proj_note = proj
         g = gates_cat >= 0.5
+
+        finite = np.isfinite(x) & np.isfinite(y)
+        if not bool(finite.any()):
+            continue
+
+        x = np.asarray(x[finite], dtype=np.float64)
+        y = np.asarray(y[finite], dtype=np.float64)
+        g = np.asarray(g[finite], dtype=bool)
 
         idx = _sample_idx(x.shape[0], int(max_points), seed=_sample_seed("glpe_gate_map", env_id))
         x = x[idx]
@@ -169,6 +175,9 @@ def plot_glpe_state_gate_map(
             if y_mm[0] != y_mm[1]:
                 pad = 0.06 * (y_mm[1] - y_mm[0])
                 ax.set_ylim(y_mm[0] - pad, y_mm[1] + pad)
+
+        if proj_note:
+            fig.text(0.01, 0.01, str(proj_note), ha="left", va="bottom", fontsize=8, alpha=0.9)
 
         out = plots_root / f"{_env_tag(env_id)}__glpe_gate_map.png"
         _save_fig(fig, out)
