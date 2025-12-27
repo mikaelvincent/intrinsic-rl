@@ -12,6 +12,7 @@ import pandas as pd
 
 from irl.utils.checkpoint import atomic_replace
 from .data import ensure_parent
+from .palette import color_for_method as _color_for_method
 from .trajectory_projection import trajectory_projection
 
 
@@ -153,17 +154,7 @@ def plot_normalized_summary(
     x = np.arange(n_envs, dtype=np.float64)
     width = 0.8 / float(n_methods)
 
-    cmap = plt.get_cmap("tab20")
-    colors: dict[str, str] = {}
-    other_idx = 0
-    for m in ordered:
-        if highlight_key is not None and m == highlight_key:
-            colors[m] = "#d62728"
-        elif m == baseline_key:
-            colors[m] = "#7f7f7f"
-        else:
-            colors[m] = cmap(other_idx % 20)
-            other_idx += 1
+    colors: dict[str, str] = {m: _color_for_method(m) for m in ordered}
 
     if ci_lo is not None and ci_hi is not None:
         y_min = float(np.nanmin(ci_lo.to_numpy()))
@@ -331,6 +322,9 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
         title_bits.append(str(method))
     title_bits.append(f"gates: {gate_note}")
 
+    method_key = (str(method).strip().lower() if method is not None else "").strip() or "glpe"
+    active_color = _color_for_method(method_key)
+
     fig, ax = plt.subplots(figsize=(8, 6))
 
     if gated.any():
@@ -348,7 +342,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
         ax.scatter(
             x[active],
             y[active],
-            c="tab:red",
+            c=active_color,
             s=15,
             alpha=0.8,
             label="Active/On",
