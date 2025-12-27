@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
+from ..palette import color_for_method as _color_for_method
 from ..plot_utils import apply_rcparams_paper, save_fig_atomic
 
 
@@ -20,31 +20,6 @@ def _save_fig(fig, path: Path) -> None:
 
 def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
-
-
-def _stable_u32(*parts: str) -> int:
-    blob = "|".join(str(p) for p in parts).encode("utf-8")
-    return int(hashlib.sha256(blob).hexdigest()[:8], 16)
-
-
-def _color_for_method(method_key: str) -> str:
-    mk = str(method_key).strip().lower()
-    if mk == "vanilla":
-        return "#7f7f7f"
-    if mk == "glpe":
-        return "#d62728"
-    palette = [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#bcbd22",
-        "#17becf",
-    ]
-    idx = _stable_u32("method_color", mk) % len(palette)
-    return palette[idx]
 
 
 def _finite_minmax(vals: Iterable[float]) -> tuple[float, float] | None:
@@ -244,6 +219,7 @@ def plot_eval_curves_by_env(
             all_ci_lo.extend(lo.tolist())
             all_ci_hi.extend(hi.tolist())
 
+            c = _color_for_method(mk)
             ax.plot(
                 x,
                 y,
@@ -251,14 +227,14 @@ def plot_eval_curves_by_env(
                 markersize=3.5,
                 linewidth=1.8,
                 label=str(label_by_key.get(mk, mk)),
-                color=_color_for_method(mk),
+                color=c,
                 alpha=0.95,
             )
             ax.fill_between(
                 x,
                 lo,
                 hi,
-                color=_color_for_method(mk),
+                color=c,
                 alpha=0.12,
                 linewidth=0.0,
             )
