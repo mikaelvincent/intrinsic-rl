@@ -8,6 +8,7 @@ import pandas as pd
 import typer
 
 from .data import aggregate_runs, read_scalars
+from .palette import color_for_method as _color_for_method
 from .plot_utils import apply_rcparams_paper, save_fig_atomic
 
 
@@ -306,7 +307,12 @@ def plot_intrinsic_taper_weight(
                 continue
 
             try:
-                agg = aggregate_runs(dirs, metric="intrinsic_taper_weight", smooth=int(smooth), align=align_mode)
+                agg = aggregate_runs(
+                    dirs,
+                    metric="intrinsic_taper_weight",
+                    smooth=int(smooth),
+                    align=align_mode,
+                )
             except Exception:
                 continue
 
@@ -324,9 +330,6 @@ def plot_intrinsic_taper_weight(
 
         fig, ax = plt.subplots(figsize=(8.6, 4.6))
 
-        palette = list(getattr(plt, "cm").tab10.colors) if hasattr(getattr(plt, "cm"), "tab10") else None
-        color_idx = 0
-
         for m, agg in aggs:
             steps = np.asarray(getattr(agg, "steps"), dtype=np.int64)
             mean = np.asarray(getattr(agg, "mean"), dtype=np.float64)
@@ -334,13 +337,7 @@ def plot_intrinsic_taper_weight(
             if steps.size == 0 or mean.size == 0:
                 continue
 
-            if m == "glpe":
-                color = "#d62728"
-            elif palette is not None:
-                color = palette[color_idx % len(palette)]
-                color_idx += 1
-            else:
-                color = None
+            color = _color_for_method(m)
 
             n_runs = int(getattr(agg, "n_runs", 0) or 0)
             label = f"{m} (n={n_runs})"
