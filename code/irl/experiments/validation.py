@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -47,6 +48,37 @@ def _method_from_run_name(run_name: str) -> str:
     method = info.get("method")
     m = (str(method) if method is not None else "").strip().lower()
     return m or "unknown"
+
+
+def _read_run_config_json(run_dir: Path) -> dict[str, Any] | None:
+    cfg_path = Path(run_dir) / "config.json"
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
+def _intrinsic_eta_from_run_dir(run_dir: Path) -> float | None:
+    cfg = _read_run_config_json(run_dir)
+    if cfg is None:
+        return None
+
+    intrinsic = cfg.get("intrinsic")
+    if not isinstance(intrinsic, dict):
+        return None
+
+    eta_raw = intrinsic.get("eta", None)
+    try:
+        return float(eta_raw)
+    except Exception:
+        return None
 
 
 def _read_csv_rows(path: Path) -> tuple[list[dict[str, str]], list[str] | None]:
@@ -157,13 +189,18 @@ def _validate_plot_metrics(runs_root: Path) -> tuple[list[str], list[str]]:
             errors.append(f"Missing scalar columns in {sp}: {missing_common}")
 
         if method.startswith("glpe"):
-            if not (glpe_gate_any & cols):
-                errors.append(
-                    f"Missing GLPE gating metric in {sp}: require one of {sorted(glpe_gate_any)}"
-                )
-            missing_comp = sorted(required_glpe_components - cols)
-            if missing_comp:
-                errors.append(f"Missing GLPE component metrics in {sp}: {missing_comp}")
+            run_dir = sp.parent.parent
+            eta = _intrinsic_eta_from_run_dir(run_dir)
+            intrinsic_active = not (eta is not None and float(eta) <= 0.0)
+
+            if intrinsic_active:
+                if not (glpe_gate_any & cols):
+                    errors.append(
+                        f"Missing GLPE gating metric in {sp}: require one of {sorted(glpe_gate_any)}"
+                    )
+                missing_comp = sorted(required_glpe_components - cols)
+                if missing_comp:
+                    errors.append(f"Missing GLPE component metrics in {sp}: {missing_comp}")
 
     return errors, warnings
 
