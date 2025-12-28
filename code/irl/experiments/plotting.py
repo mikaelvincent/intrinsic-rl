@@ -65,6 +65,7 @@ def run_plots_suite(
             load_eval_by_step_table,
             load_eval_summary_table,
             paper_method_groups,
+            plot_eval_auc_bars_by_env,
             plot_eval_bars_by_env,
             plot_eval_curves_by_env,
             plot_glpe_extrinsic_vs_intrinsic,
@@ -107,6 +108,21 @@ def run_plots_suite(
                 methods_to_plot=ablations,
                 title="Ablations over training (evaluation)",
                 filename_suffix="paper_ablations_curves",
+            )
+
+            plot_eval_auc_bars_by_env(
+                df_steps,
+                plots_root=plots_root,
+                methods_to_plot=baselines,
+                title="Sample efficiency (AUC of eval return)",
+                filename_suffix="paper_baselines",
+            )
+            plot_eval_auc_bars_by_env(
+                df_steps,
+                plots_root=plots_root,
+                methods_to_plot=ablations,
+                title="Sample efficiency (AUC of eval return)",
+                filename_suffix="paper_ablations",
             )
 
             raw_path = results_root / "summary_raw.csv"
