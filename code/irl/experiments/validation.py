@@ -406,6 +406,98 @@ def _validate_summary_tables(
     return errors, warnings
 
 
+_PLOTS_MANIFEST_NAME = "plots_manifest.json"
+
+
+def _plots_manifest_path(results_dir: Path) -> Path:
+    return Path(results_dir) / "plots" / _PLOTS_MANIFEST_NAME
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _mtime_epoch(path: Path) -> float | None:
+    try:
+        return float(Path(path).stat().st_mtime)
+    except Exception:
+        return None
+
+
+def _validate_plots_manifest(results_dir: Path) -> tuple[list[str], list[str]]:
+    warns: list[str] = []
+    infos: list[str] = []
+
+    results_dir = Path(results_dir)
+    summary_csv = results_dir / "summary.csv"
+    if not summary_csv.exists():
+        infos.append(f"Plots manifest check skipped (missing summary.csv: {summary_csv}).")
+        return warns, infos
+
+    mf = _plots_manifest_path(results_dir)
+    if not mf.exists():
+        warns.append(f"Missing plots manifest: {mf}.")
+        return warns, infos
+
+    data = _read_json_object(mf)
+    if data is None:
+        warns.append(f"Unreadable plots manifest JSON: {mf}.")
+        return warns, infos
+
+    status = str(data.get("status", "")).strip().lower()
+    reason = str(data.get("reason", "")).strip()
+    if status == "skipped":
+        infos.append(f"Plots stage recorded as skipped (reason={reason or 'n/a'}).")
+        return warns, infos
+
+    try:
+        n_written = int(data.get("n_written", -1))
+    except Exception:
+        n_written = -1
+
+    if n_written <= 0:
+        warns.append(f"Plots manifest reports no outputs (status={status or 'unknown'}).")
+
+    current_mtime = _mtime_epoch(summary_csv)
+    recorded_mtime = data.get("summary_csv_mtime", None)
+    rec_mtime: float | None
+    try:
+        rec_mtime = None if recorded_mtime is None else float(recorded_mtime)
+    except Exception:
+        rec_mtime = None
+
+    if current_mtime is not None and rec_mtime is not None:
+        if abs(float(current_mtime) - float(rec_mtime)) > 1e-6:
+            warns.append("Plots manifest appears stale vs summary.csv mtime; rerun suite plots.")
+
+    written = data.get("written")
+    if isinstance(written, list) and written:
+        missing: list[str] = []
+        for item in written:
+            p = Path(str(item))
+            if not p.is_absolute():
+                p = results_dir / p
+            if not p.exists():
+                missing.append(str(item))
+        if missing:
+            head = missing[:8]
+            tail = "" if len(missing) <= 8 else f", ... (+{len(missing) - 8} more)"
+            warns.append(f"Plots manifest references missing files: {head}{tail}.")
+
+    if status == "error":
+        warns.append(f"Plots manifest status=error (reason={reason or 'n/a'}).")
+
+    return warns, infos
+
+
 def run_validate_results(*, runs_root: Path, results_dir: Path, strict: bool = True) -> bool:
     import typer
 
@@ -434,6 +526,13 @@ def run_validate_results(*, runs_root: Path, results_dir: Path, strict: bool = T
     e4, w4 = _validate_trajectory_provenance(runs_root_r, results_dir_r)
     errors.extend(e4)
     warnings.extend(w4)
+
+    plot_warns, plot_infos = _validate_plots_manifest(results_dir_r)
+
+    for msg in plot_infos:
+        typer.echo(f"[validate] INFO  {msg}")
+    for msg in plot_warns:
+        typer.echo(f"[validate] WARN  {msg}")
 
     for msg in warnings:
         typer.echo(f"[validate] WARN  {msg}")
