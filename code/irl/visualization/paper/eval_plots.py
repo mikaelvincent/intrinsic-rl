@@ -22,6 +22,9 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+_EVAL_SEMANTICS = "Evaluation (extrinsic return only)"
+
+
 def _finite_minmax(vals: Iterable[float]) -> tuple[float, float] | None:
     arr = np.asarray([float(v) for v in vals], dtype=np.float64).reshape(-1)
     arr = arr[np.isfinite(arr)]
@@ -144,7 +147,7 @@ def plot_eval_bars_by_env(
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
-        ax.set_ylabel("Mean episode return (eval)")
+        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
         _set_y_minmax(ax, y_lo, y_hi)
@@ -244,7 +247,7 @@ def plot_eval_curves_by_env(
             _set_y_minmax(ax, y_minmax[0], y_minmax[1])
 
         ax.set_xlabel("Checkpoint step (env steps)")
-        ax.set_ylabel("Mean episode return (eval)")
+        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, alpha=0.25, linestyle="--")
         ax.legend(loc="best")
@@ -362,7 +365,7 @@ def plot_eval_scatter_by_env(
             continue
 
         ax.set_xlabel("Checkpoint step (env steps)")
-        ax.set_ylabel("Mean episode return (eval)")
+        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, alpha=0.25, linestyle="--")
 
@@ -381,7 +384,7 @@ def plot_eval_scatter_by_env(
 
         ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
 
-        note = "points=per seed×checkpoint (summary_raw.csv)"
+        note = f"{_EVAL_SEMANTICS}. points=per seed×checkpoint (summary_raw.csv)"
         if x_jitter != 0.0:
             note += f" | x_jitter≈{x_jitter:.3g}"
         fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
@@ -845,12 +848,13 @@ def plot_steps_to_beat_by_env(
         for e in envs
     ]
     note = (
+        f"{_EVAL_SEMANTICS}. "
         "Bars=median(IQR) steps over reaching runs; labels=reached/total; "
         "non-reaching runs excluded. "
         "Full thresholds: " + "; ".join(thr_bits) + ". "
         "Half thresholds: 0.5× full for ≥0, 1.5× full for <0."
     )
-    fig.suptitle(title, y=0.995, fontweight="bold")
+    fig.suptitle(f"{title} — {_EVAL_SEMANTICS}", y=0.995, fontweight="bold")
     fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
 
     fig.tight_layout(rect=[0.0, 0.05, 0.84, 0.97])
