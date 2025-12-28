@@ -109,12 +109,15 @@ def run_plots_suite(
                 filename_suffix="paper_ablations_curves",
             )
 
+            raw_path = results_root / "summary_raw.csv"
+
             plot_steps_to_beat_by_env(
                 df_steps,
                 plots_root=plots_root,
                 methods_to_plot=baselines,
                 title="Steps to beat score threshold (GLPE vs baselines)",
                 filename_suffix="paper_baselines",
+                summary_raw_csv=raw_path if raw_path.exists() else None,
             )
             plot_steps_to_beat_by_env(
                 df_steps,
@@ -122,6 +125,7 @@ def run_plots_suite(
                 methods_to_plot=ablations,
                 title="Steps to beat score threshold (GLPE ablations)",
                 filename_suffix="paper_ablations",
+                summary_raw_csv=raw_path if raw_path.exists() else None,
             )
         else:
             typer.echo("[suite] summary_by_step.csv not found; skipping eval learning curves.")
