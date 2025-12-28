@@ -68,6 +68,7 @@ def run_plots_suite(
             plot_eval_auc_bars_by_env,
             plot_eval_bars_by_env,
             plot_eval_curves_by_env,
+            plot_eval_scatter_by_env,
             plot_glpe_extrinsic_vs_intrinsic,
             plot_glpe_state_gate_map,
             plot_steps_to_beat_by_env,
@@ -91,6 +92,16 @@ def run_plots_suite(
             title="Ablation study (evaluation)",
             filename_suffix="paper_ablations",
         )
+
+        raw_path = results_root / "summary_raw.csv"
+        if raw_path.exists():
+            plot_eval_scatter_by_env(
+                raw_path,
+                plots_root=plots_root,
+                methods_to_plot=methods_present,
+                title="All evaluation returns (raw)",
+                filename_suffix="paper_all_methods",
+            )
 
         by_step_path = results_root / "summary_by_step.csv"
         if by_step_path.exists():
@@ -124,8 +135,6 @@ def run_plots_suite(
                 title="Sample efficiency (AUC of eval return)",
                 filename_suffix="paper_ablations",
             )
-
-            raw_path = results_root / "summary_raw.csv"
 
             plot_steps_to_beat_by_env(
                 df_steps,
