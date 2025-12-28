@@ -40,6 +40,24 @@ def _pretty_name(name: str) -> str:
     return s
 
 
+def _bench_group_key(name: str) -> str:
+    s = str(name).strip().lower()
+    if s.startswith("glpe"):
+        return "glpe"
+    if s.startswith("riac"):
+        return "riac"
+    return "vanilla"
+
+
+def _bench_group_label(key: str) -> str:
+    k = str(key).strip().lower()
+    if k == "glpe":
+        return "GLPE"
+    if k == "riac":
+        return "RIAC"
+    return "Other"
+
+
 def _run_meta_footer(run_meta: Mapping[str, Any] | None) -> str:
     if not isinstance(run_meta, Mapping):
         return ""
@@ -100,6 +118,7 @@ def _plot_throughput(
                 "q25": float(q25),
                 "median": float(med),
                 "q75": float(q75),
+                "group": _bench_group_key(name),
             }
         )
 
@@ -112,13 +131,17 @@ def _plot_throughput(
         [u for u in rows_by_unit.keys() if u not in set(preferred_units)]
     )
 
+    present_groups: set[str] = set()
+    for rows in rows_by_unit.values():
+        for row in rows:
+            g = str(row.get("group", "vanilla")).strip().lower()
+            if g:
+                present_groups.add(g)
+
     n_units = len(units)
     total_rows = sum(len(rows_by_unit[u]) for u in units)
     height = max(3.0, 1.2 * n_units + 0.28 * total_rows)
     fig, axes = plt.subplots(n_units, 1, figsize=(9.0, height), squeeze=False)
-
-    glpe_color = _color_for_method("glpe")
-    other_color = "#1f77b4"
 
     for ax, unit in zip(axes[:, 0], units):
         rows = list(rows_by_unit[unit])
@@ -132,7 +155,7 @@ def _plot_throughput(
         hi = np.maximum(hi, 0.0)
 
         y = np.arange(len(rows), dtype=np.float64)
-        colors = [glpe_color if str(r["name"]).startswith("glpe") else other_color for r in rows]
+        colors = [_color_for_method(str(r.get("group", "vanilla"))) for r in rows]
 
         ax.barh(y, medians, color=colors, alpha=0.85, edgecolor="white", linewidth=0.5)
         ax.errorbar(
@@ -162,13 +185,35 @@ def _plot_throughput(
 
     fig.suptitle("Microbenchmarks throughput (median ± IQR)", y=0.995, fontweight="bold")
 
+    top = 0.985
+    try:
+        import matplotlib.patches as mpatches
+
+        order = ["glpe", "riac", "vanilla"]
+        handles = []
+        for k in order:
+            if k in present_groups:
+                handles.append(mpatches.Patch(color=_color_for_method(k), label=_bench_group_label(k)))
+
+        if handles:
+            fig.legend(
+                handles=handles,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.965),
+                ncol=len(handles),
+                frameon=False,
+            )
+            top = 0.94
+    except Exception:
+        top = 0.985
+
     footer = _run_meta_footer(run_meta)
     bottom = 0.0
     if footer:
         fig.text(0.01, 0.01, footer, ha="left", va="bottom", fontsize=8, alpha=0.9)
         bottom = 0.04
 
-    fig.tight_layout(rect=[0.0, bottom, 1.0, 0.985])
+    fig.tight_layout(rect=[0.0, bottom, 1.0, top])
 
     _save_fig(fig, Path(out_path))
     plt.close(fig)
