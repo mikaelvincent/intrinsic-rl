@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
 import typer
 
+from irl.utils.checkpoint import atomic_write_text
 from irl.utils.runs import discover_runs_by_logs, parse_run_name
 
 
@@ -37,28 +40,100 @@ def _groups_for_timing(root: Path) -> Dict[str, Dict[str, List[Path]]]:
     return groups
 
 
+def _iso_utc(epoch_s: float) -> str:
+    try:
+        return datetime.fromtimestamp(float(epoch_s), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return ""
+
+
+def _safe_mtime(path: Path) -> tuple[float | None, str | None]:
+    try:
+        mt = float(Path(path).stat().st_mtime)
+    except Exception:
+        return None, None
+    return mt, _iso_utc(mt)
+
+
+def _dedup_paths(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[str] = set()
+    for p in paths:
+        pp = Path(p)
+        try:
+            key = str(pp.resolve())
+        except Exception:
+            key = str(pp)
+        if key in seen:
+            continue
+        out.append(pp)
+        seen.add(key)
+    out.sort(key=lambda x: str(x))
+    return out
+
+
+def _write_plots_manifest(path: Path, payload: dict[str, object]) -> None:
+    try:
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        atomic_write_text(Path(path), text)
+    except Exception as exc:
+        typer.echo(f"[suite] WARN  Failed to write plots manifest ({type(exc).__name__}: {exc})")
+
+
 def run_plots_suite(
     *,
     runs_root: Path,
     results_dir: Path,
 ) -> None:
-    root = runs_root.resolve()
-    results_root = results_dir.resolve()
+    root = Path(runs_root).resolve()
+    results_root = Path(results_dir).resolve()
+
+    results_root.mkdir(parents=True, exist_ok=True)
+    plots_root = (results_root / "plots").resolve()
+    plots_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = plots_root / "plots_manifest.json"
+
+    written: list[Path] = []
+    notes: list[str] = []
+    status: str = "ok"
+    reason: str | None = None
 
     _list_dirs("Runs root", root)
     _list_dirs("Results dir", results_root)
 
-    if not root.exists():
-        typer.echo(f"[suite] No runs_root directory found: {root}")
-        return
-
-    plots_root = (results_root / "plots").resolve()
-    plots_root.mkdir(parents=True, exist_ok=True)
-
     summary_csv = results_root / "summary.csv"
     if not summary_csv.exists():
-        typer.echo("[suite] Skipping plots (summary.csv not found; run 'eval' stage first).")
+        msg = "[suite] Skipping plots (summary.csv not found; run 'eval' stage first)."
+        typer.echo(msg)
+        notes.append(str(msg))
+        status = "skipped"
+        reason = "missing_summary_csv"
+
+        mt, mt_utc = _safe_mtime(summary_csv)
+        _write_plots_manifest(
+            manifest_path,
+            {
+                "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "status": status,
+                "reason": reason,
+                "runs_root": str(root),
+                "runs_root_exists": bool(root.exists()),
+                "results_dir": str(results_root),
+                "summary_csv_path": _rel(summary_csv, results_root),
+                "summary_csv_mtime": mt,
+                "summary_csv_mtime_utc": mt_utc,
+                "n_written": 0,
+                "written": [],
+                "notes": notes,
+            },
+        )
         return
+
+    runs_root_exists = bool(root.exists())
+    if not runs_root_exists:
+        msg = f"[suite] Runs root missing; timing plots skipped: {root}"
+        typer.echo(msg)
+        notes.append(str(msg))
 
     try:
         from irl.visualization.paper_figures import (
@@ -78,65 +153,86 @@ def run_plots_suite(
         methods_present = sorted(set(df_summary["method_key"].tolist()))
         baselines, ablations = paper_method_groups(methods_present)
 
-        plot_eval_bars_by_env(
-            df_summary,
-            plots_root=plots_root,
-            methods_to_plot=baselines,
-            title="Task performance (evaluation)",
-            filename_suffix="paper_baselines",
+        written.extend(
+            plot_eval_bars_by_env(
+                df_summary,
+                plots_root=plots_root,
+                methods_to_plot=baselines,
+                title="Task performance (evaluation)",
+                filename_suffix="paper_baselines",
+            )
+            or []
         )
-        plot_eval_bars_by_env(
-            df_summary,
-            plots_root=plots_root,
-            methods_to_plot=ablations,
-            title="Ablation study (evaluation)",
-            filename_suffix="paper_ablations",
+        written.extend(
+            plot_eval_bars_by_env(
+                df_summary,
+                plots_root=plots_root,
+                methods_to_plot=ablations,
+                title="Ablation study (evaluation)",
+                filename_suffix="paper_ablations",
+            )
+            or []
         )
 
         raw_path = results_root / "summary_raw.csv"
         if raw_path.exists():
-            plot_eval_scatter_by_env(
-                raw_path,
-                plots_root=plots_root,
-                methods_to_plot=methods_present,
-                title="All evaluation returns (raw)",
-                filename_suffix="paper_all_methods",
+            written.extend(
+                plot_eval_scatter_by_env(
+                    raw_path,
+                    plots_root=plots_root,
+                    methods_to_plot=methods_present,
+                    title="All evaluation returns (raw)",
+                    filename_suffix="paper_all_methods",
+                )
+                or []
             )
 
         by_step_path = results_root / "summary_by_step.csv"
         if by_step_path.exists():
             df_steps = load_eval_by_step_table(by_step_path)
-            plot_eval_curves_by_env(
-                df_steps,
-                plots_root=plots_root,
-                methods_to_plot=baselines,
-                title="Learning curves (evaluation)",
-                filename_suffix="paper_baselines_curves",
+            written.extend(
+                plot_eval_curves_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=baselines,
+                    title="Learning curves (evaluation)",
+                    filename_suffix="paper_baselines_curves",
+                )
+                or []
             )
-            plot_eval_curves_by_env(
-                df_steps,
-                plots_root=plots_root,
-                methods_to_plot=ablations,
-                title="Ablations over training (evaluation)",
-                filename_suffix="paper_ablations_curves",
-            )
-
-            plot_eval_auc_bars_by_env(
-                df_steps,
-                plots_root=plots_root,
-                methods_to_plot=baselines,
-                title="Sample efficiency (AUC of eval return)",
-                filename_suffix="paper_baselines",
-            )
-            plot_eval_auc_bars_by_env(
-                df_steps,
-                plots_root=plots_root,
-                methods_to_plot=ablations,
-                title="Sample efficiency (AUC of eval return)",
-                filename_suffix="paper_ablations",
+            written.extend(
+                plot_eval_curves_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=ablations,
+                    title="Ablations over training (evaluation)",
+                    filename_suffix="paper_ablations_curves",
+                )
+                or []
             )
 
-            plot_steps_to_beat_by_env(
+            written.extend(
+                plot_eval_auc_bars_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=baselines,
+                    title="Sample efficiency (AUC of eval return)",
+                    filename_suffix="paper_baselines",
+                )
+                or []
+            )
+            written.extend(
+                plot_eval_auc_bars_by_env(
+                    df_steps,
+                    plots_root=plots_root,
+                    methods_to_plot=ablations,
+                    title="Sample efficiency (AUC of eval return)",
+                    filename_suffix="paper_ablations",
+                )
+                or []
+            )
+
+            p = plot_steps_to_beat_by_env(
                 df_steps,
                 plots_root=plots_root,
                 methods_to_plot=baselines,
@@ -144,7 +240,10 @@ def run_plots_suite(
                 filename_suffix="paper_baselines",
                 summary_raw_csv=raw_path if raw_path.exists() else None,
             )
-            plot_steps_to_beat_by_env(
+            if p is not None:
+                written.append(Path(p))
+
+            p = plot_steps_to_beat_by_env(
                 df_steps,
                 plots_root=plots_root,
                 methods_to_plot=ablations,
@@ -152,45 +251,101 @@ def run_plots_suite(
                 filename_suffix="paper_ablations",
                 summary_raw_csv=raw_path if raw_path.exists() else None,
             )
+            if p is not None:
+                written.append(Path(p))
         else:
-            typer.echo("[suite] summary_by_step.csv not found; skipping eval learning curves.")
+            msg = "[suite] summary_by_step.csv not found; skipping eval learning curves."
+            typer.echo(msg)
+            notes.append(str(msg))
 
         traj_root = results_root / "plots" / "trajectories"
         if traj_root.exists():
-            plot_glpe_state_gate_map(traj_root=traj_root, plots_root=plots_root)
-            plot_glpe_extrinsic_vs_intrinsic(traj_root=traj_root, plots_root=plots_root)
+            written.extend(plot_glpe_state_gate_map(traj_root=traj_root, plots_root=plots_root) or [])
+            written.extend(
+                plot_glpe_extrinsic_vs_intrinsic(traj_root=traj_root, plots_root=plots_root) or []
+            )
         else:
-            typer.echo("[suite] No trajectories found; skipping GLPE trajectory plots.")
+            msg = "[suite] No trajectories found; skipping GLPE trajectory plots."
+            typer.echo(msg)
+            notes.append(str(msg))
 
-        timing_groups = _groups_for_timing(root)
+        timing_groups: Dict[str, Dict[str, List[Path]]]
+        timing_groups = _groups_for_timing(root) if runs_root_exists else {}
 
         try:
             from irl.visualization.paper.training_plots import plot_training_reward_decomposition
 
-            written = plot_training_reward_decomposition(timing_groups, plots_root=plots_root)
-            if not written:
-                typer.echo("[suite] Training reward plots skipped (no data).")
+            out_paths = plot_training_reward_decomposition(timing_groups, plots_root=plots_root)
+            written.extend(out_paths or [])
+            if not out_paths:
+                msg = "[suite] Training reward plots skipped (no data)."
+                typer.echo(msg)
+                notes.append(str(msg))
         except Exception as exc:
-            typer.echo(f"[suite] Training reward plots skipped ({type(exc).__name__}: {exc})")
+            msg = f"[suite] Training reward plots skipped ({type(exc).__name__}: {exc})"
+            typer.echo(msg)
+            notes.append(str(msg))
 
         try:
             from irl.visualization.timing_figures import plot_timing_breakdown
 
-            plot_timing_breakdown(timing_groups, plots_root=plots_root, tail_frac=0.25)
+            out_paths = plot_timing_breakdown(timing_groups, plots_root=plots_root, tail_frac=0.25)
+            written.extend(out_paths or [])
         except Exception as exc:
-            typer.echo(f"[suite] Timing plots skipped ({type(exc).__name__}: {exc})")
+            msg = f"[suite] Timing plots skipped ({type(exc).__name__}: {exc})"
+            typer.echo(msg)
+            notes.append(str(msg))
 
         try:
             from irl.visualization.timing_figures import plot_intrinsic_taper_weight
 
-            taper_written = plot_intrinsic_taper_weight(timing_groups, plots_root=plots_root)
-            if not taper_written:
-                typer.echo("[suite] Intrinsic taper plot skipped (no taper active).")
+            taper_paths = plot_intrinsic_taper_weight(timing_groups, plots_root=plots_root)
+            written.extend(taper_paths or [])
+            if not taper_paths:
+                msg = "[suite] Intrinsic taper plot skipped (no taper active)."
+                typer.echo(msg)
+                notes.append(str(msg))
         except Exception as exc:
-            typer.echo(f"[suite] Intrinsic taper plot skipped ({type(exc).__name__}: {exc})")
+            msg = f"[suite] Intrinsic taper plot skipped ({type(exc).__name__}: {exc})"
+            typer.echo(msg)
+            notes.append(str(msg))
 
     except Exception as exc:
-        typer.echo(f"[suite] Plotting failed ({type(exc).__name__}: {exc})")
-        return
+        msg = f"[suite] Plotting failed ({type(exc).__name__}: {exc})"
+        typer.echo(msg)
+        notes.append(str(msg))
+        status = "error"
+        reason = f"{type(exc).__name__}: {exc}"
 
-    typer.echo(f"[suite] Plots written under: {_rel(plots_root, results_root)}")
+    written = _dedup_paths(written)
+
+    if status == "ok" and not written:
+        status = "empty"
+        reason = "no_outputs"
+        msg = "[suite] WARN  Plot stage produced no outputs (see plots_manifest.json)."
+        typer.echo(msg)
+        notes.append(str(msg))
+
+    if written:
+        typer.echo(f"[suite] Plots written under: {_rel(plots_root, results_root)}")
+
+    mt, mt_utc = _safe_mtime(summary_csv)
+    out_list = [_rel(p, results_root) for p in written]
+
+    _write_plots_manifest(
+        manifest_path,
+        {
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "status": status,
+            "reason": reason,
+            "runs_root": str(root),
+            "runs_root_exists": bool(runs_root_exists),
+            "results_dir": str(results_root),
+            "summary_csv_path": _rel(summary_csv, results_root),
+            "summary_csv_mtime": mt,
+            "summary_csv_mtime_utc": mt_utc,
+            "n_written": int(len(out_list)),
+            "written": out_list,
+            "notes": notes,
+        },
+    )
