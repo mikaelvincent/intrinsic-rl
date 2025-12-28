@@ -225,6 +225,12 @@ def _plot_cache_comparison(
     base_label = "no cache" if base_ci is None else f"no cache (interval={base_ci})"
     cached_label = "cached" if cached_ci is None else f"cached (interval={cached_ci})"
 
+    def _method_key(cache_interval: int | None) -> str:
+        try:
+            return "glpe" if cache_interval is None or int(cache_interval) == 1 else "glpe_cache"
+        except Exception:
+            return "glpe"
+
     plt = _style()
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
 
@@ -240,7 +246,7 @@ def _plot_cache_comparison(
     ax.bar(
         x,
         medians,
-        color=[_color_for_method("vanilla"), _color_for_method("glpe")],
+        color=[_color_for_method(_method_key(base_ci)), _color_for_method(_method_key(cached_ci))],
         alpha=0.85,
         edgecolor="white",
         linewidth=0.6,
