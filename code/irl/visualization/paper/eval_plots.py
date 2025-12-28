@@ -257,17 +257,22 @@ def plot_eval_curves_by_env(
     return written
 
 
+_SUPPORTED_SCORE_ENVS: set[str] = {
+    "Ant-v5",
+    "BipedalWalker-v3",
+    "CarRacing-v3",
+    "HalfCheetah-v5",
+    "Humanoid-v5",
+    "MountainCar-v0",
+}
+
+
 _KNOWN_SCORE_THRESHOLDS: dict[str, float] = {
-    "Acrobot-v1": -100.0,
+    "Ant-v5": 6000.0,
     "BipedalWalker-v3": 300.0,
-    "BipedalWalkerHardcore-v3": 300.0,
-    "CarRacing-v0": 900.0,
-    "CarRacing-v1": 900.0,
-    "CarRacing-v2": 900.0,
     "CarRacing-v3": 900.0,
-    "CartPole-v0": 195.0,
-    "CartPole-v1": 475.0,
-    "LunarLander-v2": 200.0,
+    "HalfCheetah-v5": 4800.0,
+    "Humanoid-v5": 6000.0,  # paper-based (Gymnasium spec uses None)
     "MountainCar-v0": -110.0,
 }
 
@@ -412,6 +417,10 @@ def plot_steps_to_beat_by_env(
     if not envs:
         return None
 
+    envs = [e for e in envs if e in _SUPPORTED_SCORE_ENVS]
+    if not envs:
+        return None
+
     methods_present = sorted(set(by_step_df["method_key"].astype(str).str.strip().str.lower().tolist()))
     methods = [m for m in want if m in set(methods_present)]
     if not methods:
@@ -452,7 +461,9 @@ def plot_steps_to_beat_by_env(
         censor_height = float(max_step_env) if max_step_env > 0 else float(max(1, max_step_global))
 
         for m_i, mk in enumerate(methods):
-            df_m = df_env.loc[df_env["method_key"].astype(str).str.strip().str.lower() == str(mk)].copy()
+            df_m = df_env.loc[
+                df_env["method_key"].astype(str).str.strip().str.lower() == str(mk)
+            ].copy()
             if df_m.empty:
                 censored[e_i, m_i] = True
                 vals[e_i, m_i] = 1.05 * float(censor_height)
@@ -522,7 +533,15 @@ def plot_steps_to_beat_by_env(
         if ratio >= 50.0:
             ax.set_yscale("log")
 
-    fig.text(0.01, 0.01, "Hatched = not reached by final checkpoint", ha="left", va="bottom", fontsize=8, alpha=0.9)
+    fig.text(
+        0.01,
+        0.01,
+        "Hatched = not reached by final checkpoint",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        alpha=0.9,
+    )
 
     ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
     fig.tight_layout(rect=[0.0, 0.03, 1.0, 1.0])
