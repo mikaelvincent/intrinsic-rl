@@ -383,6 +383,55 @@ def _steps_to_reach_threshold(steps: np.ndarray, values: np.ndarray, threshold: 
     return None
 
 
+def _half_threshold(threshold: float) -> float:
+    thr = float(threshold)
+    if not np.isfinite(thr):
+        return thr
+    if thr >= 0.0:
+        return 0.5 * thr
+    return 1.5 * thr
+
+
+def _fmt_threshold(v: float) -> str:
+    if not np.isfinite(float(v)):
+        return "nan"
+    if abs(float(v) - round(float(v))) < 1e-9:
+        return str(int(round(float(v))))
+    return f"{float(v):.3g}"
+
+
+def _load_summary_raw(path: Path) -> pd.DataFrame | None:
+    p = Path(path)
+    try:
+        df = pd.read_csv(p)
+    except Exception:
+        return None
+
+    required = {"method", "env_id", "seed", "ckpt_step", "mean_return"}
+    if not required.issubset(set(df.columns)):
+        return None
+
+    out = df.copy()
+    out["env_id"] = out["env_id"].astype(str).str.strip()
+    out["method"] = out["method"].astype(str).str.strip()
+    out["method_key"] = out["method"].str.lower().str.strip()
+
+    out["seed"] = pd.to_numeric(out["seed"], errors="coerce")
+    out["ckpt_step"] = pd.to_numeric(out["ckpt_step"], errors="coerce")
+    out["mean_return"] = pd.to_numeric(out["mean_return"], errors="coerce")
+    out = out.dropna(subset=["env_id", "method_key", "seed", "ckpt_step", "mean_return"]).copy()
+
+    out["seed"] = out["seed"].astype(int)
+    out["ckpt_step"] = out["ckpt_step"].astype(int)
+
+    if "policy_mode" in out.columns:
+        out["policy_mode"] = out["policy_mode"].astype(str).str.strip().str.lower()
+        if "mode" in set(out["policy_mode"].unique().tolist()):
+            out = out.loc[out["policy_mode"] == "mode"].copy()
+
+    return out
+
+
 def plot_steps_to_beat_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -390,12 +439,20 @@ def plot_steps_to_beat_by_env(
     methods_to_plot: Sequence[str],
     title: str,
     filename_suffix: str,
+    summary_raw_csv: Path | None = None,
 ) -> Path | None:
     if by_step_df.empty:
         return None
 
     required = {"env_id", "method_key", "ckpt_step", "mean_return_mean"}
     if not required.issubset(set(by_step_df.columns)):
+        return None
+
+    if summary_raw_csv is None or not Path(summary_raw_csv).exists():
+        return None
+
+    raw_df = _load_summary_raw(Path(summary_raw_csv))
+    if raw_df is None or raw_df.empty:
         return None
 
     plots_root = Path(plots_root)
@@ -413,140 +470,253 @@ def plot_steps_to_beat_by_env(
         else {}
     )
 
-    envs = sorted(by_step_df["env_id"].astype(str).str.strip().unique().tolist())
-    if not envs:
+    raw_df = raw_df.loc[raw_df["method_key"].isin(want)].copy()
+    raw_df = raw_df.loc[raw_df["env_id"].isin(_SUPPORTED_SCORE_ENVS)].copy()
+    if raw_df.empty:
         return None
 
-    envs = [e for e in envs if e in _SUPPORTED_SCORE_ENVS]
-    if not envs:
-        return None
-
-    methods_present = sorted(set(by_step_df["method_key"].astype(str).str.strip().str.lower().tolist()))
+    methods_present = sorted(set(raw_df["method_key"].unique().tolist()))
     methods = [m for m in want if m in set(methods_present)]
     if not methods:
         return None
 
-    per_env_threshold: dict[str, float] = {}
-    per_env_source: dict[str, str] = {}
-    per_env_max_step: dict[str, int] = {}
+    envs_present = sorted(set(raw_df["env_id"].unique().tolist()))
+    envs = [e for e in envs_present if e in _SUPPORTED_SCORE_ENVS]
+    if not envs:
+        return None
 
+    envs = [e for e in envs if not raw_df.loc[raw_df["env_id"] == e].empty]
+    if not envs:
+        return None
+
+    by_env_method: dict[tuple[str, str], list[tuple[np.ndarray, np.ndarray] | None]] = {}
+    for (env_id, method_key, seed), g in raw_df.groupby(["env_id", "method_key", "seed"], sort=False):
+        df_g = g.sort_values("ckpt_step").drop_duplicates(subset=["ckpt_step"], keep="last")
+        steps = df_g["ckpt_step"].to_numpy(dtype=np.float64, copy=False)
+        vals = df_g["mean_return"].to_numpy(dtype=np.float64, copy=False)
+
+        ok = np.isfinite(steps) & np.isfinite(vals)
+        steps = steps[ok]
+        vals = vals[ok]
+
+        curve = None if steps.size == 0 else (steps, vals)
+        by_env_method.setdefault((str(env_id), str(method_key)), []).append(curve)
+
+    thresholds_full: dict[str, float] = {}
+    threshold_sources: dict[str, str] = {}
     for env_id in envs:
         df_env = by_step_df.loc[by_step_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
-        if df_env.empty:
-            continue
-
-        try:
-            per_env_max_step[env_id] = int(pd.to_numeric(df_env["ckpt_step"], errors="coerce").max())
-        except Exception:
-            per_env_max_step[env_id] = 0
-
         thr, src = _score_to_beat(str(env_id), df_env)
-        per_env_threshold[env_id] = float(thr)
-        per_env_source[env_id] = str(src)
+        thresholds_full[str(env_id)] = float(thr)
+        threshold_sources[str(env_id)] = str(src)
 
-    max_step_global = 0
-    if per_env_max_step:
-        max_step_global = int(max(per_env_max_step.values()))
-
-    vals = np.full((len(envs), len(methods)), np.nan, dtype=np.float64)
-    censored = np.zeros((len(envs), len(methods)), dtype=bool)
-
-    for e_i, env_id in enumerate(envs):
-        df_env = by_step_df.loc[by_step_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
-        if df_env.empty:
-            continue
-
-        thr = float(per_env_threshold.get(env_id, float("nan")))
-        max_step_env = int(per_env_max_step.get(env_id, max_step_global) or 0)
-        censor_height = float(max_step_env) if max_step_env > 0 else float(max(1, max_step_global))
-
-        for m_i, mk in enumerate(methods):
-            df_m = df_env.loc[
-                df_env["method_key"].astype(str).str.strip().str.lower() == str(mk)
-            ].copy()
-            if df_m.empty:
-                censored[e_i, m_i] = True
-                vals[e_i, m_i] = 1.05 * float(censor_height)
-                continue
-
-            df_m = df_m.sort_values("ckpt_step")
-            steps = pd.to_numeric(df_m["ckpt_step"], errors="coerce").to_numpy(dtype=np.float64)
-            scores = pd.to_numeric(df_m["mean_return_mean"], errors="coerce").to_numpy(dtype=np.float64)
-
-            ok = np.isfinite(steps) & np.isfinite(scores)
-            steps = steps[ok]
-            scores = scores[ok]
-            if steps.size == 0:
-                censored[e_i, m_i] = True
-                vals[e_i, m_i] = 1.05 * float(censor_height)
-                continue
-
-            hit = _steps_to_reach_threshold(steps, scores, float(thr))
-            if hit is None:
-                censored[e_i, m_i] = True
-                vals[e_i, m_i] = 1.05 * float(censor_height)
-            else:
-                vals[e_i, m_i] = float(hit)
+    thresholds_half = {e: _half_threshold(float(thresholds_full[e])) for e in envs}
 
     plt = _style()
+    import matplotlib.patches as mpatches
+
     n_env = int(len(envs))
     n_methods = int(len(methods))
     width = 0.8 / float(max(1, n_methods))
     x = np.arange(n_env, dtype=np.float64)
 
-    fig, ax = plt.subplots(figsize=(max(8.0, 1.6 + 1.15 * float(n_env)), 5.0))
-
-    for i, mk in enumerate(methods):
-        y = vals[:, i].astype(np.float64, copy=False)
-        off = (float(i) - float(n_methods) / 2.0) * width + width / 2.0
-        xpos = x + off
-
-        color = _color_for_method(mk)
-        label = str(label_by_key.get(mk, mk))
-
-        bars = ax.bar(
-            xpos,
-            y,
-            width=width,
-            color=color,
-            alpha=0.88 if mk == "glpe" else 0.75,
-            edgecolor="white",
-            linewidth=0.5,
-            label=label,
-        )
-
-        for b, is_cens in zip(bars, censored[:, i].tolist()):
-            if bool(is_cens):
-                b.set_hatch("//")
-                b.set_alpha(0.35)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels([str(e) for e in envs], rotation=20, ha="right")
-    ax.set_ylabel("Env steps to reach score threshold")
-    ax.set_title(title, loc="left", fontweight="bold")
-    ax.grid(True, axis="y", alpha=0.25, linestyle="--")
-    ax.set_axisbelow(True)
-
-    finite_pos = vals[np.isfinite(vals) & (vals > 0.0)]
-    if finite_pos.size >= 2:
-        ratio = float(finite_pos.max() / max(1e-12, float(finite_pos.min())))
-        if ratio >= 50.0:
-            ax.set_yscale("log")
-
-    fig.text(
-        0.01,
-        0.01,
-        "Hatched = not reached by final checkpoint",
-        ha="left",
-        va="bottom",
-        fontsize=8,
-        alpha=0.9,
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(max(8.0, 1.6 + 1.15 * float(n_env)), 7.4),
+        sharex=True,
     )
 
-    ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
-    fig.tight_layout(rect=[0.0, 0.03, 1.0, 1.0])
+    env_tick_labels = [
+        f"{e}\nthr={_fmt_threshold(float(thresholds_full.get(e, float('nan'))))}" for e in envs
+    ]
 
-    out = plots_root / f"steps_to_beat__{filename_suffix}.png"
+    def _panel(ax, *, thresholds: Mapping[str, float], label: str) -> None:
+        meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
+        q25s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
+        q75s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
+        n_reached = np.zeros((n_env, n_methods), dtype=np.int64)
+        n_total = np.zeros((n_env, n_methods), dtype=np.int64)
+
+        for ei, env_id in enumerate(envs):
+            thr = float(thresholds.get(env_id, float("nan")))
+            for mi, mk in enumerate(methods):
+                curves = by_env_method.get((env_id, mk), [])
+                n_total[ei, mi] = int(len(curves))
+                hits: list[float] = []
+                for c in curves:
+                    if c is None:
+                        continue
+                    s, v = c
+                    hit = _steps_to_reach_threshold(s, v, thr)
+                    if hit is None or not np.isfinite(float(hit)):
+                        continue
+                    hits.append(float(hit))
+
+                n_reached[ei, mi] = int(len(hits))
+                if not hits:
+                    continue
+
+                arr = np.asarray(hits, dtype=np.float64)
+                q25, med, q75 = np.quantile(arr, [0.25, 0.5, 0.75])
+                q25s[ei, mi] = float(q25)
+                meds[ei, mi] = float(med)
+                q75s[ei, mi] = float(q75)
+
+        finite = np.isfinite(meds)
+        if bool(finite.any()):
+            ymin = float(np.nanmin(q25s[finite]))
+            ymax = float(np.nanmax(q75s[finite]))
+            if not np.isfinite(ymin) or ymin <= 0.0:
+                ymin = float(np.nanmin(meds[finite]))
+            ymin = max(1.0, float(ymin))
+            ymax = max(ymin, float(ymax))
+        else:
+            max_step = float(raw_df.loc[raw_df["env_id"].isin(envs), "ckpt_step"].max())
+            ymax = max(1.0, float(max_step) if np.isfinite(max_step) else 1.0)
+            ymin = 1.0
+
+        use_log = False
+        if bool(finite.any()):
+            finite_pos = meds[finite] > 0.0
+            if bool(finite_pos.any()):
+                mn = float(np.nanmin(meds[finite][finite_pos]))
+                mx = float(np.nanmax(meds[finite][finite_pos]))
+                if mn > 0.0 and mx / mn >= 50.0:
+                    use_log = True
+
+        for mi, mk in enumerate(methods):
+            off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
+            xpos = x + off
+            y = meds[:, mi]
+            ok = np.isfinite(y)
+            if ok.any():
+                ax.bar(
+                    xpos[ok],
+                    y[ok],
+                    width=width,
+                    color=_color_for_method(mk),
+                    alpha=0.85 if mk == "glpe" else 0.75,
+                    edgecolor="white",
+                    linewidth=0.5,
+                    zorder=2,
+                )
+
+                lo = np.maximum(0.0, y[ok] - q25s[:, mi][ok])
+                hi = np.maximum(0.0, q75s[:, mi][ok] - y[ok])
+                ax.errorbar(
+                    xpos[ok],
+                    y[ok],
+                    yerr=np.vstack([lo, hi]),
+                    fmt="none",
+                    ecolor="black",
+                    elinewidth=0.9,
+                    capsize=2,
+                    capthick=0.9,
+                    alpha=0.9,
+                    zorder=3,
+                )
+
+        ax.set_ylabel("Steps to reach")
+        ax.set_title(label, loc="left", fontweight="bold")
+        ax.grid(True, axis="y", alpha=0.25, linestyle="--")
+        ax.set_axisbelow(True)
+
+        if use_log:
+            ax.set_yscale("log")
+            ax.set_ylim(ymin * 0.8, ymax * 1.35)
+            base_y = ymin * 1.05
+            text_mult = 1.08
+            y_off = 0.0
+        else:
+            ax.set_ylim(0.0, ymax * 1.15)
+            base_y = 0.0 + 0.02 * ymax
+            text_mult = 1.0
+            y_off = 0.03 * ymax
+
+        for ei in range(n_env):
+            for mi in range(n_methods):
+                tot = int(n_total[ei, mi])
+                got = int(n_reached[ei, mi])
+
+                off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
+                xpos = float(x[ei] + off)
+
+                if tot <= 0:
+                    ax.text(xpos, base_y, "∅", ha="center", va="bottom", fontsize=7, alpha=0.75)
+                    continue
+
+                if got <= 0 or not np.isfinite(meds[ei, mi]):
+                    ax.plot([xpos], [base_y], marker="x", markersize=4, alpha=0.65, color="black")
+                    ax.text(
+                        xpos,
+                        base_y,
+                        f"0/{tot}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                        alpha=0.85,
+                    )
+                    continue
+
+                yv = float(meds[ei, mi])
+                y_text = yv * text_mult if use_log else yv + y_off
+                ax.text(
+                    xpos,
+                    y_text,
+                    f"{got}/{tot}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    alpha=0.9,
+                )
+
+        if not bool(finite.any()):
+            ax.text(
+                0.5,
+                0.55,
+                "No runs reached this threshold",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                alpha=0.85,
+            )
+
+    _panel(axes[0], thresholds=thresholds_full, label="Solved threshold (successful runs only)")
+    _panel(axes[1], thresholds=thresholds_half, label="Half threshold (successful runs only)")
+
+    axes[-1].set_xticks(x)
+    axes[-1].set_xticklabels(env_tick_labels, rotation=20, ha="right")
+    axes[-1].set_xlabel("Environment")
+
+    handles = [
+        mpatches.Patch(color=_color_for_method(m), label=str(label_by_key.get(m, m))) for m in methods
+    ]
+    fig.legend(
+        handles=handles,
+        loc="upper left",
+        bbox_to_anchor=(1.0, 1.0),
+        frameon=False,
+        title="Method",
+    )
+
+    thr_bits = [
+        f"{e}={_fmt_threshold(float(thresholds_full.get(e, float('nan'))))}({threshold_sources.get(e,'')})"
+        for e in envs
+    ]
+    note = (
+        "Bars=median(IQR) steps over reaching runs; labels=reached/total; "
+        "non-reaching runs excluded. "
+        "Full thresholds: " + "; ".join(thr_bits) + ". "
+        "Half thresholds: 0.5× full for ≥0, 1.5× full for <0."
+    )
+    fig.suptitle(title, y=0.995, fontweight="bold")
+    fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
+
+    fig.tight_layout(rect=[0.0, 0.05, 0.84, 0.97])
+
+    out = Path(plots_root) / f"steps_to_beat__{filename_suffix}__success_only__full_and_half.png"
     _save_fig(fig, out)
     plt.close(fig)
     return out
