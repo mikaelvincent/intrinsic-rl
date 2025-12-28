@@ -69,6 +69,7 @@ def run_plots_suite(
             plot_eval_curves_by_env,
             plot_glpe_extrinsic_vs_intrinsic,
             plot_glpe_state_gate_map,
+            plot_steps_to_beat_by_env,
         )
 
         df_summary = load_eval_summary_table(summary_csv)
@@ -106,6 +107,21 @@ def run_plots_suite(
                 methods_to_plot=ablations,
                 title="Ablations over training (evaluation)",
                 filename_suffix="paper_ablations_curves",
+            )
+
+            plot_steps_to_beat_by_env(
+                df_steps,
+                plots_root=plots_root,
+                methods_to_plot=baselines,
+                title="Steps to beat score threshold (GLPE vs baselines)",
+                filename_suffix="paper_baselines",
+            )
+            plot_steps_to_beat_by_env(
+                df_steps,
+                plots_root=plots_root,
+                methods_to_plot=ablations,
+                title="Steps to beat score threshold (GLPE ablations)",
+                filename_suffix="paper_ablations",
             )
         else:
             typer.echo("[suite] summary_by_step.csv not found; skipping eval learning curves.")
