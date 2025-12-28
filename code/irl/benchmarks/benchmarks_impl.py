@@ -185,7 +185,7 @@ def _bench_glpe_pipeline(
         unit="transitions/s",
         work_per_iter=float(batch_size),
         iters=int(iters_update),
-        warmup=0,
+        warmup=warmup,
         trials=trials,
         params={
             "device": dev_s,
@@ -305,7 +305,7 @@ def _bench_riac_pipeline(
         unit="transitions/s",
         work_per_iter=float(batch_size),
         iters=int(iters_update),
-        warmup=0,
+        warmup=warmup,
         trials=trials,
         params={
             "device": dev_s,
