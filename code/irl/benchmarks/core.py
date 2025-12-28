@@ -206,7 +206,7 @@ def run_all_benchmarks(
     threads: int = 1,
     seed: int = 0,
     out_dir: Path = Path("results/benchmarks"),
-    quick: bool = True,
+    quick: bool = False,
 ) -> dict[str, Any]:
     from . import benchmarks_impl as _impl
 
@@ -220,9 +220,12 @@ def run_all_benchmarks(
     t0 = time.perf_counter()
     try:
         meta = _system_info(device=dev, seed=int(seed))
+        meta["quick"] = bool(quick)
 
-        trials = 3 if bool(quick) else 7
+        trials = 3 if bool(quick) else 9
         warmup = 1 if bool(quick) else 2
+        meta["trials"] = int(trials)
+        meta["warmup_iters"] = int(warmup)
 
         results: list[BenchResult] = []
 
@@ -379,7 +382,7 @@ def run_all_benchmarks(
                 _impl._bench_env_step(
                     base_seed=int(seed),
                     trials=trials,
-                    warmup=0,
+                    warmup=0,  # closes env inside timed callable; warmup would reuse a closed env
                     steps=500 if bool(quick) else 1500,
                     env_id="MountainCar-v0",
                     vec_envs=1,
@@ -390,7 +393,7 @@ def run_all_benchmarks(
                 _impl._bench_env_step(
                     base_seed=int(seed),
                     trials=trials,
-                    warmup=0,
+                    warmup=0,  # closes env inside timed callable; warmup would reuse a closed env
                     steps=250 if bool(quick) else 750,
                     env_id="MountainCar-v0",
                     vec_envs=16,
@@ -417,7 +420,7 @@ def run_all_benchmarks(
                     base_seed=int(seed),
                     device=dev,
                     trials=trials,
-                    warmup=1,
+                    warmup=warmup,
                     iters=2 if bool(quick) else 4,
                     batch_size=8192 if bool(quick) else 16384,
                     obs_dim=8,
