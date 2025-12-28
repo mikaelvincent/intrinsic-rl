@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -14,10 +15,45 @@ from irl.intrinsic import RunningRMS
 from irl.intrinsic.glpe import GLPE
 from irl.intrinsic.glpe.gating import _RegionStats, update_region_gate
 from irl.intrinsic.icm import ICM, ICMConfig
+from irl.intrinsic.regions.kdtree import KDTreeRegionStore
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.trainer.training_setup import _restore_from_checkpoint
+from irl.utils.checkpoint import CheckpointManager
 from irl.utils.checkpoint_schema import build_checkpoint_payload
 from irl.utils.loggers import get_logger
+
+
+def test_checkpoint_manager_prune_keeps_step0(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    cm = CheckpointManager(run_dir, interval_steps=10, max_to_keep=2)
+
+    for step in (0, 10, 20, 30):
+        cm.save(step=step, payload={"step": int(step), "meta": {"note": "test"}})
+
+    kept = sorted(p.name for p in (run_dir / "checkpoints").glob("ckpt_step_*.pt"))
+    assert "ckpt_step_0.pt" in kept
+    assert "ckpt_step_20.pt" in kept
+    assert "ckpt_step_30.pt" in kept
+    assert "ckpt_step_10.pt" not in kept
+
+
+def test_kdtree_bulk_insert_matches_sequential() -> None:
+    rng = np.random.default_rng(0)
+    pts = rng.standard_normal((100, 3)).astype(np.float32)
+
+    store_seq = KDTreeRegionStore(dim=3, capacity=4, depth_max=6)
+    rids_seq = np.array([store_seq.insert(p) for p in pts], dtype=np.int64)
+
+    store_bulk = KDTreeRegionStore(dim=3, capacity=4, depth_max=6)
+    rids_bulk = store_bulk.bulk_insert(pts)
+
+    assert np.array_equal(rids_seq, rids_bulk)
+    assert store_seq.num_regions() == store_bulk.num_regions()
+
+    store = KDTreeRegionStore(dim=3, capacity=2, depth_max=4)
+    rids = store.bulk_insert(np.zeros((5, 3), dtype=np.float32))
+    assert np.all(rids == 0)
+    assert int(store.num_regions()) == 1
 
 
 def test_update_region_gate_transitions_and_resets() -> None:
