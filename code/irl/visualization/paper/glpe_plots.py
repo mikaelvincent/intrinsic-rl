@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,88 @@ def _npz_str(data: Any, key: str) -> str | None:
         return None
 
 
+_CKPT_STEP_DIR_RE = re.compile(r"^ckpt_step_(\d+)$")
+
+
+def _ckpt_step_from_dir(dir_name: str) -> int:
+    s = str(dir_name).strip()
+    m = _CKPT_STEP_DIR_RE.match(s)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return -1
+    if s == "ckpt_latest":
+        return -1
+    return -1
+
+
+def _traj_run_and_ckpt_tag(traj_root: Path, p: Path) -> tuple[str | None, str | None]:
+    try:
+        rel = p.resolve().relative_to(Path(traj_root).resolve())
+    except Exception:
+        return None, None
+    parts = rel.parts
+    if len(parts) < 2:
+        return None, None
+    return str(parts[0]), str(parts[1])
+
+
+def _select_latest_glpe_trajectories(traj_root: Path) -> list[tuple[str, str, int, Path]]:
+    # Choose the latest checkpoint per run to avoid mixing training stages in interpretability plots.
+    root = Path(traj_root)
+    if not root.exists():
+        return []
+
+    candidates: list[tuple[str, str, int, Path]] = []
+    for p in sorted(root.rglob("*_trajectory.npz"), key=lambda x: str(x)):
+        run_name, ckpt_tag = _traj_run_and_ckpt_tag(root, p)
+        if run_name is None or ckpt_tag is None:
+            continue
+
+        ckpt_step = _ckpt_step_from_dir(str(ckpt_tag))
+
+        try:
+            data = np.load(p, allow_pickle=False)
+        except Exception:
+            continue
+
+        method = _npz_str(data, "method")
+        env_id = _npz_str(data, "env_id")
+        if method is None or env_id is None:
+            continue
+        if str(method).strip().lower() != "glpe":
+            continue
+
+        candidates.append((str(env_id), str(run_name), int(ckpt_step), Path(p)))
+
+    best_by_run: dict[str, tuple[str, str, int, Path]] = {}
+    for env_id, run_name, ckpt_step, path in candidates:
+        prev = best_by_run.get(run_name)
+        if prev is None:
+            best_by_run[run_name] = (env_id, run_name, int(ckpt_step), path)
+            continue
+
+        prev_step = int(prev[2])
+        if int(ckpt_step) > prev_step:
+            best_by_run[run_name] = (env_id, run_name, int(ckpt_step), path)
+            continue
+        if int(ckpt_step) == prev_step and str(path) > str(prev[3]):
+            best_by_run[run_name] = (env_id, run_name, int(ckpt_step), path)
+
+    return [best_by_run[k] for k in sorted(best_by_run.keys())]
+
+
+def _latest_ckpt_note(records: list[tuple[str, int, Path]]) -> str:
+    runs = {str(rn) for rn, _s, _p in records if str(rn).strip()}
+    steps = sorted({int(s) for _rn, s, _p in records if int(s) >= 0})
+    if steps:
+        step_desc = f"step={steps[0]}" if len(steps) == 1 else f"steps={steps[0]}..{steps[-1]}"
+    else:
+        step_desc = "step=latest"
+    return f"Trajectories: latest checkpoint per run (n_runs={len(runs)}, {step_desc})"
+
+
 def _stable_u32(*parts: str) -> int:
     blob = "|".join(str(p) for p in parts).encode("utf-8")
     return int(hashlib.sha256(blob).hexdigest()[:8], 16)
@@ -69,21 +152,10 @@ def plot_glpe_state_gate_map(
     if not traj_root.exists():
         return []
 
-    by_env: dict[str, list[Path]] = {}
-    for p in sorted(traj_root.rglob("*_trajectory.npz"), key=lambda x: str(x)):
-        try:
-            data = np.load(p, allow_pickle=False)
-        except Exception:
-            continue
-
-        method = _npz_str(data, "method")
-        env_id = _npz_str(data, "env_id")
-        if method is None or env_id is None:
-            continue
-        if str(method).strip().lower() != "glpe":
-            continue
-
-        by_env.setdefault(str(env_id), []).append(p)
+    selected = _select_latest_glpe_trajectories(traj_root)
+    by_env: dict[str, list[tuple[str, int, Path]]] = {}
+    for env_id, run_name, ckpt_step, p in selected:
+        by_env.setdefault(str(env_id), []).append((str(run_name), int(ckpt_step), Path(p)))
 
     if not by_env:
         return []
@@ -94,11 +166,11 @@ def plot_glpe_state_gate_map(
 
     written: list[Path] = []
 
-    for env_id, files in sorted(by_env.items(), key=lambda kv: str(kv[0])):
+    for env_id, recs in sorted(by_env.items(), key=lambda kv: str(kv[0])):
         obs_all: list[np.ndarray] = []
         gates_all: list[np.ndarray] = []
 
-        for p in files:
+        for _run_name, _ckpt_step, p in recs:
             try:
                 data = np.load(p, allow_pickle=False)
                 obs = np.asarray(data["obs"], dtype=np.float32)
@@ -176,8 +248,12 @@ def plot_glpe_state_gate_map(
                 pad = 0.06 * (y_mm[1] - y_mm[0])
                 ax.set_ylim(y_mm[0] - pad, y_mm[1] + pad)
 
+        footer_bits: list[str] = []
         if proj_note:
-            fig.text(0.01, 0.01, str(proj_note), ha="left", va="bottom", fontsize=8, alpha=0.9)
+            footer_bits.append(str(proj_note))
+        footer_bits.append(_latest_ckpt_note(list(recs)))
+        if footer_bits:
+            fig.text(0.01, 0.01, " | ".join(footer_bits), ha="left", va="bottom", fontsize=8, alpha=0.9)
 
         out = plots_root / f"{_env_tag(env_id)}__glpe_gate_map.png"
         _save_fig(fig, out)
@@ -197,23 +273,10 @@ def plot_glpe_extrinsic_vs_intrinsic(
     if not traj_root.exists():
         return []
 
-    by_env: dict[str, list[Path]] = {}
-    for p in sorted(traj_root.rglob("*_trajectory.npz"), key=lambda x: str(x)):
-        try:
-            data = np.load(p, allow_pickle=False)
-        except Exception:
-            continue
-
-        method = _npz_str(data, "method")
-        env_id = _npz_str(data, "env_id")
-        if method is None or env_id is None:
-            continue
-        if str(method).strip().lower() != "glpe":
-            continue
-        if "rewards_ext" not in getattr(data, "files", []):
-            continue
-
-        by_env.setdefault(str(env_id), []).append(p)
+    selected = _select_latest_glpe_trajectories(traj_root)
+    by_env: dict[str, list[tuple[str, int, Path]]] = {}
+    for env_id, run_name, ckpt_step, p in selected:
+        by_env.setdefault(str(env_id), []).append((str(run_name), int(ckpt_step), Path(p)))
 
     if not by_env:
         return []
@@ -224,14 +287,16 @@ def plot_glpe_extrinsic_vs_intrinsic(
 
     written: list[Path] = []
 
-    for env_id, files in sorted(by_env.items(), key=lambda kv: str(kv[0])):
+    for env_id, recs in sorted(by_env.items(), key=lambda kv: str(kv[0])):
         xs: list[np.ndarray] = []
         ys: list[np.ndarray] = []
         gs: list[np.ndarray] = []
 
-        for p in files:
+        for _run_name, _ckpt_step, p in recs:
             try:
                 data = np.load(p, allow_pickle=False)
+                if "rewards_ext" not in getattr(data, "files", []):
+                    continue
                 r_ext = np.asarray(data["rewards_ext"], dtype=np.float32).reshape(-1)
                 r_int = np.asarray(data["intrinsic"], dtype=np.float32).reshape(-1)
                 gates = np.asarray(data["gates"]).reshape(-1)
@@ -305,6 +370,10 @@ def plot_glpe_extrinsic_vs_intrinsic(
         if y_mm[0] != y_mm[1]:
             pad = 0.08 * (y_mm[1] - y_mm[0])
             ax.set_ylim(y_mm[0] - pad, y_mm[1] + pad)
+
+        note = _latest_ckpt_note(list(recs))
+        fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
+        fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
 
         out = plots_root / f"{_env_tag(env_id)}__glpe_extrinsic_vs_intrinsic.png"
         _save_fig(fig, out)
