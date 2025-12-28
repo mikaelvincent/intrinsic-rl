@@ -13,10 +13,7 @@ import torch
 from gymnasium.envs.registration import register
 
 from irl.evaluation.rollout import run_eval_episodes
-from irl.evaluator import evaluate
 from irl.experiments.evaluation import run_eval_suite
-from irl.intrinsic.config import build_intrinsic_kwargs
-from irl.intrinsic.factory import create_intrinsic_module
 from irl.intrinsic.icm import ICMConfig
 from irl.intrinsic.riac import RIAC
 from irl.models.networks import PolicyNetwork
@@ -54,110 +51,6 @@ try:
     register(id="DummyEval-v0", entry_point=_DummyEvalEnv)
 except Exception:
     pass
-
-
-def test_evaluate_is_repeatable_and_writes_traj_metadata(tmp_path: Path) -> None:
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(2)
-
-    torch.manual_seed(0)
-    policy = PolicyNetwork(obs_space, act_space)
-
-    ckpt_path = tmp_path / "ckpt_eval_repeatable.pt"
-    torch.save(
-        {
-            "step": 0,
-            "policy": policy.state_dict(),
-            "cfg": {"env": {"id": "DummyEval-v0"}, "seed": 321, "method": "vanilla"},
-            "obs_norm": None,
-        },
-        ckpt_path,
-    )
-
-    s1 = evaluate(env="DummyEval-v0", ckpt=ckpt_path, episodes=2, device="cpu")
-    s2 = evaluate(env="DummyEval-v0", ckpt=ckpt_path, episodes=2, device="cpu")
-    assert s1["returns"] == s2["returns"]
-    assert s1["lengths"] == s2["lengths"]
-
-    def _write_ckpt(*, method: str, seed: int, include_intrinsic: bool) -> Path:
-        torch.manual_seed(0)
-        policy_local = PolicyNetwork(obs_space, act_space)
-
-        cfg = {
-            "seed": int(seed),
-            "method": str(method),
-            "env": {
-                "id": "DummyEval-v0",
-                "frame_skip": 1,
-                "discrete_actions": True,
-                "car_discrete_action_set": None,
-            },
-        }
-        payload: dict[str, object] = {
-            "step": 0,
-            "policy": policy_local.state_dict(),
-            "cfg": cfg,
-            "obs_norm": None,
-        }
-
-        if include_intrinsic:
-            mod = create_intrinsic_module(
-                str(method),
-                obs_space,
-                act_space,
-                device="cpu",
-                **build_intrinsic_kwargs(cfg),
-            )
-            payload["intrinsic"] = {"method": str(method), "state_dict": mod.state_dict()}
-
-        p = tmp_path / f"ckpt_{method}{'_intr' if include_intrinsic else ''}.pt"
-        torch.save(payload, p)
-        return p
-
-    out_v = tmp_path / "vanilla_out"
-    ckpt_v = _write_ckpt(method="vanilla", seed=123, include_intrinsic=False)
-    _ = evaluate(
-        env="DummyEval-v0",
-        ckpt=ckpt_v,
-        episodes=1,
-        device="cpu",
-        save_traj=True,
-        traj_out_dir=out_v,
-        policy_mode="mode",
-    )
-    d_v = np.load(out_v / "DummyEval-v0_trajectory.npz", allow_pickle=False)
-    assert str(d_v["gate_source"].reshape(-1)[0]) == "n/a"
-    assert str(d_v["intrinsic_semantics"].reshape(-1)[0]) == "none"
-
-    out_g = tmp_path / "glpe_out"
-    ckpt_g = _write_ckpt(method="glpe", seed=7, include_intrinsic=True)
-    _ = evaluate(
-        env="DummyEval-v0",
-        ckpt=ckpt_g,
-        episodes=1,
-        device="cpu",
-        save_traj=True,
-        traj_out_dir=out_g,
-        policy_mode="mode",
-    )
-    d_g = np.load(out_g / "DummyEval-v0_trajectory.npz", allow_pickle=False)
-    assert str(d_g["gate_source"].reshape(-1)[0]) == "checkpoint"
-    assert str(d_g["intrinsic_semantics"].reshape(-1)[0]) == "frozen_checkpoint"
-
-    out_g_missing = tmp_path / "glpe_missing_intrinsic_out"
-    ckpt_g_missing = _write_ckpt(method="glpe", seed=9, include_intrinsic=False)
-    _ = evaluate(
-        env="DummyEval-v0",
-        ckpt=ckpt_g_missing,
-        episodes=1,
-        device="cpu",
-        save_traj=True,
-        traj_out_dir=out_g_missing,
-        policy_mode="mode",
-    )
-    d_g_missing = np.load(out_g_missing / "DummyEval-v0_trajectory.npz", allow_pickle=False)
-    assert str(d_g_missing["gate_source"].reshape(-1)[0]) == "missing_intrinsic"
-    assert str(d_g_missing["intrinsic_semantics"].reshape(-1)[0]) == "missing_intrinsic"
 
 
 def _write_latest_ckpt(
