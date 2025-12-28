@@ -156,6 +156,15 @@ def run_plots_suite(
         timing_groups = _groups_for_timing(root)
 
         try:
+            from irl.visualization.paper.training_plots import plot_training_reward_decomposition
+
+            written = plot_training_reward_decomposition(timing_groups, plots_root=plots_root)
+            if not written:
+                typer.echo("[suite] Training reward plots skipped (no data).")
+        except Exception as exc:
+            typer.echo(f"[suite] Training reward plots skipped ({type(exc).__name__}: {exc})")
+
+        try:
             from irl.visualization.timing_figures import plot_timing_breakdown
 
             plot_timing_breakdown(timing_groups, plots_root=plots_root, tail_frac=0.25)
