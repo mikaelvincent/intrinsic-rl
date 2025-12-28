@@ -22,6 +22,9 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+_EVAL_SEMANTICS = "Evaluation (extrinsic return only)"
+
+
 def _finite_minmax(vals: Sequence[float]) -> tuple[float, float] | None:
     arr = np.asarray([float(v) for v in vals], dtype=np.float64).reshape(-1)
     arr = arr[np.isfinite(arr)]
@@ -303,7 +306,7 @@ def plot_eval_auc_bars_by_env(
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
-        ax.set_ylabel("AUC (mean eval return × env steps)")
+        ax.set_ylabel(f"AUC (mean episode return × env steps) — {_EVAL_SEMANTICS}")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
 
