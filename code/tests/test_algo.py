@@ -14,6 +14,7 @@ from irl.intrinsic.icm import ICM
 from irl.models.networks import PolicyNetwork, ValueNetwork
 from irl.pipelines.policy_rollout import iter_policy_rollout
 from irl.trainer.rollout import collect_rollout
+from irl.trainer.runtime_utils import _apply_final_observation
 from irl.trainer.update_steps import compute_advantages, compute_intrinsic_rewards
 from irl.utils.loggers import get_logger
 
@@ -191,6 +192,22 @@ def test_policy_rollout_continuous_actions_within_bounds() -> None:
             assert steps == 3
     finally:
         env.close()
+
+
+def test_apply_final_observation_vector_and_scalar() -> None:
+    next_obs = np.array([[0.0], [1.0]], dtype=np.float32)
+    done = np.array([True, False], dtype=bool)
+    infos = {
+        "final_observation": np.array([np.array([42.0], dtype=np.float32), None], dtype=object),
+    }
+    fixed = _apply_final_observation(next_obs, done, infos)
+    assert np.allclose(fixed, np.array([[42.0], [1.0]], dtype=np.float32))
+
+    next_obs1 = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+    done1 = np.array([True], dtype=bool)
+    infos1 = {"final_observation": np.array([10.0, 11.0, 12.0], dtype=np.float32)}
+    fixed1 = _apply_final_observation(next_obs1, done1, infos1)
+    assert np.allclose(fixed1, np.array([10.0, 11.0, 12.0], dtype=np.float32))
 
 
 class _IdentityObsNorm:
