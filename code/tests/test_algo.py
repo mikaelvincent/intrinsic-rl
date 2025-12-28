@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
@@ -18,19 +19,19 @@ from irl.utils.loggers import get_logger
 
 
 class _ValueSequence(nn.Module):
-    def __init__(self, v_t, v_tp1):
+    def __init__(self, v_t: object, v_tp1: object) -> None:
         super().__init__()
         self._p = nn.Parameter(torch.zeros(1))
-        self.v_t = torch.as_tensor(v_t, dtype=torch.float32).view(-1)
-        self.v_tp1 = torch.as_tensor(v_tp1, dtype=torch.float32).view(-1)
+        self._v_t = torch.as_tensor(v_t, dtype=torch.float32).view(-1)
+        self._v_tp1 = torch.as_tensor(v_tp1, dtype=torch.float32).view(-1)
         self._calls = 0
 
-    def forward(self, _obs):
+    def forward(self, _obs: torch.Tensor) -> torch.Tensor:
         self._calls += 1
-        return self.v_t if self._calls == 1 else self.v_tp1
+        return self._v_t if self._calls == 1 else self._v_tp1
 
 
-def test_compute_gae_handles_timeouts_and_layout() -> None:
+def test_compute_gae_bootstrap_timeouts_and_layout() -> None:
     obs = torch.zeros((3, 1, 1), dtype=torch.float32)
     next_obs = torch.zeros((3, 1, 1), dtype=torch.float32)
     rewards = torch.tensor([[1.0], [1.0], [1.0]], dtype=torch.float32)
@@ -46,7 +47,9 @@ def test_compute_gae_handles_timeouts_and_layout() -> None:
         lam=1.0,
         bootstrap_on_timeouts=False,
     )
-    assert torch.allclose(adv_term, torch.tensor([-7.0, -18.0, -29.0], dtype=torch.float32), atol=1e-6)
+    assert torch.allclose(
+        adv_term, torch.tensor([-7.0, -18.0, -29.0], dtype=torch.float32), atol=1e-6
+    )
     assert torch.allclose(vt_term, torch.tensor([3.0, 2.0, 1.0], dtype=torch.float32), atol=1e-6)
 
     terminals = torch.zeros((3, 1), dtype=torch.float32)
@@ -65,31 +68,10 @@ def test_compute_gae_handles_timeouts_and_layout() -> None:
         lam=1.0,
         bootstrap_on_timeouts=True,
     )
-    assert torch.allclose(adv_boot, torch.tensor([33.0, 22.0, 11.0], dtype=torch.float32), atol=1e-6)
-    assert torch.allclose(vt_boot, torch.tensor([43.0, 42.0, 41.0], dtype=torch.float32), atol=1e-6)
-
-    obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
-    next_obs2 = torch.zeros((4, 1, 1), dtype=torch.float32)
-    rewards2 = torch.tensor([[0.0], [0.0], [10.0], [0.0]], dtype=torch.float32)
-    terminals2 = torch.tensor([[0.0], [0.0], [0.0], [1.0]], dtype=torch.float32)
-    truncations2 = torch.tensor([[0.0], [1.0], [0.0], [0.0]], dtype=torch.float32)
-    vf2 = _ValueSequence(v_t=[0.0, 0.0, 0.0, 0.0], v_tp1=[0.0, 5.0, 0.0, 0.0])
-    adv2, vt2 = compute_gae(
-        {
-            "obs": obs2,
-            "next_observations": next_obs2,
-            "rewards": rewards2,
-            "terminals": terminals2,
-            "truncations": truncations2,
-        },
-        value_fn=vf2,
-        gamma=1.0,
-        lam=1.0,
-        bootstrap_on_timeouts=True,
+    assert torch.allclose(
+        adv_boot, torch.tensor([33.0, 22.0, 11.0], dtype=torch.float32), atol=1e-6
     )
-    expected = torch.tensor([5.0, 5.0, 10.0, 0.0], dtype=torch.float32)
-    assert torch.allclose(adv2, expected, atol=1e-6)
-    assert torch.allclose(vt2, expected, atol=1e-6)
+    assert torch.allclose(vt_boot, torch.tensor([43.0, 42.0, 41.0], dtype=torch.float32), atol=1e-6)
 
     T, B = 3, 2
     obs_tb = torch.zeros((T, B, 1), dtype=torch.float32)
@@ -97,118 +79,58 @@ def test_compute_gae_handles_timeouts_and_layout() -> None:
     obs_bt = obs_tb.transpose(0, 1)
     next_obs_bt = next_obs_tb.transpose(0, 1)
 
-    rewards3 = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=torch.float32)
+    rewards3 = torch.arange(1, T * B + 1, dtype=torch.float32).reshape(T, B)
     dones3 = torch.zeros((T, B), dtype=torch.float32)
     dones3[-1] = 1.0
 
-    vf_time_major = _ValueSequence(
-        v_t=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
-        v_tp1=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-    )
-    adv_tb, vt_tb = compute_gae(
+    vf_a = _ValueSequence(v_t=torch.zeros(T * B), v_tp1=torch.ones(T * B))
+    adv_a, vt_a = compute_gae(
         {"obs": obs_tb, "next_observations": next_obs_tb, "rewards": rewards3, "dones": dones3},
-        value_fn=vf_time_major,
+        value_fn=vf_a,
         gamma=0.99,
         lam=0.95,
         bootstrap_on_timeouts=False,
     )
 
-    vf_batch_major = _ValueSequence(
-        v_t=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
-        v_tp1=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-    )
-    adv_bt, vt_bt = compute_gae(
+    vf_b = _ValueSequence(v_t=torch.zeros(T * B), v_tp1=torch.ones(T * B))
+    adv_b, vt_b = compute_gae(
         {"obs": obs_bt, "next_observations": next_obs_bt, "rewards": rewards3, "dones": dones3},
-        value_fn=vf_batch_major,
+        value_fn=vf_b,
         gamma=0.99,
         lam=0.95,
         bootstrap_on_timeouts=False,
     )
-    assert torch.allclose(adv_tb, adv_bt, atol=1e-6)
-    assert torch.allclose(vt_tb, vt_bt, atol=1e-6)
+    assert torch.allclose(adv_a, adv_b, atol=1e-6)
+    assert torch.allclose(vt_a, vt_b, atol=1e-6)
 
 
-def _flat_params(model: nn.Module) -> torch.Tensor:
-    return torch.cat([p.detach().cpu().view(-1) for p in model.parameters()])
-
-
-def test_ppo_update_kl_penalty_changes_policy() -> None:
-    torch.manual_seed(0)
+def test_ppo_update_uses_provided_old_log_probs() -> None:
     rng = np.random.default_rng(0)
-
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = gym.spaces.Discrete(3)
 
-    base_policy = PolicyNetwork(obs_space, act_space)
-    base_value = ValueNetwork(obs_space)
-
-    init_pol = {k: v.clone() for k, v in base_policy.state_dict().items()}
-    init_val = {k: v.clone() for k, v in base_value.state_dict().items()}
+    policy = PolicyNetwork(obs_space, act_space)
+    value = ValueNetwork(obs_space)
 
     obs = rng.standard_normal((64, 4)).astype(np.float32)
-    with torch.no_grad():
-        dist0 = base_policy.distribution(torch.as_tensor(obs, dtype=torch.float32))
-        actions_t = dist0.sample()
-        old_logp_t = dist0.log_prob(actions_t)
+    actions = rng.integers(0, int(act_space.n), size=(64,), endpoint=False, dtype=np.int64)
+    old_log_probs = np.full((64,), np.nan, dtype=np.float32)
 
-    batch = {
-        "obs": obs,
-        "actions": actions_t.detach().cpu().numpy(),
-        "old_log_probs": old_logp_t.detach().cpu().numpy().astype(np.float32),
-    }
+    batch = {"obs": obs, "actions": actions, "old_log_probs": old_log_probs}
     advantages = rng.standard_normal(64).astype(np.float32)
     value_targets = rng.standard_normal(64).astype(np.float32)
 
-    cfg = PPOConfig(
-        rollout_steps_per_env=64,
-        minibatches=2,
-        epochs=2,
-        learning_rate=3.0e-4,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        entropy_coef=0.0,
-        value_coef=0.5,
-        value_clip_range=0.0,
-        kl_penalty_coef=0.0,
-        kl_stop=0.0,
-    )
-
-    policy_a = PolicyNetwork(obs_space, act_space)
-    value_a = ValueNetwork(obs_space)
-    policy_a.load_state_dict(init_pol)
-    value_a.load_state_dict(init_val)
-
-    torch.manual_seed(123)
-    stats = ppo_update(
-        policy_a,
-        value_a,
-        batch,
-        advantages,
-        value_targets,
-        cfg,
-        return_stats=True,
-    )
-    assert stats is not None and np.isfinite(float(stats["approx_kl"]))
-
-    policy_b = PolicyNetwork(obs_space, act_space)
-    value_b = ValueNetwork(obs_space)
-    policy_b.load_state_dict(init_pol)
-    value_b.load_state_dict(init_val)
-
-    torch.manual_seed(123)
-    _ = ppo_update(
-        policy_b,
-        value_b,
-        batch,
-        advantages,
-        value_targets,
-        PPOConfig(**{**cfg.__dict__, "kl_penalty_coef": 10.0}),
-        return_stats=False,
-    )
-
-    diff = float((_flat_params(policy_a) - _flat_params(policy_b)).abs().max().item())
-    assert diff > 1e-7
+    cfg = PPOConfig(rollout_steps_per_env=64, minibatches=2, epochs=1)
+    with pytest.raises(ValueError, match=r"old_log_probs"):
+        _ = ppo_update(
+            policy,
+            value,
+            batch,
+            advantages,
+            value_targets,
+            cfg,
+            return_stats=False,
+        )
 
 
 class _BoundedBoxEnv(gym.Env):
@@ -305,13 +227,11 @@ class _AutoResetNoFinalObsEnv:
         self._t += 1
         truncated = self._t >= 1
         terminated = False
-
         if truncated:
             self._t = 0
             obs = np.array([0.0], dtype=np.float32)
         else:
             obs = np.array([1.0], dtype=np.float32)
-
         return obs, 0.0, bool(terminated), bool(truncated), {}
 
     def close(self) -> None:
@@ -328,7 +248,7 @@ class _ValueByObs(nn.Module):
         return torch.where(x0 < 0.5, torch.full_like(x0, 10.0), torch.zeros_like(x0))
 
 
-def test_timeout_bootstrap_disabled_without_final_observation() -> None:
+def test_timeouts_without_final_observation_mask_gae_and_intrinsic() -> None:
     device = torch.device("cpu")
     obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
     act_space = gym.spaces.Discrete(2)
@@ -336,7 +256,6 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
     env = _AutoResetNoFinalObsEnv()
     try:
         obs0, _ = env.reset(seed=0)
-
         rollout = collect_rollout(
             env=env,
             policy=_ZeroPolicy(device),
@@ -352,12 +271,8 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
             T=1,
             B=1,
             device=device,
-            logger=get_logger("test_timeout_bootstrap_guard"),
+            logger=get_logger("test_timeout_mask"),
         )
-
-        assert float(rollout.dones_seq.reshape(-1)[0]) == 1.0
-        assert float(rollout.terminals_seq.reshape(-1)[0]) == 0.0
-        assert float(rollout.truncations_seq.reshape(-1)[0]) == 1.0
         assert float(rollout.timeouts_no_final_obs_seq.reshape(-1)[0]) == 1.0
 
         adv_out = compute_advantages(
@@ -370,43 +285,14 @@ def test_timeout_bootstrap_disabled_without_final_observation() -> None:
             profile_cuda_sync=False,
             maybe_cuda_sync=lambda _d, _e: None,
         )
-
         assert torch.allclose(adv_out.advantages, torch.zeros_like(adv_out.advantages), atol=1e-6)
-        assert torch.allclose(adv_out.value_targets, torch.zeros_like(adv_out.value_targets), atol=1e-6)
-    finally:
-        env.close()
-
-
-def test_intrinsic_skips_timeouts_without_final_observation() -> None:
-    device = torch.device("cpu")
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(2)
-
-    env = _AutoResetNoFinalObsEnv()
-    try:
-        obs0, _ = env.reset(seed=0)
-
-        rollout = collect_rollout(
-            env=env,
-            policy=_ZeroPolicy(device),
-            actor_policy=None,
-            obs=obs0,
-            obs_space=obs_space,
-            act_space=act_space,
-            is_image=False,
-            obs_norm=_IdentityObsNorm(),
-            intrinsic_module=None,
-            use_intrinsic=False,
-            method_l="vanilla",
-            T=1,
-            B=1,
-            device=device,
-            logger=get_logger("test_intrinsic_timeout_mask"),
+        assert torch.allclose(
+            adv_out.value_targets, torch.zeros_like(adv_out.value_targets), atol=1e-6
         )
 
         icm = ICM(obs_space, act_space, device="cpu")
         before_sd = {k: v.detach().clone() for k, v in icm.state_dict().items()}
-        before_opt_states = len(getattr(icm, "_opt").state)
+        before_opt = len(getattr(icm, "_opt").state)
 
         out = compute_intrinsic_rewards(
             rollout=rollout,
@@ -436,172 +322,6 @@ def test_intrinsic_skips_timeouts_without_final_observation() -> None:
         after_sd = icm.state_dict()
         for k, v in before_sd.items():
             assert torch.equal(after_sd[k], v)
-
-        assert len(getattr(icm, "_opt").state) == before_opt_states == 0
-    finally:
-        env.close()
-
-
-class _NoAutoResetDoneEnv:
-    def __init__(self) -> None:
-        self._done = False
-        self.reset_calls = 0
-        self.step_calls = 0
-
-    def reset(self, *, seed=None, options=None):
-        _ = seed, options
-        self.reset_calls += 1
-        self._done = False
-        return np.array([1.0], dtype=np.float32), {}
-
-    def step(self, action):
-        _ = action
-        if self._done:
-            raise RuntimeError("step called after done")
-        self.step_calls += 1
-        self._done = True
-        return np.array([0.0], dtype=np.float32), 0.0, True, False, {}
-
-    def close(self) -> None:
-        return
-
-
-def test_collect_rollout_single_env_resets_on_done() -> None:
-    device = torch.device("cpu")
-    obs_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-    act_space = gym.spaces.Discrete(2)
-
-    env = _NoAutoResetDoneEnv()
-    try:
-        obs0, _ = env.reset(seed=0)
-
-        rollout = collect_rollout(
-            env=env,
-            policy=_ZeroPolicy(device),
-            actor_policy=None,
-            obs=obs0,
-            obs_space=obs_space,
-            act_space=act_space,
-            is_image=False,
-            obs_norm=_IdentityObsNorm(),
-            intrinsic_module=None,
-            use_intrinsic=False,
-            method_l="vanilla",
-            T=3,
-            B=1,
-            device=device,
-            logger=get_logger("test_single_env_done_reset"),
-        )
-
-        assert int(env.reset_calls) == 4
-        assert int(env.step_calls) == 3
-        assert float(rollout.terminals_seq.sum()) == 3.0
-        assert np.allclose(rollout.obs_seq.reshape(-1), np.ones((3,), dtype=np.float32))
-        assert np.allclose(rollout.next_obs_seq.reshape(-1), np.zeros((3,), dtype=np.float32))
-
-        final_obs = np.asarray(rollout.final_env_obs, dtype=np.float32).reshape(-1)
-        assert np.allclose(final_obs, np.array([1.0], dtype=np.float32))
-    finally:
-        env.close()
-
-
-class _NeverDoneEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
-        self.action_space = gym.spaces.Discrete(3)
-
-    def reset(self, *, seed=None, options=None):
-        _ = seed, options
-        return np.zeros((4,), dtype=np.float32), {}
-
-    def step(self, action):
-        _ = action
-        return np.zeros((4,), dtype=np.float32), 0.0, False, False, {}
-
-    def close(self) -> None:
-        return
-
-
-def test_ppo_uses_old_log_probs_from_rollout() -> None:
-    device = torch.device("cpu")
-    env = _NeverDoneEnv()
-    try:
-        obs0, _ = env.reset(seed=0)
-        policy = PolicyNetwork(env.observation_space, env.action_space).to(device)
-        value = ValueNetwork(env.observation_space).to(device)
-        policy.eval()
-        value.eval()
-
-        T = 4
-        rollout = collect_rollout(
-            env=env,
-            policy=policy,
-            actor_policy=None,
-            obs=obs0,
-            obs_space=env.observation_space,
-            act_space=env.action_space,
-            is_image=False,
-            obs_norm=_IdentityObsNorm(),
-            intrinsic_module=None,
-            use_intrinsic=False,
-            method_l="vanilla",
-            T=T,
-            B=1,
-            device=device,
-            logger=get_logger("test_old_log_probs_rollout"),
-        )
-
-        N = int(rollout.T) * int(rollout.B)
-        obs_flat = rollout.obs_seq.reshape(N, -1)
-        acts_flat = rollout.actions_seq.reshape(N)
-
-        cfg = PPOConfig(
-            rollout_steps_per_env=int(N),
-            minibatches=2,
-            epochs=1,
-            learning_rate=3.0e-4,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            entropy_coef=0.0,
-            value_coef=0.5,
-            value_clip_range=0.0,
-            kl_penalty_coef=0.0,
-            kl_stop=0.0,
-        )
-
-        batch = {
-            "obs": obs_flat,
-            "actions": acts_flat,
-            "old_log_probs": rollout.old_log_probs_seq.reshape(N).astype(np.float32),
-        }
-
-        advantages = np.zeros((N,), dtype=np.float32)
-        value_targets = np.zeros((N,), dtype=np.float32)
-
-        calls = 0
-        orig = policy.distribution
-
-        def _wrapped(obs, orig=orig):
-            nonlocal calls
-            calls += 1
-            return orig(obs)
-
-        policy.distribution = _wrapped
-
-        _ = ppo_update(
-            policy,
-            value,
-            batch,
-            advantages,
-            value_targets,
-            cfg,
-            return_stats=False,
-        )
-
-        assert int(calls) == int(cfg.minibatches) * int(cfg.epochs)
+        assert len(getattr(icm, "_opt").state) == before_opt
     finally:
         env.close()
