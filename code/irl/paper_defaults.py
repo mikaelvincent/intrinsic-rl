@@ -20,4 +20,4 @@ DEFAULT_VIDEO_FPS: Final[int] = 30
 DEFAULT_BENCH_DEVICE: Final[str] = "cpu"
 DEFAULT_BENCH_THREADS: Final[int] = 1
 DEFAULT_BENCH_SEED: Final[int] = 0
-DEFAULT_BENCH_QUICK: Final[bool] = True
+DEFAULT_BENCH_QUICK: Final[bool] = False
