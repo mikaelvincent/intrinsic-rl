@@ -847,12 +847,29 @@ def plot_steps_to_beat_by_env(
         f"{e}={_fmt_threshold(float(thresholds_full.get(e, float('nan'))))}({threshold_sources.get(e,'')})"
         for e in envs
     ]
+
+    used_sources = sorted(
+        {str(threshold_sources.get(e, "")).strip() for e in envs if str(threshold_sources.get(e, "")).strip()}
+    )
+    src_bits: list[str] = []
+    if "known" in used_sources:
+        src_bits.append("known=hard-coded map")
+    if "gym_spec" in used_sources:
+        src_bits.append("gym_spec=gymnasium spec.reward_threshold")
+    if "best_final" in used_sources:
+        src_bits.append("best_final=best final-step mean return")
+    if "fallback" in used_sources:
+        src_bits.append("fallback=0.0 (no threshold)")
+
+    src_note = (" Source tags: " + "; ".join(src_bits) + ".") if src_bits else ""
+
     note = (
         f"{_EVAL_SEMANTICS}. "
         "Bars=median(IQR) steps over reaching runs; labels=reached/total; "
         "non-reaching runs excluded. "
-        "Full thresholds: " + "; ".join(thr_bits) + ". "
+        "Full thresholds (thr(source)): " + "; ".join(thr_bits) + ". "
         "Half thresholds: 0.5× full for ≥0, 1.5× full for <0."
+        + src_note
     )
     fig.suptitle(f"{title} — {_EVAL_SEMANTICS}", y=0.995, fontweight="bold")
     fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
