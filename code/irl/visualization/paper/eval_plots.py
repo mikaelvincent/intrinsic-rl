@@ -257,6 +257,145 @@ def plot_eval_curves_by_env(
     return written
 
 
+def plot_eval_scatter_by_env(
+    summary_raw_csv: Path,
+    *,
+    plots_root: Path,
+    methods_to_plot: Sequence[str] | None,
+    title: str,
+    filename_suffix: str,
+    alpha: float = 0.65,
+    point_size: float = 18.0,
+) -> list[Path]:
+    raw_df = _load_summary_raw(Path(summary_raw_csv))
+    if raw_df is None or raw_df.empty:
+        return []
+
+    plots_root = Path(plots_root)
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    want: list[str] | None
+    if methods_to_plot is None:
+        want = None
+    else:
+        norm = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+        want = norm or None
+
+    label_by_key = (
+        raw_df.drop_duplicates(subset=["method_key"], keep="first")
+        .set_index("method_key")["method"]
+        .astype(str)
+        .to_dict()
+    )
+
+    plt = _style()
+    written: list[Path] = []
+
+    for env_id in sorted(raw_df["env_id"].unique().tolist()):
+        df_env = raw_df.loc[raw_df["env_id"] == env_id].copy()
+        if df_env.empty:
+            continue
+
+        methods_present = sorted(set(df_env["method_key"].tolist()))
+        methods = methods_present if want is None else [m for m in want if m in set(methods_present)]
+        if not methods:
+            continue
+
+        uniq_steps = pd.to_numeric(df_env["ckpt_step"], errors="coerce").dropna().to_numpy(dtype=np.float64)
+        uniq_steps = uniq_steps[np.isfinite(uniq_steps)]
+        uniq_steps = np.unique(uniq_steps)
+
+        def _x_jitter_scale(steps: np.ndarray, n: int) -> float:
+            if int(n) <= 1:
+                return 0.0
+            s = np.asarray(steps, dtype=np.float64).reshape(-1)
+            s = s[np.isfinite(s)]
+            if int(s.size) < 2:
+                return 0.0
+            diffs = np.diff(np.sort(s))
+            diffs = diffs[diffs > 0.0]
+            if int(diffs.size) == 0:
+                return 0.0
+            return float(np.min(diffs)) * 0.02
+
+        x_jitter = _x_jitter_scale(uniq_steps, len(methods))
+
+        fig, ax = plt.subplots(figsize=(8.8, 4.8))
+
+        x_all: list[float] = []
+        y_all: list[float] = []
+
+        for i, mk in enumerate(methods):
+            df_m = df_env.loc[df_env["method_key"] == mk].copy()
+            if df_m.empty:
+                continue
+
+            x = pd.to_numeric(df_m["ckpt_step"], errors="coerce").to_numpy(dtype=np.float64)
+            y = pd.to_numeric(df_m["mean_return"], errors="coerce").to_numpy(dtype=np.float64)
+
+            finite = np.isfinite(x) & np.isfinite(y)
+            if not bool(finite.any()):
+                continue
+
+            x = x[finite]
+            y = y[finite]
+
+            if x_jitter != 0.0:
+                off = (float(i) - (float(len(methods)) - 1.0) / 2.0) * float(x_jitter)
+                x = x + off
+
+            ax.scatter(
+                x,
+                y,
+                s=float(point_size),
+                alpha=float(alpha),
+                color=_color_for_method(mk),
+                edgecolor="none",
+                label=str(label_by_key.get(mk, mk)),
+            )
+
+            x_all.extend([float(v) for v in x.tolist()])
+            y_all.extend([float(v) for v in y.tolist()])
+
+        if not x_all or not y_all:
+            plt.close(fig)
+            continue
+
+        ax.set_xlabel("Checkpoint step (env steps)")
+        ax.set_ylabel("Mean episode return (eval)")
+        ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
+        ax.grid(True, alpha=0.25, linestyle="--")
+
+        x_mm = _finite_minmax(x_all)
+        if x_mm is not None:
+            if float(x_mm[0]) == float(x_mm[1]):
+                pad = 1.0
+                ax.set_xlim(float(x_mm[0]) - pad, float(x_mm[1]) + pad)
+            else:
+                pad = 0.06 * float(x_mm[1] - x_mm[0])
+                ax.set_xlim(float(x_mm[0]) - pad, float(x_mm[1]) + pad)
+
+        y_mm = _finite_minmax(y_all)
+        if y_mm is not None:
+            _set_y_minmax(ax, y_mm[0], y_mm[1])
+
+        ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
+
+        note = "points=per seed×checkpoint (summary_raw.csv)"
+        if x_jitter != 0.0:
+            note += f" | x_jitter≈{x_jitter:.3g}"
+        fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
+
+        fig.tight_layout(rect=[0.0, 0.04, 0.82, 1.0])
+
+        out = plots_root / f"{_env_tag(env_id)}__eval_scatter__{filename_suffix}.png"
+        _save_fig(fig, out)
+        plt.close(fig)
+        written.append(out)
+
+    return written
+
+
 _SUPPORTED_SCORE_ENVS: set[str] = {
     "Ant-v5",
     "BipedalWalker-v3",
