@@ -656,7 +656,7 @@ def _bench_glpe_gate_median_cache(
         depth_max=int(depth_max),
         normalize_inside=True,
         gating_enabled=True,
-        checkpoint_include_points=False,
+        checkpoint_include_points=True,
     )
 
     _prefill_intrinsic(
@@ -694,7 +694,7 @@ def _bench_glpe_gate_median_cache(
             depth_max=int(depth_max),
             normalize_inside=True,
             gating_enabled=True,
-            checkpoint_include_points=False,
+            checkpoint_include_points=True,
         )
         mod_a.load_state_dict(prefilled_sd, strict=True)
         if hasattr(mod_a, "gate_median_cache_interval"):
@@ -709,7 +709,7 @@ def _bench_glpe_gate_median_cache(
             depth_max=int(depth_max),
             normalize_inside=True,
             gating_enabled=True,
-            checkpoint_include_points=False,
+            checkpoint_include_points=True,
         )
         mod_b.load_state_dict(prefilled_sd, strict=True)
         if hasattr(mod_b, "gate_median_cache_interval"):
