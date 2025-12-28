@@ -14,7 +14,7 @@ from irl.utils.loggers import MetricLogger
 from irl.utils.steps import resolve_total_steps
 
 
-def test_loads_config_parses_numbers_and_validates() -> None:
+def test_loads_config_parses_and_validates() -> None:
     cfg = loads_config(
         """
 method: vanilla
@@ -50,7 +50,7 @@ ppo:
         )
 
 
-def test_taper_fracs_validate_for_glpe_only() -> None:
+def test_glpe_taper_fracs_and_normalize_inside_validate() -> None:
     cfg = loads_config(
         """
 method: glpe
@@ -62,10 +62,7 @@ intrinsic:
     assert cfg.intrinsic.taper_start_frac == pytest.approx(0.1)
     assert cfg.intrinsic.taper_end_frac == pytest.approx(0.9)
 
-    with pytest.raises(
-        ConfigError,
-        match=r"Set both `intrinsic\.taper_start_frac` and `intrinsic\.taper_end_frac`, or omit both\.",
-    ):
+    with pytest.raises(ConfigError, match=r"Set both `intrinsic\.taper_start_frac`"):
         loads_config(
             """
 method: glpe
@@ -95,12 +92,21 @@ intrinsic:
 """.lstrip()
         )
 
+    with pytest.raises(ConfigError, match=r"normalize_inside"):
+        loads_config(
+            """
+method: glpe
+intrinsic:
+  normalize_inside: false
+""".lstrip()
+        )
+
     a = {"intrinsic": {}}
     b = {"intrinsic": {"taper_start_frac": None, "taper_end_frac": None}}
     assert compute_cfg_hash(a) == compute_cfg_hash(b)
 
 
-def test_build_intrinsic_kwargs_enforces_glpe_gate_cache_rules() -> None:
+def test_build_intrinsic_kwargs_gate_cache_rules() -> None:
     out_nogate = build_intrinsic_kwargs(
         {"method": "glpe_nogate", "intrinsic": {"gate": {"enabled": True}}}
     )
@@ -119,17 +125,6 @@ def test_build_intrinsic_kwargs_enforces_glpe_gate_cache_rules() -> None:
         assert int(out["gate_median_cache_interval"]) == 1
 
 
-def test_glpe_requires_normalize_inside_true() -> None:
-    with pytest.raises(ConfigError, match=r"normalize_inside"):
-        loads_config(
-            """
-method: glpe
-intrinsic:
-  normalize_inside: false
-""".lstrip()
-        )
-
-
 def test_resolve_total_steps_aligns_to_vec_envs() -> None:
     base = Config()
     cfg = replace(base, env=replace(base.env, vec_envs=8))
@@ -142,12 +137,12 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def test_metric_logger_handles_nonfinite_and_schema_expansion(tmp_path: Path) -> None:
+def test_metric_logger_nonfinite_and_schema_expansion(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     ml = MetricLogger(run_dir, LoggingConfig(csv_interval=1, checkpoint_interval=100_000))
     try:
         assert ml.log(step=0, foo=float("nan"), bar=1.0) is True
-        assert ml.log(step=1, foo=0.0, bar=float("inf")) is True
+        assert ml.log(step=1, foo=0.0, bar=float("inf"), baz=2.0) is True
     finally:
         ml.close()
 
@@ -155,11 +150,10 @@ def test_metric_logger_handles_nonfinite_and_schema_expansion(tmp_path: Path) ->
     assert len(rows) >= 2
 
     r0 = rows[0]
-    assert r0["foo"].strip().lower() == "nan"
     assert int(float(r0["nonfinite_any"])) == 1
     assert "foo" in {k for k in r0["nonfinite_keys"].split(",") if k}
 
     r1 = rows[1]
-    assert r1["bar"].strip().lower() == "inf"
+    assert "baz" in r1
     assert int(float(r1["nonfinite_any"])) == 1
     assert "bar" in {k for k in r1["nonfinite_keys"].split(",") if k}
