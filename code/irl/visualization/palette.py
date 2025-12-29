@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import hashlib
 
-
 _METHOD_COLORS: dict[str, str] = {
-    "vanilla": "#7f7f7f",
-    "icm": "#ff7f0e",
-    "rnd": "#1f77b4",
-    "ride": "#8c564b",
-    "riac": "#9467bd",
-    "glpe": "#17becf",
-    "glpe_cache": "#2ca02c",
-    "glpe_lp_only": "#e377c2",
-    "glpe_impact_only": "#bcbd22",
-    "glpe_nogate": "#d62728",
+    "glpe": "#1B2A49",
+    "vanilla": "#8EC7E8",
+    "icm": "#93D18B",
+    "rnd": "#B8A5D1",
+    "ride": "#F3B07C",
+    "riac": "#F08A8A",
+    "glpe_lp_only": "#7ED6C2",
+    "glpe_impact_only": "#9FA9E8",
+    "glpe_nogate": "#D7C27A",
+    "glpe_cache": "#D49AC6",
 }
 
 _TAB20: tuple[str, ...] = (
