@@ -9,7 +9,7 @@ import typer
 
 from irl.visualization.data import read_scalars
 from irl.visualization.palette import color_for_component as _color_for_component
-from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 
 
@@ -130,9 +130,9 @@ def plot_timing_breakdown(
     ]
     comp_keys = [k for k, _, _ in components]
 
-    env_ids = [str(k) for k in sorted(groups_by_env.keys(), key=lambda x: str(x))]
+    env_ids = _sort_env_ids(list(groups_by_env.keys()))
     per_env: list[dict[str, object]] = []
-    union_methods: set[str] = set()
+    max_methods = 0
 
     for env_id in env_ids:
         by_method = groups_by_env.get(env_id)
@@ -182,13 +182,15 @@ def plot_timing_breakdown(
                 if len(totals) > 1
                 else 0.0
             )
-            method_rows.append((str(method).strip().lower(), comp_mean, total_mean, total_se, int(len(totals))))
+            method_rows.append(
+                (str(method).strip().lower(), comp_mean, total_mean, total_se, int(len(totals)))
+            )
 
         if not method_rows:
             continue
 
         methods_env = _method_order([m for m, *_ in method_rows])
-        union_methods |= set(methods_env)
+        max_methods = max(max_methods, int(len(methods_env)))
 
         by_name = {m: (cm, tm, te, n) for m, cm, tm, te, n in method_rows}
         per_env.append(
@@ -202,9 +204,6 @@ def plot_timing_breakdown(
     if not per_env:
         return []
 
-    methods_all = _method_order(sorted(union_methods))
-    max_methods = int(len(methods_all))
-
     fig_w = max(9.0, 1.2 + 0.9 * float(max_methods))
     fig_h = max(4.8, 3.6 * float(len(per_env)))
 
@@ -213,7 +212,7 @@ def plot_timing_breakdown(
         1,
         figsize=(float(fig_w), float(fig_h)),
         dpi=int(DPI),
-        sharex=True,
+        sharex=False,
         squeeze=False,
     )
 
@@ -227,15 +226,19 @@ def plot_timing_breakdown(
         ax = axes[i, 0]
         env_id = str(rec.get("env_id", ""))
         by_name = rec.get("by_name", {})
-        if not isinstance(by_name, dict):
-            by_name = {}
+        methods_env = rec.get("methods_env", [])
 
-        x = np.arange(len(methods_all), dtype=np.float64)
-        bottom = np.zeros((len(methods_all),), dtype=np.float64)
+        if not isinstance(by_name, dict) or not isinstance(methods_env, list) or not methods_env:
+            ax.axis("off")
+            continue
+
+        n_methods = int(len(methods_env))
+        x = np.arange(n_methods, dtype=np.float64)
+        bottom = np.zeros((n_methods,), dtype=np.float64)
 
         for key, _lab, color in components:
             vals = np.asarray(
-                [float(by_name.get(m, ({}, 0.0, 0.0, 0))[0].get(key, 0.0)) for m in methods_all],
+                [float(by_name.get(m, ({}, 0.0, 0.0, 0))[0].get(key, 0.0)) for m in methods_env],
                 dtype=np.float64,
             )
             ax.bar(
@@ -251,9 +254,18 @@ def plot_timing_breakdown(
             )
             bottom = bottom + vals
 
-        totals = np.asarray([float(by_name.get(m, ({}, 0.0, 0.0, 0))[1]) for m in methods_all], dtype=np.float64)
-        ses = np.asarray([float(by_name.get(m, ({}, 0.0, 0.0, 0))[2]) for m in methods_all], dtype=np.float64)
-        ns = np.asarray([int(by_name.get(m, ({}, 0.0, 0.0, 0))[3]) for m in methods_all], dtype=np.int64)
+        totals = np.asarray(
+            [float(by_name.get(m, ({}, 0.0, 0.0, 0))[1]) for m in methods_env],
+            dtype=np.float64,
+        )
+        ses = np.asarray(
+            [float(by_name.get(m, ({}, 0.0, 0.0, 0))[2]) for m in methods_env],
+            dtype=np.float64,
+        )
+        ns = np.asarray(
+            [int(by_name.get(m, ({}, 0.0, 0.0, 0))[3]) for m in methods_env],
+            dtype=np.int64,
+        )
 
         ax.errorbar(
             x,
@@ -285,17 +297,14 @@ def plot_timing_breakdown(
                 zorder=20,
             )
 
+        ax.set_xlim(-0.5, float(n_methods) - 0.5)
         ax.set_ylabel("Seconds/update")
         ax.set_title(f"{env_id} — Per-update runtime breakdown")
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(m) for m in methods_env], rotation=25, ha="right")
+
         apply_grid(ax)
         ax.set_axisbelow(True)
-
-        if i < int(len(per_env)) - 1:
-            ax.tick_params(axis="x", which="both", labelbottom=False)
-
-    axes[-1, 0].set_xticks(np.arange(len(methods_all), dtype=np.float64))
-    axes[-1, 0].set_xticklabels([str(m) for m in methods_all], rotation=25, ha="right")
-    axes[-1, 0].set_xlabel("Method")
 
     fig.legend(
         handles,
