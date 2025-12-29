@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -239,6 +240,36 @@ _TIME_COLS_UPDATE: tuple[str, ...] = (
 )
 
 
+def _steps_per_update_from_config(run_dir: Path) -> int | None:
+    cfg_path = Path(run_dir) / "config.json"
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+        cfg = json.loads(text)
+    except Exception:
+        return None
+
+    if not isinstance(cfg, dict):
+        return None
+
+    env = cfg.get("env")
+    ppo = cfg.get("ppo")
+    if not isinstance(env, dict) or not isinstance(ppo, dict):
+        return None
+
+    try:
+        vec_envs = int(env.get("vec_envs", 1) or 1)
+        rollout_steps = int(ppo.get("rollout_steps_per_env", 0) or 0)
+    except Exception:
+        return None
+
+    vec_envs = max(1, int(vec_envs))
+    rollout_steps = int(rollout_steps)
+    if rollout_steps <= 0:
+        return None
+
+    return int(vec_envs) * int(rollout_steps)
+
+
 def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
     try:
         df = read_scalars(Path(run_dir))
@@ -253,11 +284,15 @@ def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
         return None
 
     df["step"] = df["step"].astype(int)
-    df = df.loc[df["step"] > 0].copy()
+    df = df.loc[df["step"] >= 0].copy()
     if df.empty:
-        return np.asarray([0], dtype=np.int64), np.asarray([0.0], dtype=np.float64)
+        return None
 
     steps = df["step"].to_numpy(dtype=np.int64, copy=False)
+    if int(steps.size) <= 1:
+        step_out = np.asarray([0, int(steps[-1]) if int(steps.size) else 0], dtype=np.int64)
+        time_out = np.asarray([0.0, 0.0], dtype=np.float64)
+        return step_out, time_out
 
     dt = np.zeros((int(steps.size),), dtype=np.float64)
     for col in _TIME_COLS_UPDATE:
@@ -268,15 +303,21 @@ def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
 
     dt = np.clip(dt, 0.0, None)
 
-    d_step = np.diff(np.concatenate([np.asarray([0], dtype=np.int64), steps], axis=0))
-    pos = d_step[d_step > 0]
-    step_per_update = float(np.median(pos)) if int(pos.size) else 0.0
+    steps_per_update = _steps_per_update_from_config(Path(run_dir))
+    if steps_per_update is None:
+        d = np.diff(steps.astype(np.int64, copy=False), axis=0)
+        pos = d[d > 0]
+        steps_per_update = int(np.median(pos)) if int(pos.size) else 0
+    steps_per_update = int(max(1, int(steps_per_update)))
 
-    mult = np.ones_like(dt, dtype=np.float64)
-    if step_per_update > 0.0 and np.isfinite(step_per_update):
-        mult = np.maximum(1.0, np.rint(d_step.astype(np.float64) / step_per_update))
+    steps_all = np.concatenate([np.asarray([0], dtype=np.int64), steps], axis=0)
+    d_step = np.diff(steps_all).astype(np.int64, copy=False)
 
-    cum_s = np.cumsum(dt * mult, dtype=np.float64)
+    updates = np.ceil(d_step.astype(np.float64) / float(steps_per_update))
+    updates = np.where(np.isfinite(updates), updates, 1.0)
+    updates_i = np.maximum(1, updates.astype(np.int64, copy=False))
+
+    cum_s = np.cumsum(dt * updates_i, dtype=np.float64)
 
     step_out = np.concatenate([np.asarray([0], dtype=np.int64), steps], axis=0)
     time_out = np.concatenate([np.asarray([0.0], dtype=np.float64), cum_s], axis=0)
