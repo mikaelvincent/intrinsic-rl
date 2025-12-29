@@ -237,14 +237,9 @@ def plot_timing_breakdown(
 
         ax.legend(ncol=3, frameon=False, loc="upper left", bbox_to_anchor=(0.0, 1.15))
 
-        note = (
-            f"Window: last {int(round(100.0 * float(tail_frac)))}% of logged updates per run; "
-            "bars=mean across runs; error=SE(total)"
-        )
-        fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
-
         env_tag = str(env_id).replace("/", "-")
         out_path = Path(plots_root) / f"{env_tag}__timing_breakdown.png"
+        fig.tight_layout(rect=[0.0, 0.0, 0.84, 0.97])
         _save_fig(fig, out_path)
         plt.close(fig)
 
