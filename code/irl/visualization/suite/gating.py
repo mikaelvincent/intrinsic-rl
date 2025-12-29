@@ -6,7 +6,7 @@ from typing import Dict, List
 import typer
 
 from irl.visualization.data import aggregate_runs
-from irl.visualization.palette import color_for_method as _color_for_method
+from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
 from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 
@@ -46,7 +46,9 @@ def _generate_gating_plot(
             agg_rew = aggregate_runs(runs, metric="reward_mean", smooth=smooth, align=align_mode)
             agg_gate = aggregate_runs(runs, metric="gate_rate", smooth=smooth, align=align_mode)
             if agg_gate.n_runs == 0:
-                agg_gate = aggregate_runs(runs, metric="gate_rate_pct", smooth=smooth, align=align_mode)
+                agg_gate = aggregate_runs(
+                    runs, metric="gate_rate_pct", smooth=smooth, align=align_mode
+                )
         except Exception:
             continue
 
@@ -55,15 +57,17 @@ def _generate_gating_plot(
 
         fig, ax1 = plt.subplots(figsize=(9, 5.5), dpi=int(DPI))
 
-        c_rew = _color_for_method("vanilla")
-        c_gate = _color_for_method("glpe")
+        c_rew = _color_for_component("reward")
+        c_gate = _color_for_component("gate")
 
         ax1.plot(agg_rew.steps, agg_rew.mean, color=c_rew, linewidth=1.9, alpha=0.88, label="Reward")
         ax1.set_xlabel("Environment steps")
         ax1.set_ylabel("Extrinsic reward")
 
         ax2 = ax1.twinx()
-        is_pct = float(getattr(agg_gate.mean, "max", lambda: 0.0)()) > 1.1 if hasattr(agg_gate, "mean") else False
+        is_pct = (
+            float(getattr(agg_gate.mean, "max", lambda: 0.0)()) > 1.1 if hasattr(agg_gate, "mean") else False
+        )
         ylabel = "Gate rate (%)" if is_pct else "Gate rate (0–1)"
         if not is_pct:
             ax2.set_ylim(0, 1.05)
