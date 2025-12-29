@@ -100,7 +100,12 @@ def plot_eval_bars_by_env(
         )
         n_seeds = [int(rows_by_method[m].get("n_seeds", 0) or 0) for m in methods_present]
 
-        y_minmax = _finite_minmax(list(ci_lo) + list(ci_hi) + list(means))
+        thr = _solved_threshold(str(env_id))
+        y_vals = list(ci_lo) + list(ci_hi) + list(means)
+        if thr is not None:
+            y_vals.append(float(thr))
+
+        y_minmax = _finite_minmax(y_vals)
         if y_minmax is None:
             continue
         y_lo, y_hi = y_minmax
@@ -151,6 +156,7 @@ def plot_eval_bars_by_env(
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
         _set_y_minmax(ax, y_lo, y_hi)
+        _add_solved_threshold_line(ax, str(env_id))
 
         out = plots_root / f"{_env_tag(env_id)}__{filename_suffix}.png"
         _save_fig(fig, out)
@@ -242,6 +248,11 @@ def plot_eval_curves_by_env(
                 linewidth=0.0,
             )
 
+        thr = _solved_threshold(str(env_id))
+        if thr is not None:
+            all_ci_lo.append(float(thr))
+            all_ci_hi.append(float(thr))
+
         y_minmax = _finite_minmax(all_ci_lo + all_ci_hi)
         if y_minmax is not None:
             _set_y_minmax(ax, y_minmax[0], y_minmax[1])
@@ -250,6 +261,7 @@ def plot_eval_curves_by_env(
         ax.set_ylabel("Mean episode return")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, alpha=0.25, linestyle="--")
+        _add_solved_threshold_line(ax, str(env_id))
         ax.legend(loc="best")
 
         out = plots_root / f"{_env_tag(env_id)}__{filename_suffix}.png"
@@ -304,7 +316,9 @@ def plot_eval_scatter_by_env(
         if not methods:
             continue
 
-        uniq_steps = pd.to_numeric(df_env["ckpt_step"], errors="coerce").dropna().to_numpy(dtype=np.float64)
+        uniq_steps = pd.to_numeric(df_env["ckpt_step"], errors="coerce").dropna().to_numpy(
+            dtype=np.float64
+        )
         uniq_steps = uniq_steps[np.isfinite(uniq_steps)]
         uniq_steps = np.unique(uniq_steps)
 
@@ -378,10 +392,16 @@ def plot_eval_scatter_by_env(
                 pad = 0.06 * float(x_mm[1] - x_mm[0])
                 ax.set_xlim(float(x_mm[0]) - pad, float(x_mm[1]) + pad)
 
-        y_mm = _finite_minmax(y_all)
+        thr = _solved_threshold(str(env_id))
+        y_vals = list(y_all)
+        if thr is not None:
+            y_vals.append(float(thr))
+
+        y_mm = _finite_minmax(y_vals)
         if y_mm is not None:
             _set_y_minmax(ax, y_mm[0], y_mm[1])
 
+        _add_solved_threshold_line(ax, str(env_id))
         ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
 
         fig.tight_layout(rect=[0.0, 0.0, 0.82, 1.0])
@@ -448,6 +468,54 @@ def _reward_threshold_from_known(env_id: str) -> float | None:
     return None
 
 
+def _solved_threshold(env_id: str) -> float | None:
+    rt = _reward_threshold_from_gym_spec(str(env_id))
+    if rt is not None and np.isfinite(float(rt)):
+        return float(rt)
+
+    rt = _reward_threshold_from_known(str(env_id))
+    if rt is not None and np.isfinite(float(rt)):
+        return float(rt)
+
+    return None
+
+
+def _add_solved_threshold_line(ax, env_id: str) -> float | None:
+    thr = _solved_threshold(str(env_id))
+    if thr is None:
+        return None
+
+    thr_f = float(thr)
+    if not np.isfinite(thr_f):
+        return None
+
+    try:
+        ax.axhline(
+            thr_f,
+            linewidth=1.0,
+            alpha=0.6,
+            color="black",
+            linestyle="--",
+            zorder=0,
+        )
+        va = "bottom" if thr_f >= 0.0 else "top"
+        ax.text(
+            0.99,
+            thr_f,
+            f"solved: {_fmt_threshold(thr_f)}",
+            transform=ax.get_yaxis_transform(),
+            ha="right",
+            va=va,
+            fontsize=8,
+            alpha=0.85,
+            zorder=5,
+        )
+    except Exception:
+        return None
+
+    return thr_f
+
+
 def _best_final_threshold(df_env: pd.DataFrame) -> float | None:
     if df_env.empty:
         return None
@@ -509,7 +577,9 @@ def _maybe_lower_solved_threshold(
     reach = int(np.sum(best_returns >= float(thr_ref)))
     required_count = int(min(int(min_reach_count), n))
 
-    required_frac = float(max(float(min_reach_frac), float(required_count) / float(n))) if n > 0 else 1.0
+    required_frac = (
+        float(max(float(min_reach_frac), float(required_count) / float(n))) if n > 0 else 1.0
+    )
     reach_frac = float(reach) / float(n) if n > 0 else 0.0
 
     if reach >= required_count and reach_frac >= required_frac:
