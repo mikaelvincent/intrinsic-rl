@@ -6,7 +6,7 @@ from typing import Dict, List
 import typer
 
 from irl.visualization.data import aggregate_runs
-from irl.visualization.palette import color_for_method as _color_for_method
+from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
 from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 
@@ -57,7 +57,7 @@ def _generate_component_plot(
             agg_imp.steps,
             agg_imp.mean,
             label="Impact (novelty)",
-            color=_color_for_method("vanilla"),
+            color=_color_for_component("impact"),
             linewidth=1.9,
             alpha=0.88,
         )
@@ -65,14 +65,14 @@ def _generate_component_plot(
             agg_lp.steps,
             agg_lp.mean,
             label="LP (competence)",
-            color=_color_for_method("icm"),
+            color=_color_for_component("lp"),
             linewidth=1.9,
             alpha=0.88,
         )
 
         ax.set_xlabel("Environment steps")
         ax.set_ylabel("Running RMS")
-        ax.set_title(f"{env_id} — Intrinsic component evolution (GLPE) ({meta_title})")
+        ax.set_title(f"{env_id} â€” Intrinsic component evolution (GLPE) ({meta_title})")
 
         apply_grid(ax)
         ax.legend(loc="lower right", framealpha=float(LEGEND_FRAMEALPHA), fontsize=int(LEGEND_FONTSIZE))
