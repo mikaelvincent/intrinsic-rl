@@ -199,7 +199,9 @@ def plot_eval_auc_bars_by_env(
                 zorder=z,
             )
 
-        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        span = (
+            max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        )
         txt_off = 0.02 * span
         for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
             ax.text(
@@ -298,7 +300,9 @@ def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
     for col in _TIME_COLS_UPDATE:
         if col not in df.columns:
             continue
-        vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64, copy=False)
+        vals = (
+            pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64, copy=False)
+        )
         dt += vals
 
     dt = np.clip(dt, 0.0, None)
@@ -353,7 +357,9 @@ def _interp_extrap_1d(x: np.ndarray, y: np.ndarray, xq: np.ndarray) -> np.ndarra
     return np.maximum(out, 0.0)
 
 
-def _auc_from_time_curve(times_s: np.ndarray, returns: np.ndarray, *, budget_s: float) -> tuple[float, float]:
+def _auc_from_time_curve(
+    times_s: np.ndarray, returns: np.ndarray, *, budget_s: float
+) -> tuple[float, float]:
     x = np.asarray(times_s, dtype=np.float64).reshape(-1)
     y = np.asarray(returns, dtype=np.float64).reshape(-1)
 
@@ -375,13 +381,21 @@ def _auc_from_time_curve(times_s: np.ndarray, returns: np.ndarray, *, budget_s: 
     x = x[order]
     y = y[order]
 
-    uniq: dict[float, float] = {}
-    for i in range(int(x.size)):
-        uniq[float(x[i])] = float(y[i])
+    uniq_x: list[float] = []
+    uniq_y: list[float] = []
+    for xi, yi in zip(x.tolist(), y.tolist()):
+        if not uniq_x:
+            uniq_x.append(float(xi))
+            uniq_y.append(float(yi))
+            continue
+        if float(xi) == float(uniq_x[-1]):
+            uniq_y[-1] = float(yi)
+        else:
+            uniq_x.append(float(xi))
+            uniq_y.append(float(yi))
 
-    xs = np.asarray(sorted(uniq.keys()), dtype=np.float64)
-    ys = np.asarray([uniq[float(t)] for t in xs], dtype=np.float64)
-
+    xs = np.asarray(uniq_x, dtype=np.float64)
+    ys = np.asarray(uniq_y, dtype=np.float64)
     if xs.size == 0:
         return 0.0, 0.0
 
@@ -390,12 +404,33 @@ def _auc_from_time_curve(times_s: np.ndarray, returns: np.ndarray, *, budget_s: 
         ys = np.concatenate([np.asarray([ys[0]], dtype=np.float64), ys])
 
     budget = float(max(0.0, budget_s))
-    if xs.size and float(xs[-1]) < budget:
+    if not np.isfinite(budget) or budget <= 0.0:
+        return 0.0, 0.0
+
+    if float(xs[-1]) < budget:
         xs = np.concatenate([xs, np.asarray([budget], dtype=np.float64)])
         ys = np.concatenate([ys, np.asarray([ys[-1]], dtype=np.float64)])
+    elif float(xs[-1]) > budget:
+        j = int(np.searchsorted(xs, budget, side="right") - 1)
+        j = int(max(0, min(int(xs.size) - 1, j)))
+
+        if float(xs[j]) == budget:
+            xs = xs[: j + 1]
+            ys = ys[: j + 1]
+        else:
+            yb = float(ys[j])
+            if j + 1 < int(xs.size):
+                x0 = float(xs[j])
+                x1 = float(xs[j + 1])
+                if np.isfinite(x1 - x0) and x1 > x0:
+                    frac = float((budget - x0) / (x1 - x0))
+                    yb = float(ys[j]) + frac * float(ys[j + 1] - ys[j])
+
+            xs = np.concatenate([xs[: j + 1], np.asarray([budget], dtype=np.float64)])
+            ys = np.concatenate([ys[: j + 1], np.asarray([yb], dtype=np.float64)])
 
     auc = _trapezoid(ys, xs)
-    return float(auc), float(xs.max()) if xs.size else 0.0
+    return float(auc), float(budget)
 
 
 def plot_eval_auc_time_bars_by_env(
@@ -559,7 +594,15 @@ def plot_eval_auc_time_bars_by_env(
         if not curves:
             continue
 
-        budget_s = float(max(float(c["t_end_s"]) for c in curves))
+        t_ends = [
+            float(c["t_end_s"])
+            for c in curves
+            if np.isfinite(float(c["t_end_s"])) and float(c["t_end_s"]) > 0.0
+        ]
+        if not t_ends:
+            continue
+
+        budget_s = float(min(t_ends))
         if not (np.isfinite(budget_s) and budget_s > 0.0):
             continue
 
@@ -603,7 +646,9 @@ def plot_eval_auc_time_bars_by_env(
                 zorder=z,
             )
 
-        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        span = (
+            max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        )
         txt_off = 0.02 * span
         for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
             ax.text(
