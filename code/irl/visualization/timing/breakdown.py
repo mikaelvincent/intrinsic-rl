@@ -8,7 +8,7 @@ import pandas as pd
 import typer
 
 from irl.visualization.data import read_scalars
-from irl.visualization.palette import color_for_method as _color_for_method
+from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
 from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 
@@ -107,12 +107,12 @@ def plot_timing_breakdown(
     plt = apply_rcparams_paper()
 
     components = [
-        ("env_step", "Env step", _color_for_method("vanilla")),
-        ("policy", "Policy", _color_for_method("icm")),
-        ("intrinsic", "Intrinsic", _color_for_method("rnd")),
-        ("gae", "GAE", _color_for_method("ride")),
-        ("ppo", "PPO", _color_for_method("riac")),
-        ("other", "Other", _color_for_method("glpe_cache")),
+        ("env_step", "Env step", _color_for_component("env_step")),
+        ("policy", "Policy", _color_for_component("policy")),
+        ("intrinsic", "Intrinsic", _color_for_component("intrinsic")),
+        ("gae", "GAE", _color_for_component("gae")),
+        ("ppo", "PPO", _color_for_component("ppo")),
+        ("other", "Other", _color_for_component("other")),
     ]
     comp_keys = [k for k, _, _ in components]
 
@@ -229,7 +229,7 @@ def plot_timing_breakdown(
         ax.set_xticks(x)
         ax.set_xticklabels([str(m) for m in methods], rotation=25, ha="right")
         ax.set_ylabel("Seconds per update")
-        ax.set_title(f"{env_id} — Per-update runtime breakdown")
+        ax.set_title(f"{env_id} â€” Per-update runtime breakdown")
 
         apply_grid(ax)
         ax.set_axisbelow(True)
