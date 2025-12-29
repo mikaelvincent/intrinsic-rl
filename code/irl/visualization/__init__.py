@@ -5,8 +5,6 @@ from .plotting import (
     aggregate_runs,
     plot_normalized_summary,
     plot_trajectory_heatmap,
-    app,
-    main,
 )
 
 __all__ = [
@@ -14,6 +12,4 @@ __all__ = [
     "aggregate_runs",
     "plot_normalized_summary",
     "plot_trajectory_heatmap",
-    "app",
-    "main",
 ]
