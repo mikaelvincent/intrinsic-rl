@@ -72,6 +72,26 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
     return out
 
 
+_OBSOLETE_PLOT_PATTERNS: tuple[str, ...] = (
+    "*__glpe_extrinsic_vs_intrinsic.png",
+    "*__eval_scatter__paper_all_methods.png",
+)
+
+
+def _remove_obsolete_plots(plots_root: Path) -> list[Path]:
+    removed: list[Path] = []
+    root = Path(plots_root)
+    for pat in _OBSOLETE_PLOT_PATTERNS:
+        for p in sorted(root.glob(str(pat)), key=lambda x: x.name):
+            try:
+                if p.is_file():
+                    p.unlink()
+                    removed.append(p)
+            except Exception:
+                continue
+    return removed
+
+
 def _write_plots_manifest(path: Path, payload: dict[str, object]) -> None:
     try:
         text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -135,6 +155,13 @@ def run_plots_suite(
         typer.echo(msg)
         notes.append(str(msg))
 
+    removed = _remove_obsolete_plots(plots_root)
+    if removed:
+        removed_rel = [_rel(p, results_root) for p in removed]
+        msg = "[suite] Removed obsolete plots: " + ", ".join(removed_rel)
+        typer.echo(msg)
+        notes.append(str(msg))
+
     try:
         from irl.visualization.paper_figures import (
             load_eval_by_step_table,
@@ -143,8 +170,6 @@ def run_plots_suite(
             plot_eval_auc_bars_by_env,
             plot_eval_bars_by_env,
             plot_eval_curves_by_env,
-            plot_eval_scatter_by_env,
-            plot_glpe_extrinsic_vs_intrinsic,
             plot_glpe_state_gate_map,
             plot_steps_to_beat_by_env,
         )
@@ -176,17 +201,6 @@ def run_plots_suite(
 
         raw_path = results_root / "summary_raw.csv"
         raw_for_overlay = raw_path if raw_path.exists() else None
-        if raw_for_overlay is not None:
-            written.extend(
-                plot_eval_scatter_by_env(
-                    raw_path,
-                    plots_root=plots_root,
-                    methods_to_plot=methods_present,
-                    title="All evaluation returns (raw)",
-                    filename_suffix="paper_all_methods",
-                )
-                or []
-            )
 
         by_step_path = results_root / "summary_by_step.csv"
         if by_step_path.exists():
@@ -264,9 +278,6 @@ def run_plots_suite(
         traj_root = results_root / "plots" / "trajectories"
         if traj_root.exists():
             written.extend(plot_glpe_state_gate_map(traj_root=traj_root, plots_root=plots_root) or [])
-            written.extend(
-                plot_glpe_extrinsic_vs_intrinsic(traj_root=traj_root, plots_root=plots_root) or []
-            )
         else:
             msg = "[suite] No trajectories found; skipping GLPE trajectory plots."
             typer.echo(msg)
