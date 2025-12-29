@@ -4,15 +4,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-
-_PAPER_RCPARAMS: dict[str, Any] = {
+_STYLE_RCPARAMS: dict[str, Any] = {
     "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "font.size": 9,
-    "axes.titlesize": 10,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
+    "savefig.dpi": 150,
+    "font.size": 10,
+    "axes.titlesize": 12,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 10,
     "legend.fontsize": 8,
 }
 
@@ -26,7 +25,7 @@ def apply_rcparams_paper():
         pass
     import matplotlib.pyplot as plt
 
-    plt.rcParams.update(_PAPER_RCPARAMS)
+    plt.rcParams.update(_STYLE_RCPARAMS)
     return plt
 
 
@@ -34,7 +33,7 @@ def save_fig_atomic(
     fig,
     path: Path,
     *,
-    dpi: int = 300,
+    dpi: int = 150,
     bbox_inches: str = "tight",
     format: str | None = None,
 ) -> None:
