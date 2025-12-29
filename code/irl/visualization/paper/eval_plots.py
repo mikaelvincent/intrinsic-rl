@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from ..palette import color_for_method as _color_for_method
-from ..plot_utils import apply_rcparams_paper, save_fig_atomic
+from ..plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 
 
 def _style():
@@ -622,7 +622,7 @@ def plot_steps_to_beat_by_env(
     if not methods:
         return None
 
-    envs_present = sorted(set(raw_df["env_id"].unique().tolist()))
+    envs_present = _sort_env_ids(raw_df["env_id"].unique().tolist())
     envs = [e for e in envs_present if e in _SUPPORTED_SCORE_ENVS]
     if not envs:
         return None
