@@ -73,6 +73,8 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
 
 
 _OBSOLETE_PLOT_PATTERNS: tuple[str, ...] = (
+    "*__auc__paper_baselines.png",
+    "*__auc__paper_ablations.png",
     "*__glpe_extrinsic_vs_intrinsic.png",
     "*__eval_scatter__paper_all_methods.png",
 )
@@ -168,6 +170,7 @@ def run_plots_suite(
             load_eval_summary_table,
             paper_method_groups,
             plot_eval_auc_bars_by_env,
+            plot_eval_auc_time_bars_by_env,
             plot_eval_bars_by_env,
             plot_eval_curves_by_env,
             plot_glpe_state_gate_map,
@@ -177,6 +180,14 @@ def run_plots_suite(
         df_summary = load_eval_summary_table(summary_csv)
         methods_present = sorted(set(df_summary["method_key"].tolist()))
         baselines, ablations = paper_method_groups(methods_present)
+
+        all_methods: List[str] = []
+        for m in list(baselines) + list(ablations):
+            if m not in all_methods:
+                all_methods.append(m)
+
+        timing_groups: Dict[str, Dict[str, List[Path]]]
+        timing_groups = _groups_for_timing(root) if runs_root_exists else {}
 
         written.extend(
             plot_eval_bars_by_env(
@@ -232,19 +243,20 @@ def run_plots_suite(
                 plot_eval_auc_bars_by_env(
                     df_steps,
                     plots_root=plots_root,
-                    methods_to_plot=baselines,
+                    methods_to_plot=all_methods,
                     title="Sample efficiency (AUC of eval return)",
-                    filename_suffix="paper_baselines",
+                    filename_suffix="paper_all_methods",
                 )
                 or []
             )
             written.extend(
-                plot_eval_auc_bars_by_env(
+                plot_eval_auc_time_bars_by_env(
                     df_steps,
+                    timing_groups=timing_groups,
                     plots_root=plots_root,
-                    methods_to_plot=ablations,
-                    title="Sample efficiency (AUC of eval return)",
-                    filename_suffix="paper_ablations",
+                    methods_to_plot=all_methods,
+                    title="Time efficiency (AUC of eval return)",
+                    filename_suffix="paper_all_methods",
                 )
                 or []
             )
@@ -282,9 +294,6 @@ def run_plots_suite(
             msg = "[suite] No trajectories found; skipping GLPE trajectory plots."
             typer.echo(msg)
             notes.append(str(msg))
-
-        timing_groups: Dict[str, Dict[str, List[Path]]]
-        timing_groups = _groups_for_timing(root) if runs_root_exists else {}
 
         try:
             from irl.visualization.paper.training_plots import plot_training_reward_decomposition
