@@ -16,6 +16,17 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+def _is_ablation_suffix(filename_suffix: str) -> bool:
+    return "ablation" in str(filename_suffix).strip().lower()
+
+
+def _has_glpe_and_variant(method_keys: Iterable[str]) -> bool:
+    keys = {str(k).strip().lower() for k in method_keys if str(k).strip()}
+    if "glpe" not in keys:
+        return False
+    return any(k.startswith("glpe_") for k in keys)
+
+
 def _finite_minmax(vals: Iterable[float]) -> tuple[float, float] | None:
     arr = np.asarray([float(v) for v in vals], dtype=np.float64).reshape(-1)
     arr = arr[np.isfinite(arr)]
@@ -53,6 +64,8 @@ def plot_eval_bars_by_env(
     want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
     if not want:
         return []
+
+    ablation_mode = _is_ablation_suffix(filename_suffix)
 
     label_by_key: dict[str, str] = {}
     if "method_key" in summary_df.columns and "method" in summary_df.columns:
@@ -96,16 +109,25 @@ def plot_eval_bars_by_env(
         if not methods_present:
             continue
 
+        if ablation_mode and not _has_glpe_and_variant(methods_present):
+            continue
+
         means = np.asarray(
             [float(rows_by_method[m].get("mean_return_mean", float("nan"))) for m in methods_present],
             dtype=np.float64,
         )
         ci_lo = np.asarray(
-            [float(rows_by_method[m].get("mean_return_ci95_lo", float("nan"))) for m in methods_present],
+            [
+                float(rows_by_method[m].get("mean_return_ci95_lo", float("nan")))
+                for m in methods_present
+            ],
             dtype=np.float64,
         )
         ci_hi = np.asarray(
-            [float(rows_by_method[m].get("mean_return_ci95_hi", float("nan"))) for m in methods_present],
+            [
+                float(rows_by_method[m].get("mean_return_ci95_hi", float("nan")))
+                for m in methods_present
+            ],
             dtype=np.float64,
         )
         n_seeds = [int(rows_by_method[m].get("n_seeds", 0) or 0) for m in methods_present]
@@ -169,7 +191,7 @@ def plot_eval_bars_by_env(
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
         ax.set_ylabel("Mean episode return")
-        ax.set_title(f"{env_id} — {title}")
+        ax.set_title(f"{env_id} â€” {title}")
 
         add_solved_threshold_line(ax, str(env_id))
         apply_grid(ax)
