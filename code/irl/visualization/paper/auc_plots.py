@@ -6,40 +6,13 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from ..palette import color_for_method as _color_for_method
-from ..plot_utils import apply_rcparams_paper, save_fig_atomic
-
-
-def _style():
-    return apply_rcparams_paper()
-
-
-def _save_fig(fig, path: Path) -> None:
-    save_fig_atomic(fig, Path(path))
+from irl.visualization.palette import color_for_method as _color_for_method
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
+from irl.visualization.style import DPI, FIGSIZE, apply_grid
 
 
 def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
-
-
-def _finite_minmax(vals: Sequence[float]) -> tuple[float, float] | None:
-    arr = np.asarray([float(v) for v in vals], dtype=np.float64).reshape(-1)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
-        return None
-    return float(arr.min()), float(arr.max())
-
-
-def _set_y_minmax(ax, lo: float, hi: float) -> None:
-    if not (np.isfinite(lo) and np.isfinite(hi)):
-        return
-    if float(lo) == float(hi):
-        pad = 1.0 if abs(float(lo)) < 1.0 else 0.05 * abs(float(lo))
-        ax.set_ylim(float(lo) - pad, float(hi) + pad)
-        return
-    span = float(hi - lo)
-    pad = max(1e-6, 0.08 * span)
-    ax.set_ylim(float(lo) - pad, float(hi) + pad)
 
 
 def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
@@ -49,19 +22,12 @@ def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
         return float(np.trapz(y, x))
 
 
-def _auc_from_curve(
-    steps: np.ndarray,
-    mean: np.ndarray,
-    ci_lo: np.ndarray | None,
-    ci_hi: np.ndarray | None,
-) -> tuple[float, float | None, float | None, int]:
-    _ = ci_lo, ci_hi
-
+def _auc_from_curve(steps: np.ndarray, mean: np.ndarray) -> tuple[float, int]:
     x = np.asarray(steps, dtype=np.float64).reshape(-1)
     y = np.asarray(mean, dtype=np.float64).reshape(-1)
 
     if x.size == 0 or y.size == 0:
-        return 0.0, None, None, 0
+        return 0.0, 0
 
     n = int(min(x.size, y.size))
     x = x[:n]
@@ -69,7 +35,7 @@ def _auc_from_curve(
 
     finite = np.isfinite(x) & np.isfinite(y)
     if not bool(finite.any()):
-        return 0.0, None, None, 0
+        return 0.0, 0
 
     x = x[finite]
     y = y[finite]
@@ -86,7 +52,7 @@ def _auc_from_curve(
     y_i = np.asarray([uniq[int(s)] for s in steps_i], dtype=np.float64)
 
     if steps_i.size == 0:
-        return 0.0, None, None, 0
+        return 0.0, 0
 
     if float(steps_i[0]) > 0.0:
         steps_i = np.concatenate([np.asarray([0.0], dtype=np.float64), steps_i])
@@ -94,7 +60,7 @@ def _auc_from_curve(
 
     auc = _trapezoid(y_i, steps_i)
     max_step = int(steps_i.max()) if steps_i.size else 0
-    return float(auc), None, None, int(max_step)
+    return float(auc), int(max_step)
 
 
 def paper_method_groups(methods: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -137,19 +103,19 @@ def plot_eval_auc_bars_by_env(
     if not want:
         return []
 
-    label_by_key: dict[str, str] = {}
-    if "method" in df.columns:
-        label_by_key = (
-            df.drop_duplicates(subset=["method_key"], keep="first")
-            .set_index("method_key")["method"]
-            .astype(str)
-            .to_dict()
-        )
+    label_by_key = (
+        df.drop_duplicates(subset=["method_key"], keep="first")
+        .set_index("method_key")["method"]
+        .astype(str)
+        .to_dict()
+        if "method" in df.columns
+        else {}
+    )
 
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    plt = _style()
+    plt = apply_rcparams_paper()
     written: list[Path] = []
 
     for env_id in sorted(df["env_id"].unique().tolist()):
@@ -168,7 +134,7 @@ def plot_eval_auc_bars_by_env(
             steps = df_m["ckpt_step"].to_numpy(dtype=np.float64, copy=False)
             mean = pd.to_numeric(df_m["mean_return_mean"], errors="coerce").to_numpy(dtype=np.float64)
 
-            auc, _auc_lo, _auc_hi, max_step = _auc_from_curve(steps, mean, None, None)
+            auc, max_step = _auc_from_curve(steps, mean)
 
             n_seeds = 0
             if "n_seeds" in df_m.columns:
@@ -195,25 +161,16 @@ def plot_eval_auc_bars_by_env(
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
         ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
-        mm = _finite_minmax(vals.tolist())
-        if mm is None:
-            continue
-        y_lo, y_hi = mm
-        span = max(1e-9, float(y_hi - y_lo))
-        txt_off = 0.02 * span
-
         x = np.arange(len(auc_rows), dtype=np.float64)
 
-        fig, ax = plt.subplots(figsize=(max(6.5, 0.9 * len(auc_rows)), 4.2))
-        ax.bar(
-            x,
-            vals,
-            color=colors,
-            alpha=0.85,
-            edgecolor="white",
-            linewidth=0.6,
-        )
+        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
+        for i, (mk, v) in enumerate(zip([r["method_key"] for r in auc_rows], vals.tolist())):
+            alpha = 1.0 if str(mk) == "glpe" else 0.88
+            z = 10 if str(mk) == "glpe" else 2
+            ax.bar(float(x[i]), float(v), color=colors[i], alpha=float(alpha), edgecolor="none", linewidth=0.0, zorder=z)
 
+        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        txt_off = 0.02 * span
         for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
             ax.text(
                 float(xi),
@@ -223,6 +180,7 @@ def plot_eval_auc_bars_by_env(
                 va="bottom" if yi >= 0.0 else "top",
                 fontsize=8,
                 alpha=0.9,
+                zorder=30,
             )
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
@@ -230,14 +188,13 @@ def plot_eval_auc_bars_by_env(
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
         ax.set_ylabel("AUC (return × steps)")
-        ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
-        ax.grid(True, axis="y", alpha=0.25, linestyle="--")
+        ax.set_title(f"{env_id} — {title}")
 
-        _set_y_minmax(ax, y_lo, y_hi)
+        apply_grid(ax)
         fig.tight_layout()
 
         out = plots_root / f"{_env_tag(env_id)}__auc__{filename_suffix}.png"
-        _save_fig(fig, out)
+        save_fig_atomic(fig, out)
         plt.close(fig)
         written.append(out)
 
