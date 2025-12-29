@@ -15,6 +15,17 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+def _is_ablation_suffix(filename_suffix: str) -> bool:
+    return "ablation" in str(filename_suffix).strip().lower()
+
+
+def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
+    keys = {str(k).strip().lower() for k in method_keys if str(k).strip()}
+    if "glpe" not in keys:
+        return False
+    return any(k.startswith("glpe_") for k in keys)
+
+
 def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
     try:
         return float(np.trapezoid(y, x))
@@ -103,6 +114,8 @@ def plot_eval_auc_bars_by_env(
     if not want:
         return []
 
+    ablation_mode = _is_ablation_suffix(filename_suffix)
+
     label_by_key = (
         df.drop_duplicates(subset=["method_key"], keep="first")
         .set_index("method_key")["method"]
@@ -121,6 +134,13 @@ def plot_eval_auc_bars_by_env(
     for env_id in sorted(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
         if df_env.empty:
+            continue
+
+        methods_present = sorted(set(df_env["method_key"].unique().tolist()) & set(want))
+        if not methods_present:
+            continue
+
+        if ablation_mode and not _has_glpe_and_variant(methods_present):
             continue
 
         auc_rows: list[dict[str, object]] = []
@@ -167,7 +187,15 @@ def plot_eval_auc_bars_by_env(
         for i, (mk, v) in enumerate(zip([r["method_key"] for r in auc_rows], vals.tolist())):
             alpha = 1.0 if str(mk) == "glpe" else 0.88
             z = 10 if str(mk) == "glpe" else 2
-            ax.bar(float(x[i]), float(v), color=colors[i], alpha=float(alpha), edgecolor="none", linewidth=0.0, zorder=z)
+            ax.bar(
+                float(x[i]),
+                float(v),
+                color=colors[i],
+                alpha=float(alpha),
+                edgecolor="none",
+                linewidth=0.0,
+                zorder=z,
+            )
 
         span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
         txt_off = 0.02 * span
