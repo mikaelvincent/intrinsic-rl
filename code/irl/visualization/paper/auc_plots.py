@@ -22,10 +22,6 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
-_EVAL_SEMANTICS = "Evaluation (extrinsic return only)"
-_AUC_NOTE = "AUC computed from mean curve; uncertainty not shown."
-
-
 def _finite_minmax(vals: Sequence[float]) -> tuple[float, float] | None:
     arr = np.asarray([float(v) for v in vals], dtype=np.float64).reshape(-1)
     arr = arr[np.isfinite(arr)]
@@ -233,14 +229,12 @@ def plot_eval_auc_bars_by_env(
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
-        ax.set_ylabel(f"AUC (mean episode return × env steps) — {_EVAL_SEMANTICS}")
+        ax.set_ylabel("AUC (return × steps)")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
 
         _set_y_minmax(ax, y_lo, y_hi)
-
-        fig.text(0.01, 0.01, f"{_EVAL_SEMANTICS}. {_AUC_NOTE}", ha="left", va="bottom", fontsize=8, alpha=0.9)
-        fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
+        fig.tight_layout()
 
         out = plots_root / f"{_env_tag(env_id)}__auc__{filename_suffix}.png"
         _save_fig(fig, out)
