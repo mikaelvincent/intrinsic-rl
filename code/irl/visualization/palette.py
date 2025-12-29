@@ -40,6 +40,20 @@ _TAB20: tuple[str, ...] = (
 
 _FALLBACK_COLORS: tuple[str, ...] = tuple(c for c in _TAB20 if c not in set(_METHOD_COLORS.values()))
 
+_COMPONENT_COLORS: dict[str, str] = {
+    "env_step": _METHOD_COLORS["vanilla"],
+    "policy": _METHOD_COLORS["icm"],
+    "intrinsic": _METHOD_COLORS["glpe"],
+    "gae": _METHOD_COLORS["ride"],
+    "ppo": _METHOD_COLORS["riac"],
+    "other": _METHOD_COLORS["rnd"],
+    "reward": _METHOD_COLORS["vanilla"],
+    "gate": _METHOD_COLORS["glpe"],
+    "impact": _METHOD_COLORS["ride"],
+    "lp": _METHOD_COLORS["glpe"],
+    "learning_progress": _METHOD_COLORS["glpe"],
+}
+
 
 def _stable_u32(*parts: str) -> int:
     blob = "|".join(str(p) for p in parts).encode("utf-8")
@@ -64,3 +78,20 @@ def color_for_method(method: object, *, default: str | None = None) -> str:
 
 def method_palette() -> dict[str, str]:
     return dict(_METHOD_COLORS)
+
+
+def normalize_component_key(component: object) -> str:
+    return str(component).strip().lower()
+
+
+def color_for_component(component: object, *, default: str | None = None) -> str:
+    key = normalize_component_key(component)
+    if key in _COMPONENT_COLORS:
+        return _COMPONENT_COLORS[key]
+    if default is not None:
+        return str(default)
+    return color_for_method(key)
+
+
+def component_palette() -> dict[str, str]:
+    return dict(_COMPONENT_COLORS)
