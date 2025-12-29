@@ -70,7 +70,6 @@ def _traj_run_and_ckpt_tag(traj_root: Path, p: Path) -> tuple[str | None, str | 
 
 
 def _select_latest_glpe_trajectories(traj_root: Path) -> list[tuple[str, str, int, Path]]:
-    # Choose the latest checkpoint per run to avoid mixing training stages in interpretability plots.
     root = Path(traj_root)
     if not root.exists():
         return []
@@ -191,7 +190,7 @@ def plot_glpe_state_gate_map(
         if proj is None:
             continue
 
-        x, y, xlab, ylab, proj_note = proj
+        x, y, xlab, ylab, _proj_note = proj
         g = gates_cat >= 0.5
 
         finite = np.isfinite(x) & np.isfinite(y)
@@ -247,13 +246,6 @@ def plot_glpe_state_gate_map(
             if y_mm[0] != y_mm[1]:
                 pad = 0.06 * (y_mm[1] - y_mm[0])
                 ax.set_ylim(y_mm[0] - pad, y_mm[1] + pad)
-
-        footer_bits: list[str] = []
-        if proj_note:
-            footer_bits.append(str(proj_note))
-        footer_bits.append(_latest_ckpt_note(list(recs)))
-        if footer_bits:
-            fig.text(0.01, 0.01, " | ".join(footer_bits), ha="left", va="bottom", fontsize=8, alpha=0.9)
 
         out = plots_root / f"{_env_tag(env_id)}__glpe_gate_map.png"
         _save_fig(fig, out)
@@ -371,9 +363,7 @@ def plot_glpe_extrinsic_vs_intrinsic(
             pad = 0.08 * (y_mm[1] - y_mm[0])
             ax.set_ylim(y_mm[0] - pad, y_mm[1] + pad)
 
-        note = _latest_ckpt_note(list(recs))
-        fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
-        fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
+        fig.tight_layout()
 
         out = plots_root / f"{_env_tag(env_id)}__glpe_extrinsic_vs_intrinsic.png"
         _save_fig(fig, out)
