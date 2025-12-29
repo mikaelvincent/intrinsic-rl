@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -51,3 +52,39 @@ def save_fig_atomic(
 
     fig.savefig(str(tmp), dpi=int(dpi), bbox_inches=bbox_inches, format=fmt)
     atomic_replace(tmp, path)
+
+
+_ENV_ORDER: tuple[str, ...] = (
+    "MountainCar-v0",
+    "BipedalWalker-v3",
+    "HalfCheetah-v5",
+    "Ant-v5",
+    "CarRacing-v3",
+    "Humanoid-v5",
+)
+
+_ENV_RANK: dict[str, int] = {env: i for i, env in enumerate(_ENV_ORDER)}
+
+
+def env_sort_key(env_id: object) -> tuple[int, str]:
+    s = str(env_id).strip()
+    if not s:
+        return (10_000, "")
+    key = s.replace("/", "-")
+    rank = _ENV_RANK.get(key)
+    if rank is None:
+        rank = 10_000
+    return (int(rank), key.lower())
+
+
+def sort_env_ids(env_ids: Iterable[object]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for e in env_ids:
+        s = str(e).strip()
+        if not s or s in seen:
+            continue
+        out.append(s)
+        seen.add(s)
+    out.sort(key=env_sort_key)
+    return out
