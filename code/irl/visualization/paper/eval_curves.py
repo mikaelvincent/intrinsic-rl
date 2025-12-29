@@ -28,6 +28,17 @@ def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
 
 
+def _is_ablation_suffix(filename_suffix: str) -> bool:
+    return "ablation" in str(filename_suffix).strip().lower()
+
+
+def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
+    keys = {str(k).strip().lower() for k in method_keys if str(k).strip()}
+    if "glpe" not in keys:
+        return False
+    return any(k.startswith("glpe_") for k in keys)
+
+
 def plot_eval_curves_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -45,6 +56,8 @@ def plot_eval_curves_by_env(
     want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
     if not want:
         return []
+
+    ablation_mode = _is_ablation_suffix(filename_suffix)
 
     df = by_step_df.copy()
     df["env_id"] = df["env_id"].astype(str).str.strip()
@@ -71,6 +84,9 @@ def plot_eval_curves_by_env(
 
         methods_present = sorted(set(df_env["method_key"].tolist()) & set(want))
         if not methods_present:
+            continue
+
+        if ablation_mode and not _has_glpe_and_variant(methods_present):
             continue
 
         uniq_steps = sorted(set(df_env["ckpt_step"].tolist()))
@@ -109,7 +125,7 @@ def plot_eval_curves_by_env(
 
         ax.set_xlabel("Checkpoint step (env steps)")
         ax.set_ylabel("Mean episode return")
-        ax.set_title(f"{env_id} — {title}")
+        ax.set_title(f"{env_id} â€” {title}")
 
         apply_grid(ax)
 
