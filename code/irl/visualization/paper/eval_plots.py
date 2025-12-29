@@ -414,6 +414,10 @@ _KNOWN_SCORE_THRESHOLDS: dict[str, float] = {
 }
 
 
+_SOLVED_MIN_REACH_FRAC: float = 0.25
+_SOLVED_MIN_REACH_COUNT: int = 2
+
+
 def _reward_threshold_from_gym_spec(env_id: str) -> float | None:
     try:
         import gymnasium as gym  # type: ignore
@@ -466,20 +470,98 @@ def _best_final_threshold(df_env: pd.DataFrame) -> float | None:
     return float(vals.max())
 
 
-def _score_to_beat(env_id: str, df_env: pd.DataFrame) -> tuple[float, str]:
+def _best_returns_from_summary_raw(df_env_raw: pd.DataFrame) -> np.ndarray:
+    if df_env_raw is None or df_env_raw.empty:
+        return np.empty((0,), dtype=np.float64)
+
+    cols = set(df_env_raw.columns.tolist())
+    if not {"method_key", "seed", "mean_return"}.issubset(cols):
+        return np.empty((0,), dtype=np.float64)
+
+    df = df_env_raw[["method_key", "seed", "mean_return"]].copy()
+    df["mean_return"] = pd.to_numeric(df["mean_return"], errors="coerce")
+    df = df.dropna(subset=["mean_return"]).copy()
+    if df.empty:
+        return np.empty((0,), dtype=np.float64)
+
+    try:
+        best = df.groupby(["method_key", "seed"], sort=False)["mean_return"].max()
+    except Exception:
+        return np.empty((0,), dtype=np.float64)
+
+    vals = pd.to_numeric(best, errors="coerce").to_numpy(dtype=np.float64, copy=False)
+    vals = vals[np.isfinite(vals)]
+    return vals
+
+
+def _maybe_lower_solved_threshold(
+    thr_ref: float,
+    source_ref: str,
+    best_returns: np.ndarray,
+    *,
+    min_reach_frac: float,
+    min_reach_count: int,
+) -> tuple[float, str]:
+    if best_returns.size == 0 or not np.isfinite(float(thr_ref)):
+        return float(thr_ref), str(source_ref)
+
+    n = int(best_returns.size)
+    reach = int(np.sum(best_returns >= float(thr_ref)))
+    required_count = int(min(int(min_reach_count), n))
+
+    required_frac = float(max(float(min_reach_frac), float(required_count) / float(n))) if n > 0 else 1.0
+    reach_frac = float(reach) / float(n) if n > 0 else 0.0
+
+    if reach >= required_count and reach_frac >= required_frac:
+        return float(thr_ref), str(source_ref)
+
+    q = float(np.clip(1.0 - required_frac, 0.0, 1.0))
+    thr_q = float(np.quantile(best_returns, q))
+
+    thr_out = float(min(float(thr_ref), float(thr_q)))
+    if not np.isfinite(thr_out):
+        return float(thr_ref), str(source_ref)
+
+    return thr_out, f"{str(source_ref)}+data(q={q:.2f})"
+
+
+def _score_to_beat(
+    env_id: str,
+    df_env: pd.DataFrame,
+    *,
+    df_env_raw: pd.DataFrame | None = None,
+    min_reach_frac: float = _SOLVED_MIN_REACH_FRAC,
+    min_reach_count: int = _SOLVED_MIN_REACH_COUNT,
+) -> tuple[float, str]:
     rt = _reward_threshold_from_gym_spec(env_id)
     if rt is not None:
-        return float(rt), "gym_spec"
+        thr = float(rt)
+        src = "gym_spec"
+    else:
+        rt = _reward_threshold_from_known(env_id)
+        if rt is not None:
+            thr = float(rt)
+            src = "known"
+        else:
+            rt = _best_final_threshold(df_env)
+            if rt is not None:
+                thr = float(rt)
+                src = "best_final"
+            else:
+                thr = 0.0
+                src = "fallback"
 
-    rt = _reward_threshold_from_known(env_id)
-    if rt is not None:
-        return float(rt), "known"
+    if df_env_raw is not None:
+        best_returns = _best_returns_from_summary_raw(df_env_raw)
+        thr, src = _maybe_lower_solved_threshold(
+            float(thr),
+            str(src),
+            best_returns,
+            min_reach_frac=float(min_reach_frac),
+            min_reach_count=int(min_reach_count),
+        )
 
-    rt = _best_final_threshold(df_env)
-    if rt is not None:
-        return float(rt), "best_final"
-
-    return 0.0, "fallback"
+    return float(thr), str(src)
 
 
 def _steps_to_reach_threshold(steps: np.ndarray, values: np.ndarray, threshold: float) -> float | None:
@@ -642,7 +724,8 @@ def plot_steps_to_beat_by_env(
     thresholds_full: dict[str, float] = {}
     for env_id in envs:
         df_env = by_step_df.loc[by_step_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
-        thr, _src = _score_to_beat(str(env_id), df_env)
+        df_env_raw = raw_df.loc[raw_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
+        thr, _src = _score_to_beat(str(env_id), df_env, df_env_raw=df_env_raw)
         thresholds_full[str(env_id)] = float(thr)
 
     thresholds_half = {e: _half_threshold(float(thresholds_full[e])) for e in envs}
