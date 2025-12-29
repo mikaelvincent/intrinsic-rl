@@ -14,6 +14,7 @@ import typer
 from irl.utils.checkpoint import atomic_replace
 from .data import aggregate_runs, ensure_parent, expand_run_dirs
 from .figures import plot_normalized_summary
+from .plot_utils import sort_env_ids as _sort_env_ids
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode="rich")
 
@@ -162,7 +163,7 @@ def cli_bars(
         ax.grid(True, axis="y", alpha=0.3)
         plt.xticks(rotation=30, ha="right")
     else:
-        envs = sorted(df["env_id"].unique())
+        envs = _sort_env_ids(df["env_id"].unique().tolist())
         rows: list[pd.DataFrame] = []
         for e in envs:
             d = df[df["env_id"] == e].copy()
