@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -9,18 +10,7 @@ import typer
 from irl.visualization.data import aggregate_runs
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import (
-    DPI,
-    FIGSIZE,
-    LEGEND_FRAMEALPHA,
-    LEGEND_FONTSIZE,
-    alpha_for_method,
-    apply_grid,
-    draw_order,
-    linestyle_for_method,
-    linewidth_for_method,
-    zorder_for_method,
-)
+from irl.visualization.style import DPI, FIGSIZE, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 
 
 def _is_effectively_one(vals: np.ndarray, *, tol: float) -> bool:
@@ -57,6 +47,87 @@ def _method_order(methods: list[str]) -> list[str]:
     return sorted(list(methods), key=key)
 
 
+def _interp_to(x_src: np.ndarray, y_src: np.ndarray, x_dst: np.ndarray) -> np.ndarray:
+    xs = np.asarray(x_src, dtype=np.float64).reshape(-1)
+    ys = np.asarray(y_src, dtype=np.float64).reshape(-1)
+    xd = np.asarray(x_dst, dtype=np.float64).reshape(-1)
+    if xs.size == 0 or ys.size == 0 or xd.size == 0:
+        return np.full((int(xd.size),), np.nan, dtype=np.float64)
+
+    n = int(min(xs.size, ys.size))
+    xs = xs[:n]
+    ys = ys[:n]
+
+    order = np.argsort(xs, kind="mergesort")
+    xs = xs[order]
+    ys = ys[order]
+
+    return np.interp(xd, xs, ys)
+
+
+def _read_intrinsic_cfg(run_dir: Path) -> tuple[float | None, float | None]:
+    cfg_path = Path(run_dir) / "config.json"
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+        cfg = json.loads(text)
+    except Exception:
+        return None, None
+
+    if not isinstance(cfg, dict):
+        return None, None
+
+    intrinsic = cfg.get("intrinsic")
+    if not isinstance(intrinsic, dict):
+        return None, None
+
+    eta = None
+    try:
+        v = float(intrinsic.get("eta"))
+        eta = v if np.isfinite(v) else None
+    except Exception:
+        eta = None
+
+    r_clip = None
+    try:
+        v = float(intrinsic.get("r_clip"))
+        r_clip = v if np.isfinite(v) else None
+    except Exception:
+        r_clip = None
+
+    return eta, r_clip
+
+
+def _median_finite(vals: list[float]) -> float | None:
+    if not vals:
+        return None
+    arr = np.asarray([float(v) for v in vals], dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None
+    return float(np.median(arr))
+
+
+def _infer_eta_from_effective(taper: np.ndarray, eta_eff: np.ndarray) -> float | None:
+    w = np.asarray(taper, dtype=np.float64).reshape(-1)
+    ee = np.asarray(eta_eff, dtype=np.float64).reshape(-1)
+    n = int(min(w.size, ee.size))
+    if n <= 0:
+        return None
+
+    w = w[:n]
+    ee = ee[:n]
+
+    m = np.isfinite(w) & np.isfinite(ee) & (w > 1e-6)
+    if not bool(np.any(m)):
+        return None
+
+    est = ee[m] / w[m]
+    est = est[np.isfinite(est)]
+    if est.size == 0:
+        return None
+    return float(np.median(est))
+
+
 def plot_intrinsic_taper_weight(
     groups_by_env: Mapping[str, Mapping[str, list[Path]]],
     *,
@@ -78,7 +149,6 @@ def plot_intrinsic_taper_weight(
         raise ValueError("align must be one of: union, intersection, interpolate")
 
     plt = apply_rcparams_paper()
-
     written: list[Path] = []
 
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: str(kv[0])):
@@ -94,62 +164,184 @@ def plot_intrinsic_taper_weight(
         if not glpe_methods:
             continue
 
-        aggs: list[tuple[str, object]] = []
-        any_active = False
-
+        candidates: list[str] = []
+        if "glpe" in glpe_methods:
+            candidates.append("glpe")
         for m in _method_order(list(glpe_methods.keys())):
+            if m != "glpe":
+                candidates.append(m)
+
+        chosen_method: str | None = None
+        agg_taper = None
+
+        for m in candidates:
             dirs = glpe_methods.get(m, [])
             if not dirs:
                 continue
-
             try:
-                agg = aggregate_runs(dirs, metric="intrinsic_taper_weight", smooth=int(smooth), align=align_mode)
+                agg = aggregate_runs(
+                    dirs,
+                    metric="intrinsic_taper_weight",
+                    smooth=int(smooth),
+                    align=align_mode,
+                )
             except Exception:
                 continue
 
-            if getattr(agg, "n_runs", 0) <= 0 or getattr(agg, "steps", np.array([])).size == 0:
+            steps = np.asarray(getattr(agg, "steps", np.array([])), dtype=np.int64)
+            mean = np.asarray(getattr(agg, "mean", np.array([])), dtype=np.float64)
+            if int(getattr(agg, "n_runs", 0) or 0) <= 0 or steps.size == 0 or mean.size == 0:
                 continue
 
-            mean_vals = np.asarray(getattr(agg, "mean"), dtype=np.float64)
-            if not _is_effectively_one(mean_vals, tol=float(inactive_tol)):
-                any_active = True
+            if not _is_effectively_one(mean, tol=float(inactive_tol)):
+                chosen_method = str(m)
+                agg_taper = agg
+                break
 
-            aggs.append((m, agg))
-
-        if not aggs or not any_active:
+        if chosen_method is None or agg_taper is None:
             continue
 
-        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
+        run_dirs = glpe_methods[chosen_method]
 
-        for m in draw_order([mm for mm, _ in aggs]):
-            agg = next((a for k, a in aggs if k == m), None)
-            if agg is None:
-                continue
-
-            steps = np.asarray(getattr(agg, "steps"), dtype=np.int64)
-            mean = np.asarray(getattr(agg, "mean"), dtype=np.float64)
-
-            if steps.size == 0 or mean.size == 0:
-                continue
-
-            ax.plot(
-                steps,
-                mean,
-                label=f"{m} (n={int(getattr(agg, 'n_runs', 0) or 0)})",
-                linewidth=float(linewidth_for_method(m)),
-                linestyle=linestyle_for_method(m),
-                alpha=float(alpha_for_method(m)),
-                color=_color_for_method(m),
-                zorder=int(zorder_for_method(m)),
+        try:
+            agg_final = aggregate_runs(
+                run_dirs,
+                metric="r_int_mean",
+                smooth=int(smooth),
+                align=align_mode,
             )
+        except Exception:
+            continue
+
+        if int(getattr(agg_final, "n_runs", 0) or 0) <= 0:
+            continue
+
+        steps = np.asarray(getattr(agg_taper, "steps", np.array([])), dtype=np.int64)
+        taper = np.asarray(getattr(agg_taper, "mean", np.array([])), dtype=np.float64)
+        if steps.size == 0 or taper.size == 0:
+            continue
+
+        f_steps = np.asarray(getattr(agg_final, "steps", np.array([])), dtype=np.int64)
+        f_mean = np.asarray(getattr(agg_final, "mean", np.array([])), dtype=np.float64)
+        final = _interp_to(f_steps, f_mean, steps)
+
+        try:
+            agg_raw = aggregate_runs(
+                run_dirs,
+                metric="r_int_raw_mean",
+                smooth=int(smooth),
+                align=align_mode,
+            )
+        except Exception:
+            agg_raw = None
+
+        raw = None
+        if agg_raw is not None and int(getattr(agg_raw, "n_runs", 0) or 0) > 0:
+            r_steps = np.asarray(getattr(agg_raw, "steps", np.array([])), dtype=np.int64)
+            r_mean = np.asarray(getattr(agg_raw, "mean", np.array([])), dtype=np.float64)
+            if r_steps.size and r_mean.size:
+                raw = _interp_to(r_steps, r_mean, steps)
+
+        try:
+            agg_eta_eff = aggregate_runs(
+                run_dirs,
+                metric="intrinsic_eta_effective",
+                smooth=int(smooth),
+                align=align_mode,
+            )
+        except Exception:
+            agg_eta_eff = None
+
+        eta_cfg_vals: list[float] = []
+        rclip_cfg_vals: list[float] = []
+        for rd in run_dirs:
+            eta_v, rc_v = _read_intrinsic_cfg(rd)
+            if eta_v is not None:
+                eta_cfg_vals.append(float(eta_v))
+            if rc_v is not None:
+                rclip_cfg_vals.append(float(rc_v))
+
+        eta = _median_finite(eta_cfg_vals)
+        r_clip = _median_finite(rclip_cfg_vals)
+        r_clip = float(r_clip) if r_clip is not None else 5.0
+
+        if eta is None and agg_eta_eff is not None and int(getattr(agg_eta_eff, "n_runs", 0) or 0) > 0:
+            ee_steps = np.asarray(getattr(agg_eta_eff, "steps", np.array([])), dtype=np.int64)
+            ee_mean = np.asarray(getattr(agg_eta_eff, "mean", np.array([])), dtype=np.float64)
+            eta_eff = _interp_to(ee_steps, ee_mean, steps)
+            eta = _infer_eta_from_effective(taper, eta_eff)
+
+        eps = 1e-6
+        mask = np.isfinite(taper) & (taper > eps)
+        original = np.full_like(final, np.nan, dtype=np.float64)
+        original[mask] = final[mask] / taper[mask]
+
+        if raw is not None and eta is not None and np.isfinite(float(eta)):
+            fallback = float(eta) * np.clip(raw, -float(r_clip), float(r_clip))
+            original[~mask] = fallback[~mask]
+        else:
+            last = float(original[mask][-1]) if bool(np.any(mask)) else 0.0
+            original[~mask] = last
+
+        c = _color_for_method(chosen_method)
+
+        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
+        ax2 = ax.twinx()
+
+        ax.plot(
+            steps,
+            original,
+            label="original intrinsic",
+            linestyle=":",
+            linewidth=2.0,
+            alpha=0.9,
+            color=c,
+            zorder=3,
+        )
+        ax.plot(
+            steps,
+            final,
+            label="final intrinsic",
+            linestyle="-",
+            linewidth=2.6,
+            alpha=1.0,
+            color=c,
+            zorder=4,
+        )
+        ax2.plot(
+            steps,
+            taper,
+            label="taper ratio",
+            linestyle="--",
+            linewidth=1.9,
+            alpha=0.85,
+            color="black",
+            zorder=2,
+        )
 
         ax.set_xlabel("Environment steps")
-        ax.set_ylabel("Intrinsic taper weight")
-        ax.set_title(f"{env_id} — GLPE intrinsic taper weight")
-        ax.set_ylim(-0.05, 1.05)
+        ax.set_ylabel("Intrinsic reward (mean)")
+        ax2.set_ylabel("Taper ratio")
+        ax2.set_ylim(-0.05, 1.05)
+
+        title_method = "glpe" if chosen_method == "glpe" else f"{chosen_method}"
+        ax.set_title(f"{env_id} - {title_method} intrinsic taper")
 
         apply_grid(ax)
-        ax.legend(loc="lower right", framealpha=float(LEGEND_FRAMEALPHA), fontsize=int(LEGEND_FONTSIZE))
+
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        by_label = {str(l): h for h, l in zip(h2 + h1, l2 + l1)}
+        order = ["taper ratio", "original intrinsic", "final intrinsic"]
+        handles = [by_label[k] for k in order if k in by_label]
+        labels = [k for k in order if k in by_label]
+        ax.legend(
+            handles,
+            labels,
+            loc="lower right",
+            framealpha=float(LEGEND_FRAMEALPHA),
+            fontsize=int(LEGEND_FONTSIZE),
+        )
 
         env_tag = str(env_id).replace("/", "-")
         out_path = plots_root / f"{env_tag}__glpe_intrinsic_taper.png"
