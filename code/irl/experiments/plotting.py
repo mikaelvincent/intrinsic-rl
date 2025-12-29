@@ -175,7 +175,8 @@ def run_plots_suite(
         )
 
         raw_path = results_root / "summary_raw.csv"
-        if raw_path.exists():
+        raw_for_overlay = raw_path if raw_path.exists() else None
+        if raw_for_overlay is not None:
             written.extend(
                 plot_eval_scatter_by_env(
                     raw_path,
@@ -197,6 +198,7 @@ def run_plots_suite(
                     methods_to_plot=baselines,
                     title="Learning curves (evaluation)",
                     filename_suffix="paper_baselines_curves",
+                    summary_raw_csv=raw_for_overlay,
                 )
                 or []
             )
@@ -207,6 +209,7 @@ def run_plots_suite(
                     methods_to_plot=ablations,
                     title="Ablations over training (evaluation)",
                     filename_suffix="paper_ablations_curves",
+                    summary_raw_csv=raw_for_overlay,
                 )
                 or []
             )
