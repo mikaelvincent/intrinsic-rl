@@ -11,7 +11,6 @@ from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, 
 from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
 from .thresholds import _SUPPORTED_SCORE_ENVS, fmt_threshold, solved_threshold
 
-
 _SOLVED_MIN_REACH_FRAC: float = 0.25
 _SOLVED_MIN_REACH_COUNT: int = 2
 
@@ -46,6 +45,24 @@ def _load_summary_raw(path: Path) -> pd.DataFrame | None:
             out = out.loc[out["policy_mode"] == "mode"].copy()
 
     return out
+
+
+def _is_ablation_suffix(filename_suffix: str) -> bool:
+    return "ablation" in str(filename_suffix).strip().lower()
+
+
+def _eligible_ablation_envs(raw_df: pd.DataFrame) -> set[str]:
+    eligible: set[str] = set()
+    if raw_df is None or raw_df.empty:
+        return eligible
+
+    for env_id, g in raw_df.groupby("env_id", sort=False):
+        methods = {str(m).strip().lower() for m in g["method_key"].unique().tolist()}
+        if "glpe" not in methods:
+            continue
+        if any(m.startswith("glpe_") for m in methods):
+            eligible.add(str(env_id))
+    return eligible
 
 
 def _best_final_threshold(df_env: pd.DataFrame) -> float | None:
@@ -222,6 +239,8 @@ def plot_steps_to_beat_by_env(
     if not want:
         return None
 
+    ablation_mode = _is_ablation_suffix(filename_suffix)
+
     label_by_key = (
         by_step_df.drop_duplicates(subset=["method_key"], keep="first")
         .set_index("method_key")["method"]
@@ -234,6 +253,14 @@ def plot_steps_to_beat_by_env(
     raw_df = raw_df.loc[raw_df["env_id"].isin(_SUPPORTED_SCORE_ENVS)].copy()
     if raw_df.empty:
         return None
+
+    if ablation_mode:
+        eligible_envs = _eligible_ablation_envs(raw_df)
+        if not eligible_envs:
+            return None
+        raw_df = raw_df.loc[raw_df["env_id"].isin(eligible_envs)].copy()
+        if raw_df.empty:
+            return None
 
     methods_present = sorted(set(raw_df["method_key"].unique().tolist()))
     methods = [m for m in want if m in set(methods_present)]
@@ -372,7 +399,7 @@ def plot_steps_to_beat_by_env(
 
         def _pct_label(got: int, tot: int) -> str:
             if int(tot) <= 0:
-                return "∅"
+                return "âˆ…"
             pct = int(round(100.0 * float(got) / float(tot)))
             pct = int(max(0, min(100, pct)))
             return f"{pct}%"
@@ -405,7 +432,9 @@ def plot_steps_to_beat_by_env(
 
         thr_labels = []
         for env_id in envs:
-            thr_labels.append(f"{env_id}: {fmt_threshold(float(thresholds.get(env_id, float('nan'))))}")
+            thr_labels.append(
+                f"{env_id}: {fmt_threshold(float(thresholds.get(env_id, float('nan'))))}"
+            )
         _ = thr_labels
 
     _panel(axes[0], thresholds=thresholds_full, label="Solved threshold (successful runs only)")
@@ -418,7 +447,14 @@ def plot_steps_to_beat_by_env(
     handles = []
     labels = []
     for m in methods:
-        handles.append(plt.Line2D([], [], color=_color_for_method(m), lw=3.0 if m == "glpe" else 2.0))
+        handles.append(
+            plt.Line2D(
+                [],
+                [],
+                color=_color_for_method(m),
+                lw=3.0 if m == "glpe" else 2.0,
+            )
+        )
         labels.append(str(label_by_key.get(m, m)))
 
     fig.legend(
@@ -433,7 +469,10 @@ def plot_steps_to_beat_by_env(
     fig.suptitle(str(title))
     fig.tight_layout()
 
-    out = Path(plots_root) / f"steps_to_beat__{filename_suffix}__success_only__full_and_half.png"
+    out = (
+        Path(plots_root)
+        / f"steps_to_beat__{filename_suffix}__success_only__full_and_half.png"
+    )
     save_fig_atomic(fig, out)
     plt.close(fig)
     return out
