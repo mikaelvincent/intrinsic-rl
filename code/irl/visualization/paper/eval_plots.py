@@ -147,7 +147,7 @@ def plot_eval_bars_by_env(
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
         ax.set_xlabel("Method")
-        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
+        ax.set_ylabel("Mean episode return")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
         _set_y_minmax(ax, y_lo, y_hi)
@@ -247,7 +247,7 @@ def plot_eval_curves_by_env(
             _set_y_minmax(ax, y_minmax[0], y_minmax[1])
 
         ax.set_xlabel("Checkpoint step (env steps)")
-        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
+        ax.set_ylabel("Mean episode return")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, alpha=0.25, linestyle="--")
         ax.legend(loc="best")
@@ -365,7 +365,7 @@ def plot_eval_scatter_by_env(
             continue
 
         ax.set_xlabel("Checkpoint step (env steps)")
-        ax.set_ylabel(f"Mean episode return — {_EVAL_SEMANTICS}")
+        ax.set_ylabel("Mean episode return")
         ax.set_title(f"{env_id} — {title}", loc="left", fontweight="bold")
         ax.grid(True, alpha=0.25, linestyle="--")
 
@@ -384,12 +384,7 @@ def plot_eval_scatter_by_env(
 
         ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0), frameon=False, title="Method")
 
-        note = f"{_EVAL_SEMANTICS}. points=per seed×checkpoint (summary_raw.csv)"
-        if x_jitter != 0.0:
-            note += f" | x_jitter≈{x_jitter:.3g}"
-        fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
-
-        fig.tight_layout(rect=[0.0, 0.04, 0.82, 1.0])
+        fig.tight_layout(rect=[0.0, 0.0, 0.82, 1.0])
 
         out = plots_root / f"{_env_tag(env_id)}__eval_scatter__{filename_suffix}.png"
         _save_fig(fig, out)
@@ -414,7 +409,7 @@ _KNOWN_SCORE_THRESHOLDS: dict[str, float] = {
     "BipedalWalker-v3": 300.0,
     "CarRacing-v3": 900.0,
     "HalfCheetah-v5": 4800.0,
-    "Humanoid-v5": 6000.0,  # paper-based (Gymnasium spec uses None)
+    "Humanoid-v5": 6000.0,
     "MountainCar-v0": -110.0,
 }
 
@@ -645,12 +640,10 @@ def plot_steps_to_beat_by_env(
         by_env_method.setdefault((str(env_id), str(method_key)), []).append(curve)
 
     thresholds_full: dict[str, float] = {}
-    threshold_sources: dict[str, str] = {}
     for env_id in envs:
         df_env = by_step_df.loc[by_step_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
-        thr, src = _score_to_beat(str(env_id), df_env)
+        thr, _src = _score_to_beat(str(env_id), df_env)
         thresholds_full[str(env_id)] = float(thr)
-        threshold_sources[str(env_id)] = str(src)
 
     thresholds_half = {e: _half_threshold(float(thresholds_full[e])) for e in envs}
 
@@ -669,9 +662,7 @@ def plot_steps_to_beat_by_env(
         sharex=True,
     )
 
-    env_tick_labels = [
-        f"{e}\nthr={_fmt_threshold(float(thresholds_full.get(e, float('nan'))))}" for e in envs
-    ]
+    env_tick_labels = [f"{e}" for e in envs]
 
     def _panel(ax, *, thresholds: Mapping[str, float], label: str) -> None:
         meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
@@ -760,7 +751,7 @@ def plot_steps_to_beat_by_env(
                 )
 
         ax.set_ylabel("Steps to reach")
-        ax.set_title(label, loc="left", fontweight="bold")
+        ax.set_title(f"{label} (labels=% reached)", loc="left", fontweight="bold")
         ax.grid(True, axis="y", alpha=0.25, linestyle="--")
         ax.set_axisbelow(True)
 
@@ -776,6 +767,16 @@ def plot_steps_to_beat_by_env(
             text_mult = 1.0
             y_off = 0.03 * ymax
 
+        rot = 0 if n_methods <= 6 else 90
+        fs = 7 if n_methods <= 6 else 6
+
+        def _pct_label(got: int, tot: int) -> str:
+            if int(tot) <= 0:
+                return "∅"
+            pct = int(round(100.0 * float(got) / float(tot)))
+            pct = int(max(0, min(100, pct)))
+            return f"{pct}%"
+
         for ei in range(n_env):
             for mi in range(n_methods):
                 tot = int(n_total[ei, mi])
@@ -784,8 +785,19 @@ def plot_steps_to_beat_by_env(
                 off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
                 xpos = float(x[ei] + off)
 
+                txt = _pct_label(got, tot)
+
                 if tot <= 0:
-                    ax.text(xpos, base_y, "∅", ha="center", va="bottom", fontsize=7, alpha=0.75)
+                    ax.text(
+                        xpos,
+                        base_y,
+                        txt,
+                        ha="center",
+                        va="bottom",
+                        fontsize=fs,
+                        alpha=0.75,
+                        rotation=rot,
+                    )
                     continue
 
                 if got <= 0 or not np.isfinite(meds[ei, mi]):
@@ -793,11 +805,12 @@ def plot_steps_to_beat_by_env(
                     ax.text(
                         xpos,
                         base_y,
-                        f"0/{tot}",
+                        txt,
                         ha="center",
                         va="bottom",
-                        fontsize=7,
-                        alpha=0.85,
+                        fontsize=fs,
+                        alpha=0.9,
+                        rotation=rot,
                     )
                     continue
 
@@ -806,11 +819,12 @@ def plot_steps_to_beat_by_env(
                 ax.text(
                     xpos,
                     y_text,
-                    f"{got}/{tot}",
+                    txt,
                     ha="center",
                     va="bottom",
-                    fontsize=7,
+                    fontsize=fs,
                     alpha=0.9,
+                    rotation=rot,
                 )
 
         if not bool(finite.any()):
@@ -843,38 +857,8 @@ def plot_steps_to_beat_by_env(
         title="Method",
     )
 
-    thr_bits = [
-        f"{e}={_fmt_threshold(float(thresholds_full.get(e, float('nan'))))}({threshold_sources.get(e,'')})"
-        for e in envs
-    ]
-
-    used_sources = sorted(
-        {str(threshold_sources.get(e, "")).strip() for e in envs if str(threshold_sources.get(e, "")).strip()}
-    )
-    src_bits: list[str] = []
-    if "known" in used_sources:
-        src_bits.append("known=hard-coded map")
-    if "gym_spec" in used_sources:
-        src_bits.append("gym_spec=gymnasium spec.reward_threshold")
-    if "best_final" in used_sources:
-        src_bits.append("best_final=best final-step mean return")
-    if "fallback" in used_sources:
-        src_bits.append("fallback=0.0 (no threshold)")
-
-    src_note = (" Source tags: " + "; ".join(src_bits) + ".") if src_bits else ""
-
-    note = (
-        f"{_EVAL_SEMANTICS}. "
-        "Bars=median(IQR) steps over reaching runs; labels=reached/total; "
-        "non-reaching runs excluded. "
-        "Full thresholds (thr(source)): " + "; ".join(thr_bits) + ". "
-        "Half thresholds: 0.5× full for ≥0, 1.5× full for <0."
-        + src_note
-    )
-    fig.suptitle(f"{title} — {_EVAL_SEMANTICS}", y=0.995, fontweight="bold")
-    fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
-
-    fig.tight_layout(rect=[0.0, 0.05, 0.84, 0.97])
+    fig.suptitle(str(title), y=0.995, fontweight="bold")
+    fig.tight_layout(rect=[0.0, 0.0, 0.84, 0.97])
 
     out = Path(plots_root) / f"steps_to_beat__{filename_suffix}__success_only__full_and_half.png"
     _save_fig(fig, out)
