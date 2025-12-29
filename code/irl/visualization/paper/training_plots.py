@@ -175,12 +175,6 @@ def plot_training_reward_decomposition(
             ax.grid(True, alpha=0.25, linestyle="--")
             ax.legend(loc="best")
 
-            note = (
-                f"smooth={int(smooth)}, align={align_mode}, n_runs={int(agg_total.n_runs)}"
-                + ("" if has_int else " (intrinsic=total−extrinsic)")
-            )
-            fig.text(0.01, 0.01, note, ha="left", va="bottom", fontsize=8, alpha=0.9)
-
             out_path = out_root / f"{_env_tag(env_id)}__{_method_tag(method)}__train_reward_decomp.png"
             _save_fig(fig, out_path)
             plt.close(fig)
