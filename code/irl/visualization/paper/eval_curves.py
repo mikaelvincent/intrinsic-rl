@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Sequence
 
@@ -23,6 +24,9 @@ from irl.visualization.style import (
 )
 from .thresholds import add_solved_threshold_line
 
+SCATTER_POINT_SIZE: float = 18.0
+SCATTER_OFFSET_P_SCALE: float = 0.25
+
 
 def _env_tag(env_id: str) -> str:
     return str(env_id).replace("/", "-")
@@ -39,6 +43,76 @@ def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
     return any(k.startswith("glpe_") for k in keys)
 
 
+def _load_summary_raw(path: Path) -> pd.DataFrame | None:
+    p = Path(path)
+    if not p.exists():
+        return None
+
+    try:
+        df = pd.read_csv(p)
+    except Exception:
+        return None
+
+    required = {"method", "env_id", "seed", "ckpt_step", "mean_return"}
+    if not required.issubset(set(df.columns)):
+        return None
+
+    out = df.copy()
+    out["env_id"] = out["env_id"].astype(str).str.strip()
+    out["method"] = out["method"].astype(str).str.strip()
+    out["method_key"] = out["method"].str.lower().str.strip()
+
+    out["seed"] = pd.to_numeric(out["seed"], errors="coerce")
+    out["ckpt_step"] = pd.to_numeric(out["ckpt_step"], errors="coerce")
+    out["mean_return"] = pd.to_numeric(out["mean_return"], errors="coerce")
+    out = out.dropna(subset=["env_id", "method_key", "seed", "ckpt_step", "mean_return"]).copy()
+
+    out["seed"] = out["seed"].astype(int)
+    out["ckpt_step"] = out["ckpt_step"].astype(int)
+
+    if "policy_mode" in out.columns:
+        out["policy_mode"] = out["policy_mode"].astype(str).str.strip().str.lower()
+        if "mode" in set(out["policy_mode"].unique().tolist()):
+            out = out.loc[out["policy_mode"] == "mode"].copy()
+
+    return out
+
+
+def _point_width_in_x_units(ax, fig, *, point_size: float) -> float:
+    if str(ax.get_xscale()).strip().lower() != "linear":
+        return 0.0
+
+    try:
+        x0, x1 = ax.get_xlim()
+    except Exception:
+        return 0.0
+
+    span = float(x1 - x0)
+    if not math.isfinite(span) or span == 0.0:
+        return 0.0
+
+    pos = ax.get_position()
+    width_px = float(pos.width) * float(fig.get_figwidth()) * float(fig.dpi)
+    if not math.isfinite(width_px) or width_px <= 1.0:
+        return 0.0
+
+    diam_pt = math.sqrt(max(0.0, float(point_size)))
+    if diam_pt <= 0.0:
+        return 0.0
+
+    diam_px = diam_pt * float(fig.dpi) / 72.0
+    return float(diam_px) * (span / width_px)
+
+
+def _method_offset_multipliers(methods: Sequence[str]) -> dict[str, float]:
+    ms = [str(m).strip().lower() for m in methods if str(m).strip()]
+    n = int(len(ms))
+    if n <= 0:
+        return {}
+    center = (float(n) - 1.0) / 2.0
+    return {m: float(i) - center for i, m in enumerate(ms)}
+
+
 def plot_eval_curves_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -46,6 +120,7 @@ def plot_eval_curves_by_env(
     methods_to_plot: Sequence[str],
     title: str,
     filename_suffix: str,
+    summary_raw_csv: Path | None = None,
 ) -> list[Path]:
     if by_step_df is None or by_step_df.empty:
         return []
@@ -73,6 +148,10 @@ def plot_eval_curves_by_env(
         if "method" in df.columns
         else {}
     )
+
+    raw_df = None
+    if summary_raw_csv is not None:
+        raw_df = _load_summary_raw(Path(summary_raw_csv))
 
     plt = apply_rcparams_paper()
     written: list[Path] = []
@@ -147,6 +226,57 @@ def plot_eval_curves_by_env(
                 )
 
         fig.tight_layout()
+
+        if raw_df is not None:
+            df_raw_env = raw_df.loc[raw_df["env_id"] == str(env_id)].copy()
+            if not df_raw_env.empty:
+                methods_offset = [m for m in want if m in set(methods_present)]
+                mult = _method_offset_multipliers(methods_offset)
+
+                try:
+                    x0, x1 = ax.get_xlim()
+                    span_x = float(x1 - x0)
+                except Exception:
+                    span_x = 0.0
+
+                p = _point_width_in_x_units(ax, fig, point_size=float(SCATTER_POINT_SIZE))
+                if not math.isfinite(p) or p <= 0.0:
+                    p = 0.005 * abs(float(span_x)) if math.isfinite(span_x) else 0.0
+                p = float(p) * float(SCATTER_OFFSET_P_SCALE)
+
+                if math.isfinite(p) and p != 0.0 and mult:
+                    for mk in methods_offset:
+                        df_pts = df_raw_env.loc[df_raw_env["method_key"] == mk]
+                        if df_pts.empty:
+                            continue
+
+                        x_pts = pd.to_numeric(df_pts["ckpt_step"], errors="coerce").to_numpy(
+                            dtype=np.float64, copy=False
+                        )
+                        y_pts = pd.to_numeric(df_pts["mean_return"], errors="coerce").to_numpy(
+                            dtype=np.float64, copy=False
+                        )
+
+                        ok = np.isfinite(x_pts) & np.isfinite(y_pts)
+                        if not bool(ok.any()):
+                            continue
+
+                        x_pts = x_pts[ok]
+                        y_pts = y_pts[ok]
+
+                        x_off = x_pts + float(mult.get(mk, 0.0)) * float(p)
+
+                        ax.scatter(
+                            x_off,
+                            y_pts,
+                            s=float(SCATTER_POINT_SIZE),
+                            c=_color_for_method(mk),
+                            marker="o",
+                            edgecolors="none",
+                            linewidths=0.0,
+                            zorder=20,
+                            label="_nolegend_",
+                        )
 
         out = plots_root / f"{_env_tag(env_id)}__{filename_suffix}.png"
         save_fig_atomic(fig, out)
