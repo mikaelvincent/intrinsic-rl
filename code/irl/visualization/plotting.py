@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .cli import app, main
 from .data import (
     AggregateResult,
     aggregate_runs,
@@ -22,6 +21,4 @@ __all__ = [
     "ensure_parent",
     "plot_normalized_summary",
     "plot_trajectory_heatmap",
-    "app",
-    "main",
 ]
