@@ -13,6 +13,7 @@ import pandas as pd
 from irl.utils.checkpoint import atomic_replace
 from .data import ensure_parent
 from .palette import color_for_method as _color_for_method
+from .plot_utils import sort_env_ids as _sort_env_ids
 from .trajectory_projection import trajectory_projection
 
 
@@ -74,7 +75,7 @@ def plot_normalized_summary(
     base_rows = base_rows.drop_duplicates(subset=["env_id"], keep="last").set_index("env_id")
     baseline_by_env = base_rows["mean_return_mean"].to_dict()
 
-    envs_with_baseline = sorted(baseline_by_env.keys())
+    envs_with_baseline = _sort_env_ids(baseline_by_env.keys())
     if not envs_with_baseline:
         return
 
@@ -106,7 +107,7 @@ def plot_normalized_summary(
 
     score = df2.pivot_table(
         index="env_id", columns="method_key", values="score_mean", aggfunc="mean"
-    ).sort_index()
+    ).reindex(envs_with_baseline)
 
     if score.empty:
         return
