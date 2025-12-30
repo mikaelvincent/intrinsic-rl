@@ -8,13 +8,7 @@ import numpy as np
 
 from irl.methods.spec import paper_method_groups as _paper_method_groups
 from irl.visualization.data import aggregate_runs as _aggregate_runs
-from irl.visualization.labels import (
-    add_legend_rows_top,
-    add_row_label,
-    env_label,
-    legend_ncol,
-    method_label,
-)
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import (
@@ -237,13 +231,7 @@ def _plot_multienv_reward_decomp(
 
     methods = legend_order(sorted(methods_union))
     method_handles = [
-        plt.Line2D(
-            [],
-            [],
-            color=_color_for_method(m),
-            lw=3.0 if str(m) == "glpe" else 2.0,
-            linestyle="-",
-        )
+        plt.Line2D([], [], color=_color_for_method(m), lw=3.0 if str(m) == "glpe" else 2.0, linestyle="-")
         for m in methods
     ]
     method_labels = [method_label(m) for m in methods]
@@ -269,14 +257,13 @@ def _plot_multienv_reward_decomp(
         rows.append((method_handles, method_labels, legend_ncol(len(method_handles))))
     rows.append((style_handles, style_labels, legend_ncol(len(style_handles), max_cols=4)))
 
+    gap_pt = float(max(1.0, min(2.5, 0.22 * float(LEGEND_FONTSIZE))))
     row_gap = 0.012
     try:
         fig_h_in = float(fig.get_figheight())
         fig_h_pt = 72.0 * fig_h_in if fig_h_in > 0.0 else 0.0
         if fig_h_pt > 0.0:
-            # Match legend-row spacing to the legend-to-axes pad used by add_legend_rows_top().
-            pad_axes_pt = float(min(5.0, max(2.5, 0.006 * fig_h_pt)))
-            row_gap = float(pad_axes_pt / fig_h_pt)
+            row_gap = float(gap_pt) / float(fig_h_pt)
     except Exception:
         row_gap = 0.012
 
@@ -285,6 +272,8 @@ def _plot_multienv_reward_decomp(
         rows,
         fontsize=int(LEGEND_FONTSIZE),
         row_gap=float(row_gap),
+        pad_axes_pt=float(gap_pt),
+        legend_kwargs={"borderpad": 0.0, "borderaxespad": 0.0},
     )
     fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
