@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Mapping
 
@@ -128,6 +129,24 @@ def _infer_eta_from_effective(taper: np.ndarray, eta_eff: np.ndarray) -> float |
     return float(np.median(est))
 
 
+def _grid(n: int) -> tuple[int, int]:
+    nn = int(n)
+    if nn <= 0:
+        return 0, 0
+    if nn == 1:
+        return 1, 1
+    ncols = 1 if nn <= 2 else 2
+    nrows = int(math.ceil(float(nn) / float(ncols)))
+    return nrows, ncols
+
+
+def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
+    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
+    w = base_w if int(ncols) <= 1 else base_w * 1.75
+    h = base_h * float(max(1, int(nrows)))
+    return float(w), float(h)
+
+
 def plot_intrinsic_taper_weight(
     groups_by_env: Mapping[str, Mapping[str, list[Path]]],
     *,
@@ -148,8 +167,7 @@ def plot_intrinsic_taper_weight(
     if align_mode not in {"union", "intersection", "interpolate"}:
         raise ValueError("align must be one of: union, intersection, interpolate")
 
-    plt = apply_rcparams_paper()
-    written: list[Path] = []
+    env_recs: list[dict[str, object]] = []
 
     for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: str(kv[0])):
         if not isinstance(by_method, Mapping):
@@ -283,15 +301,47 @@ def plot_intrinsic_taper_weight(
             last = float(original[mask][-1]) if bool(np.any(mask)) else 0.0
             original[~mask] = last
 
-        c = _color_for_method(chosen_method)
+        env_recs.append(
+            {
+                "env_id": str(env_id),
+                "method": str(chosen_method),
+                "steps": steps,
+                "taper": taper,
+                "original": original,
+                "final": final,
+                "color": _color_for_method(chosen_method),
+            }
+        )
 
-        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
+    if not env_recs:
+        return []
+
+    plt = apply_rcparams_paper()
+    nrows, ncols = _grid(len(env_recs))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=_figsize(nrows, ncols),
+        dpi=int(DPI),
+        squeeze=False,
+    )
+    axes_flat = list(axes.reshape(-1))
+
+    for i, rec in enumerate(env_recs):
+        ax = axes_flat[i]
         ax2 = ax.twinx()
+
+        env_id = str(rec["env_id"])
+        method = str(rec["method"])
+        steps = np.asarray(rec["steps"], dtype=np.int64)
+        taper = np.asarray(rec["taper"], dtype=np.float64)
+        original = np.asarray(rec["original"], dtype=np.float64)
+        final = np.asarray(rec["final"], dtype=np.float64)
+        c = str(rec["color"])
 
         ax.plot(
             steps,
             original,
-            label="original intrinsic",
             linestyle=":",
             linewidth=2.0,
             alpha=0.9,
@@ -301,7 +351,6 @@ def plot_intrinsic_taper_weight(
         ax.plot(
             steps,
             final,
-            label="final intrinsic",
             linestyle="-",
             linewidth=2.6,
             alpha=1.0,
@@ -311,45 +360,55 @@ def plot_intrinsic_taper_weight(
         ax2.plot(
             steps,
             taper,
-            label="taper ratio",
             linestyle="--",
             linewidth=1.9,
             alpha=0.85,
             color="black",
             zorder=2,
         )
-
-        ax.set_xlabel("Environment steps")
-        ax.set_ylabel("Intrinsic reward (mean)")
-        ax2.set_ylabel("Taper ratio")
         ax2.set_ylim(-0.05, 1.05)
 
-        title_method = "glpe" if chosen_method == "glpe" else f"{chosen_method}"
-        ax.set_title(f"{env_id} - {title_method} intrinsic taper")
+        row = int(i // ncols)
+        col = int(i % ncols)
+        if row == nrows - 1:
+            ax.set_xlabel("Environment steps")
+        if col == 0:
+            ax.set_ylabel("Intrinsic reward (mean)")
+        if col == ncols - 1:
+            ax2.set_ylabel("Taper ratio")
 
+        ax.set_title(f"{env_id} — {method}")
         apply_grid(ax)
 
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        by_label = {str(l): h for h, l in zip(h2 + h1, l2 + l1)}
-        order = ["taper ratio", "original intrinsic", "final intrinsic"]
-        handles = [by_label[k] for k in order if k in by_label]
-        labels = [k for k in order if k in by_label]
-        ax.legend(
-            handles,
-            labels,
-            loc="lower right",
-            framealpha=float(LEGEND_FRAMEALPHA),
-            fontsize=int(LEGEND_FONTSIZE),
-        )
+    for j in range(len(env_recs), len(axes_flat)):
+        try:
+            axes_flat[j].axis("off")
+        except Exception:
+            pass
 
-        env_tag = str(env_id).replace("/", "-")
-        out_path = plots_root / f"{env_tag}__glpe_intrinsic_taper.png"
-        fig.tight_layout()
-        save_fig_atomic(fig, out_path)
-        plt.close(fig)
+    handles = [
+        plt.Line2D([], [], color="black", linewidth=2.0, linestyle="--"),
+        plt.Line2D([], [], color="black", linewidth=2.0, linestyle=":"),
+        plt.Line2D([], [], color="black", linewidth=2.6, linestyle="-"),
+    ]
+    labels = ["taper ratio", "original intrinsic", "final intrinsic"]
 
-        written.append(out_path)
-        typer.echo(f"[suite] Saved taper plot: {out_path}")
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=3,
+        framealpha=float(LEGEND_FRAMEALPHA),
+        fontsize=int(LEGEND_FONTSIZE),
+    )
 
-    return written
+    fig.suptitle("Intrinsic taper (GLPE family)")
+    fig.tight_layout(rect=[0.0, 0.07, 1.0, 0.94])
+
+    out_path = plots_root / "suite__intrinsic_taper.png"
+    save_fig_atomic(fig, out_path)
+    plt.close(fig)
+
+    typer.echo(f"[suite] Saved taper plot: {out_path}")
+    return [out_path]
