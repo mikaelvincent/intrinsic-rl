@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-FIGSIZE: tuple[float, float] = (9.0, 5.5)
-DPI: int = 150
+FIG_WIDTH: float = 7.0
+FIGSIZE: tuple[float, float] = (FIG_WIDTH, 4.0)
+DPI: int = 300
 
 GRID_ALPHA: float = 0.25
 
-LEGEND_FONTSIZE: int = 8
-LEGEND_FRAMEALPHA: float = 0.9
+LEGEND_FONTSIZE: int = 9
+LEGEND_FRAMEALPHA: float = 0.0
 
 PROPOSED_METHOD_KEY: str = "glpe"
 
