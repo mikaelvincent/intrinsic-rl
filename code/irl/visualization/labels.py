@@ -98,6 +98,8 @@ def add_legend_rows_top(
     y_top: float = 0.995,
     row_gap: float = 0.012,
     fontsize: int | None = None,
+    pad_axes_pt: float | None = None,
+    legend_kwargs: dict[str, object] | None = None,
 ) -> float:
     fs = int(LEGEND_FONTSIZE) if fontsize is None else int(fontsize)
 
@@ -113,26 +115,41 @@ def add_legend_rows_top(
             return 0.0
         return float(pt) / float(fig_h_pt)
 
-    # Keep the public fractional API, but clamp to a small physical gap so multi-row
-    # legend groups stack tightly and consistently across figure sizes.
     max_row_gap_pt = 5.0
     gap_pt = float(row_gap) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
     gap_pt = float(min(max_row_gap_pt, max(0.0, gap_pt)))
     gap_fig = _pt_to_fig(gap_pt)
 
-    # Small fixed clearance between legend block and the top subplot.
-    pad_axes_pt = float(0.006) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
-    pad_axes_pt = float(min(5.0, max(2.5, pad_axes_pt)))
-    pad_axes_fig = _pt_to_fig(pad_axes_pt)
+    if pad_axes_pt is None:
+        pad_pt = float(0.006) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
+        pad_pt = float(min(5.0, max(2.5, pad_pt)))
+    else:
+        try:
+            pad_pt = float(pad_axes_pt)
+        except Exception:
+            pad_pt = 0.0
+        pad_pt = float(min(5.0, max(0.0, pad_pt)))
+    pad_axes_fig = _pt_to_fig(pad_pt)
 
-    # Compensate for tight_layout()'s default padding so the visible gap between the
-    # legend block and the top subplot is governed primarily by pad_axes_pt.
     tight_layout_pad_mult = 1.08
     tight_pad_fig = _pt_to_fig(float(tight_layout_pad_mult) * float(fs))
 
     y = float(y_top)
     legends: list[object] = []
     renderer = None
+
+    base_leg_kwargs: dict[str, object] = {
+        "frameon": False,
+        "fontsize": fs,
+        "handlelength": 2.2,
+        "columnspacing": 1.2,
+        "handletextpad": 0.6,
+    }
+    if isinstance(legend_kwargs, dict):
+        for k, v in legend_kwargs.items():
+            if v is None:
+                continue
+            base_leg_kwargs[str(k)] = v
 
     for handles, labels, ncol in rows:
         if not handles or not labels:
@@ -144,11 +161,7 @@ def add_legend_rows_top(
             loc="upper center",
             bbox_to_anchor=(0.5, y),
             ncol=int(max(1, ncol)),
-            frameon=False,
-            fontsize=fs,
-            handlelength=2.2,
-            columnspacing=1.2,
-            handletextpad=0.6,
+            **base_leg_kwargs,
         )
         legends.append(leg)
 
