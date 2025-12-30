@@ -16,7 +16,8 @@ _SOLVED_MIN_REACH_COUNT: int = 2
 
 _BAR_ALPHA_MIN: float = 0.25
 _BAR_ALPHA_MAX: float = 0.95
-_PCT_TEXT_PAD_FRAC: float = 0.03
+_LABEL_TEXT_PAD_FRAC: float = 0.03
+_LABEL_BG_ALPHA: float = 0.25
 
 
 def _load_summary_raw(path: Path) -> pd.DataFrame | None:
@@ -220,21 +221,51 @@ def _threshold_fraction(threshold: float, frac: float) -> float:
     return thr * (2.0 - f)
 
 
-def _pct_label(got: int, tot: int) -> str:
-    if int(tot) <= 0:
+def _reach_label(reached: int, total: int) -> str:
+    tot = int(total)
+    if tot <= 0:
         return "—"
-    pct = int(round(100.0 * float(got) / float(tot)))
-    pct = int(max(0, min(100, pct)))
-    return f"{pct}%"
+    r = int(reached)
+    r = int(max(0, min(r, tot)))
+    return f"{r}/{tot}"
 
 
-def _pct_to_alpha(got: int, tot: int) -> float:
-    if int(tot) <= 0:
+def _reach_to_alpha(reached: int, total: int) -> float:
+    if int(total) <= 0:
         p = 0.0
     else:
-        p = float(got) / float(tot)
+        p = float(int(reached)) / float(int(total))
     p = float(np.clip(p, 0.0, 1.0))
     return float(_BAR_ALPHA_MIN + (_BAR_ALPHA_MAX - _BAR_ALPHA_MIN) * p)
+
+
+def _y_text_for_patch(patch: object, *, use_log: bool, pad_frac: float) -> float:
+    try:
+        y0 = float(getattr(patch, "get_y")())
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        return float("nan")
+
+    if not np.isfinite(y0) or not np.isfinite(h):
+        return float("nan")
+
+    y1 = y0 + h
+    if not np.isfinite(y1):
+        return float("nan")
+
+    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
+
+    if not use_log:
+        return float(y0 + frac * h)
+
+    if y0 <= 0.0 or y1 <= 0.0:
+        return float(y0 + frac * h)
+
+    ratio = float(y1 / y0)
+    if not np.isfinite(ratio) or ratio <= 1.0:
+        return float(y0)
+
+    return float(y0 * (ratio ** frac))
 
 
 def plot_steps_to_beat_by_env(
@@ -417,7 +448,7 @@ def plot_steps_to_beat_by_env(
             base_rgba = mcolors.to_rgba(_color_for_method(mk))
             env_idxs = np.flatnonzero(ok).astype(int, copy=False)
             for patch, ei in zip(bars.patches, env_idxs.tolist()):
-                a = _pct_to_alpha(int(n_reached[ei, mi]), int(n_total[ei, mi]))
+                a = _reach_to_alpha(int(n_reached[ei, mi]), int(n_total[ei, mi]))
                 patch.set_facecolor((base_rgba[0], base_rgba[1], base_rgba[2], float(a)))
                 patch.set_edgecolor((0.0, 0.0, 0.0, 1.0))
                 patch.set_linewidth(0.9)
@@ -438,8 +469,18 @@ def plot_steps_to_beat_by_env(
                 zorder=30,
             )
 
-        pct_fs = int(LEGEND_FONTSIZE)
-        bbox = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.35}
+        try:
+            font_default = float(plt.rcParams.get("font.size", 10))
+        except Exception:
+            font_default = 10.0
+        label_fs = int(round(font_default))
+
+        bbox = {
+            "boxstyle": "round,pad=0.12",
+            "facecolor": "white",
+            "edgecolor": "none",
+            "alpha": float(_LABEL_BG_ALPHA),
+        }
 
         for ei in range(n_env):
             for mi in range(n_methods):
@@ -447,22 +488,29 @@ def plot_steps_to_beat_by_env(
                 if patch is None:
                     continue
 
-                yv = float(meds[ei, mi])
-                if not np.isfinite(yv):
+                try:
+                    cx = float(patch.get_x()) + 0.5 * float(patch.get_width())
+                except Exception:
                     continue
 
-                y_text = float(base + float(_PCT_TEXT_PAD_FRAC) * float(max(0.0, yv - base)))
-                txt = _pct_label(int(n_reached[ei, mi]), int(n_total[ei, mi]))
+                y_text = _y_text_for_patch(
+                    patch,
+                    use_log=bool(use_log),
+                    pad_frac=float(_LABEL_TEXT_PAD_FRAC),
+                )
+                if not np.isfinite(float(y_text)):
+                    continue
+
+                txt = _reach_label(int(n_reached[ei, mi]), int(n_total[ei, mi]))
 
                 ax.text(
-                    float(x[ei] + (float(mi) - float(n_methods) / 2.0) * width + width / 2.0),
-                    y_text,
+                    float(cx),
+                    float(y_text),
                     txt,
                     ha="center",
                     va="bottom",
                     rotation=90,
-                    rotation_mode="anchor",
-                    fontsize=int(pct_fs),
+                    fontsize=int(label_fs),
                     color="black",
                     bbox=bbox,
                     clip_on=True,
