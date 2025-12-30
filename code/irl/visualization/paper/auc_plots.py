@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 
 from irl.visualization.data import read_scalars
+from irl.visualization.labels import add_row_label, env_label, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import DPI, FIGSIZE, apply_grid
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
 
 
 def _env_tag(env_id: str) -> str:
@@ -150,7 +151,11 @@ def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
     for col in _TIME_COLS_UPDATE:
         if col not in df.columns:
             continue
-        vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64, copy=False)
+        vals = (
+            pd.to_numeric(df[col], errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype=np.float64, copy=False)
+        )
         dt += vals
 
     dt = np.clip(dt, 0.0, None)
@@ -281,24 +286,6 @@ def _auc_from_time_curve(
     return float(auc), float(budget)
 
 
-def _grid(n: int) -> tuple[int, int]:
-    nn = int(n)
-    if nn <= 0:
-        return 0, 0
-    if nn == 1:
-        return 1, 1
-    ncols = 2
-    nrows = int(math.ceil(float(nn) / float(ncols)))
-    return nrows, ncols
-
-
-def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
-    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
-    w = base_w if int(ncols) <= 1 else base_w * 1.75
-    h = base_h * float(max(1, int(nrows)))
-    return float(w), float(h)
-
-
 def plot_eval_auc_bars_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -307,6 +294,7 @@ def plot_eval_auc_bars_by_env(
     title: str,
     filename_suffix: str,
 ) -> list[Path]:
+    _ = title
     if by_step_df is None or by_step_df.empty:
         return []
 
@@ -334,15 +322,6 @@ def plot_eval_auc_bars_by_env(
         return []
 
     ablation_mode = _is_ablation_suffix(filename_suffix)
-
-    label_by_key = (
-        df.drop_duplicates(subset=["method_key"], keep="first")
-        .set_index("method_key")["method"]
-        .astype(str)
-        .to_dict()
-        if "method" in df.columns
-        else {}
-    )
 
     env_recs: list[tuple[str, list[dict[str, object]]]] = []
 
@@ -381,7 +360,7 @@ def plot_eval_auc_bars_by_env(
             auc_rows.append(
                 {
                     "method_key": mk,
-                    "label": str(label_by_key.get(mk, mk)),
+                    "label": method_label(mk),
                     "auc": float(auc),
                     "n_seeds": int(n_seeds),
                 }
@@ -396,19 +375,20 @@ def plot_eval_auc_bars_by_env(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
+    nrows = int(len(env_recs))
+    height = max(2.8, 2.2 * float(nrows))
+
     plt = apply_rcparams_paper()
-    nrows, ncols = _grid(len(env_recs))
     fig, axes = plt.subplots(
         nrows,
-        ncols,
-        figsize=_figsize(nrows, ncols),
+        1,
+        figsize=(float(FIG_WIDTH), float(height)),
         dpi=int(DPI),
         squeeze=False,
     )
-    axes_flat = list(axes.reshape(-1))
 
     for i, (env_id, auc_rows) in enumerate(env_recs):
-        ax = axes_flat[i]
+        ax = axes[i, 0]
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
@@ -416,10 +396,9 @@ def plot_eval_auc_bars_by_env(
         ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
-
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
-            alpha = 1.0 if mk == "glpe" else 0.88
+            alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
             ax.bar(
                 float(x[j]),
@@ -450,27 +429,18 @@ def plot_eval_auc_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-
-        row = int(i // ncols)
-        col = int(i % ncols)
-        if row == nrows - 1:
-            ax.set_xlabel("Method")
-        if col == 0:
-            ax.set_ylabel("AUC (return × steps)")
-
-        ax.set_title(str(env_id))
+        ax.set_ylabel("AUC (return × steps)")
         apply_grid(ax)
 
-    for j in range(len(env_recs), len(axes_flat)):
-        try:
-            axes_flat[j].axis("off")
-        except Exception:
-            pass
+        if i != nrows - 1:
+            ax.tick_params(axis="x", which="both", labelbottom=False)
 
-    fig.suptitle(str(title))
-    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.94])
+        add_row_label(ax, env_label(env_id))
 
-    out = Path(plots_root) / f"eval_auc__{str(filename_suffix).strip()}.png"
+    axes[-1, 0].set_xlabel("Method")
+    fig.tight_layout()
+
+    out = Path(plots_root) / f"eval-auc-steps-{slugify(filename_suffix)}.png"
     save_fig_atomic(fig, out)
     plt.close(fig)
     return [out]
@@ -485,6 +455,7 @@ def plot_eval_auc_time_bars_by_env(
     title: str,
     filename_suffix: str,
 ) -> list[Path]:
+    _ = title
     if by_step_df is None or by_step_df.empty:
         return []
 
@@ -512,15 +483,6 @@ def plot_eval_auc_time_bars_by_env(
         return []
 
     ablation_mode = _is_ablation_suffix(filename_suffix)
-
-    label_by_key = (
-        df.drop_duplicates(subset=["method_key"], keep="first")
-        .set_index("method_key")["method"]
-        .astype(str)
-        .to_dict()
-        if "method" in df.columns
-        else {}
-    )
 
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
@@ -624,7 +586,7 @@ def plot_eval_auc_time_bars_by_env(
             curves.append(
                 {
                     "method_key": mk,
-                    "label": str(label_by_key.get(mk, mk)),
+                    "label": method_label(mk),
                     "times_s": times.astype(np.float64, copy=False),
                     "returns": returns.astype(np.float64, copy=False),
                     "n_seeds": int(n_seeds),
@@ -669,19 +631,20 @@ def plot_eval_auc_time_bars_by_env(
     if not env_recs:
         return []
 
+    nrows = int(len(env_recs))
+    height = max(2.8, 2.2 * float(nrows))
+
     plt = apply_rcparams_paper()
-    nrows, ncols = _grid(len(env_recs))
     fig, axes = plt.subplots(
         nrows,
-        ncols,
-        figsize=_figsize(nrows, ncols),
+        1,
+        figsize=(float(FIG_WIDTH), float(height)),
         dpi=int(DPI),
         squeeze=False,
     )
-    axes_flat = list(axes.reshape(-1))
 
     for i, (env_id, auc_rows, budget_s) in enumerate(env_recs):
-        ax = axes_flat[i]
+        ax = axes[i, 0]
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
@@ -692,7 +655,7 @@ def plot_eval_auc_time_bars_by_env(
 
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
-            alpha = 1.0 if mk == "glpe" else 0.88
+            alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
             ax.bar(
                 float(x[j]),
@@ -723,28 +686,19 @@ def plot_eval_auc_time_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-
-        row = int(i // ncols)
-        col = int(i % ncols)
-        if row == nrows - 1:
-            ax.set_xlabel("Method")
-        if col == 0:
-            ax.set_ylabel("AUC (return × seconds)")
-
-        budget_min = float(budget_s) / 60.0
-        ax.set_title(f"{env_id} (budget={budget_min:.1f} min)")
+        ax.set_ylabel("AUC (return × time)")
         apply_grid(ax)
 
-    for j in range(len(env_recs), len(axes_flat)):
-        try:
-            axes_flat[j].axis("off")
-        except Exception:
-            pass
+        if i != nrows - 1:
+            ax.tick_params(axis="x", which="both", labelbottom=False)
 
-    fig.suptitle(str(title))
-    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.94])
+        budget_min = float(budget_s) / 60.0
+        add_row_label(ax, f"{env_label(env_id)} ({budget_min:.1f} min)")
 
-    out = Path(plots_root) / f"eval_auc_time__{str(filename_suffix).strip()}.png"
+    axes[-1, 0].set_xlabel("Method")
+    fig.tight_layout()
+
+    out = Path(plots_root) / f"eval-auc-time-{slugify(filename_suffix)}.png"
     save_fig_atomic(fig, out)
     plt.close(fig)
     return [out]
