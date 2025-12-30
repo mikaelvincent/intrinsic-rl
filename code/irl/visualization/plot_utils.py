@@ -4,16 +4,51 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from irl.visualization.style import DPI, LEGEND_FONTSIZE
+
 _STYLE_RCPARAMS: dict[str, Any] = {
-    "figure.dpi": 150,
-    "savefig.dpi": 150,
+    "figure.dpi": int(DPI),
+    "savefig.dpi": int(DPI),
     "font.size": 10,
-    "axes.titlesize": 12,
     "axes.labelsize": 10,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
-    "legend.fontsize": 8,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": int(LEGEND_FONTSIZE),
+    "axes.unicode_minus": False,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
 }
+
+
+def _disable_matplotlib_titles() -> None:
+    import matplotlib.axes
+    import matplotlib.figure
+
+    if bool(getattr(matplotlib.axes.Axes, "_irl_titles_disabled", False)):
+        return
+
+    orig_set_title = matplotlib.axes.Axes.set_title
+    orig_suptitle = matplotlib.figure.Figure.suptitle
+
+    def _set_title_blank(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        txt = orig_set_title(self, "", pad=0.0)
+        try:
+            txt.set_visible(False)
+        except Exception:
+            pass
+        return txt
+
+    def _suptitle_blank(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        txt = orig_suptitle(self, "", y=1.0)
+        try:
+            txt.set_visible(False)
+        except Exception:
+            pass
+        return txt
+
+    matplotlib.axes.Axes.set_title = _set_title_blank  # type: ignore[assignment]
+    matplotlib.figure.Figure.suptitle = _suptitle_blank  # type: ignore[assignment]
+    setattr(matplotlib.axes.Axes, "_irl_titles_disabled", True)
 
 
 def apply_rcparams_paper():
@@ -26,6 +61,7 @@ def apply_rcparams_paper():
     import matplotlib.pyplot as plt
 
     plt.rcParams.update(_STYLE_RCPARAMS)
+    _disable_matplotlib_titles()
     return plt
 
 
@@ -33,7 +69,7 @@ def save_fig_atomic(
     fig,
     path: Path,
     *,
-    dpi: int = 150,
+    dpi: int = int(DPI),
     bbox_inches: str = "tight",
     format: str | None = None,
 ) -> None:
