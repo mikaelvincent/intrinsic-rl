@@ -77,6 +77,7 @@ _OBSOLETE_PLOT_PATTERNS: tuple[str, ...] = (
     "*__auc__paper_ablations.png",
     "*__glpe_extrinsic_vs_intrinsic.png",
     "*__eval_scatter__paper_all_methods.png",
+    "steps_to_beat__*__success_only__full_and_half.png",
 )
 
 
