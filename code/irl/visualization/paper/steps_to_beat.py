@@ -237,17 +237,6 @@ def _pct_to_alpha(got: int, tot: int) -> float:
     return float(_BAR_ALPHA_MIN + (_BAR_ALPHA_MAX - _BAR_ALPHA_MIN) * p)
 
 
-def _pct_fontsize(n_methods: int) -> int:
-    n = int(max(1, n_methods))
-    if n <= 4:
-        return 8
-    if n <= 6:
-        return 7
-    if n <= 8:
-        return 6
-    return 5
-
-
 def plot_steps_to_beat_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -449,8 +438,8 @@ def plot_steps_to_beat_by_env(
                 zorder=30,
             )
 
-        pct_fs = _pct_fontsize(n_methods)
-        bbox = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.65}
+        pct_fs = int(LEGEND_FONTSIZE)
+        bbox = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.35}
 
         for ei in range(n_env):
             for mi in range(n_methods):
