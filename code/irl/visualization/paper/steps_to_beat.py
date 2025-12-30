@@ -6,10 +6,11 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from irl.visualization.labels import add_legend_rows_top, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
-from .thresholds import _SUPPORTED_SCORE_ENVS, fmt_threshold, solved_threshold
+from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
+from .thresholds import _SUPPORTED_SCORE_ENVS, solved_threshold
 
 _SOLVED_MIN_REACH_FRAC: float = 0.25
 _SOLVED_MIN_REACH_COUNT: int = 2
@@ -277,6 +278,7 @@ def plot_steps_to_beat_by_env(
     filename_suffix: str,
     summary_raw_csv: Path | None = None,
 ) -> Path | None:
+    _ = title
     if by_step_df is None or by_step_df.empty:
         return None
 
@@ -299,14 +301,6 @@ def plot_steps_to_beat_by_env(
         return None
 
     ablation_mode = _is_ablation_suffix(filename_suffix)
-
-    label_by_key = (
-        by_step_df.drop_duplicates(subset=["method_key"], keep="first")
-        .set_index("method_key")["method"]
-        .to_dict()
-        if "method" in by_step_df.columns
-        else {}
-    )
 
     raw_df = raw_df.loc[raw_df["method_key"].isin(want)].copy()
     raw_df = raw_df.loc[raw_df["env_id"].isin(_SUPPORTED_SCORE_ENVS)].copy()
@@ -359,13 +353,10 @@ def plot_steps_to_beat_by_env(
 
     plt = apply_rcparams_paper()
     n_panels = 3
-    fig_w = max(9.0, 1.1 + 1.0 * float(len(envs)))
-    fig_h = 3.7 * float(n_panels)
-
     fig, axes = plt.subplots(
         n_panels,
         1,
-        figsize=(fig_w, fig_h),
+        figsize=(float(FIG_WIDTH), 8.6),
         dpi=int(DPI),
         sharex=True,
         squeeze=False,
@@ -376,7 +367,7 @@ def plot_steps_to_beat_by_env(
     width = 0.8 / float(max(1, n_methods))
     x = np.arange(n_env, dtype=np.float64)
 
-    def _panel(ax, *, thresholds: Mapping[str, float], label: str) -> None:
+    def _panel(ax, *, thresholds: Mapping[str, float], ylab: str) -> None:
         import matplotlib.colors as mcolors
 
         meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
@@ -469,12 +460,6 @@ def plot_steps_to_beat_by_env(
                 zorder=30,
             )
 
-        try:
-            font_default = float(plt.rcParams.get("font.size", 10))
-        except Exception:
-            font_default = 10.0
-        label_fs = int(round(font_default))
-
         bbox = {
             "boxstyle": "round,pad=0.12",
             "facecolor": "white",
@@ -510,7 +495,7 @@ def plot_steps_to_beat_by_env(
                     ha="center",
                     va="bottom",
                     rotation=90,
-                    fontsize=int(label_fs),
+                    fontsize=8,
                     color="black",
                     bbox=bbox,
                     clip_on=True,
@@ -518,20 +503,18 @@ def plot_steps_to_beat_by_env(
                     zorder=40,
                 )
 
-        ax.set_ylabel("Steps to reach")
-        ax.set_title(label)
+        ax.set_ylabel(str(ylab))
         apply_grid(ax)
-
         if use_log:
             ax.set_yscale("log")
 
-    _panel(axes[0, 0], thresholds=thresholds_full, label="Solved threshold (successful runs only)")
-    _panel(axes[1, 0], thresholds=thresholds_half, label="Half threshold (successful runs only)")
-    _panel(axes[2, 0], thresholds=thresholds_quarter, label="Quarter threshold (successful runs only)")
+    _panel(axes[0, 0], thresholds=thresholds_full, ylab="Training steps\n(solved threshold)")
+    _panel(axes[1, 0], thresholds=thresholds_half, ylab="Training steps\n(50% threshold)")
+    _panel(axes[2, 0], thresholds=thresholds_quarter, ylab="Training steps\n(25% threshold)")
 
     axes[-1, 0].set_xticks(x)
-    axes[-1, 0].set_xticklabels([str(e) for e in envs], rotation=20, ha="right")
-    axes[-1, 0].set_xlabel("Environment")
+    axes[-1, 0].set_xticklabels([env_label(e) for e in envs], rotation=20, ha="right")
+    axes[-1, 0].set_xlabel("Task")
 
     handles = []
     labels = []
@@ -544,21 +527,14 @@ def plot_steps_to_beat_by_env(
                 lw=3.0 if m == "glpe" else 2.0,
             )
         )
-        labels.append(str(label_by_key.get(m, m)))
+        labels.append(method_label(m))
 
-    fig.legend(
-        handles=handles,
-        labels=labels,
-        loc="lower right",
-        framealpha=float(LEGEND_FRAMEALPHA),
-        fontsize=int(LEGEND_FONTSIZE),
-        title=None,
-    )
+    top = 1.0
+    if handles:
+        top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles)))])
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
-    fig.suptitle(str(title))
-    fig.tight_layout(rect=[0.0, 0.04, 1.0, 0.95])
-
-    out = Path(plots_root) / f"steps_to_beat__{filename_suffix}__success_only__threshold_fractions.png"
+    out = Path(plots_root) / f"steps-to-beat-{slugify(filename_suffix)}.png"
     save_fig_atomic(fig, out)
     plt.close(fig)
     return out
