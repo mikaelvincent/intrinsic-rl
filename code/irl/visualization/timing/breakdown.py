@@ -8,9 +8,10 @@ import pandas as pd
 import typer
 
 from irl.visualization.data import read_scalars
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
 
 
 def _tail_frame(df: pd.DataFrame, *, tail_frac: float, min_rows: int, max_rows: int) -> pd.DataFrame:
@@ -90,18 +91,6 @@ def _method_order(methods: Sequence[str]) -> list[str]:
     return sorted(ms, key=key)
 
 
-def _cleanup_timing_breakdown_outputs(plots_root: Path) -> None:
-    root = Path(plots_root)
-    if not root.exists():
-        return
-    for p in sorted(root.glob("*__timing_breakdown.png"), key=lambda x: str(x)):
-        try:
-            if p.is_file():
-                p.unlink()
-        except Exception:
-            pass
-
-
 def plot_timing_breakdown(
     groups_by_env: Mapping[str, Mapping[str, list[Path]]],
     *,
@@ -116,12 +105,10 @@ def plot_timing_breakdown(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    _cleanup_timing_breakdown_outputs(plots_root)
-
     plt = apply_rcparams_paper()
 
     components = [
-        ("env_step", "Env step", _color_for_component("env_step")),
+        ("env_step", "Environment step", _color_for_component("env_step")),
         ("policy", "Policy", _color_for_component("policy")),
         ("intrinsic", "Intrinsic", _color_for_component("intrinsic")),
         ("gae", "GAE", _color_for_component("gae")),
@@ -204,23 +191,20 @@ def plot_timing_breakdown(
     if not per_env:
         return []
 
-    fig_w = max(9.0, 1.2 + 0.9 * float(max_methods))
-    fig_h = max(4.8, 3.6 * float(len(per_env)))
+    fig_w = float(FIG_WIDTH)
+    fig_h = max(3.4, 2.3 * float(len(per_env)))
 
     fig, axes = plt.subplots(
         int(len(per_env)),
         1,
-        figsize=(float(fig_w), float(fig_h)),
+        figsize=(fig_w, float(fig_h)),
         dpi=int(DPI),
         sharex=False,
         squeeze=False,
     )
 
-    handles = []
-    labels = []
-    for _k, lab, col in components:
-        handles.append(plt.Line2D([], [], color=col, lw=8.0))
-        labels.append(str(lab))
+    legend_handles = [plt.Line2D([], [], color=col, lw=8.0) for _k, _lab, col in components]
+    legend_labels = [str(lab) for _k, lab, _c in components]
 
     for i, rec in enumerate(per_env):
         ax = axes[i, 0]
@@ -249,7 +233,7 @@ def plot_timing_breakdown(
                 color=color,
                 edgecolor="none",
                 linewidth=0.0,
-                alpha=0.88,
+                alpha=0.9,
                 zorder=2,
             )
             bottom = bottom + vals
@@ -298,26 +282,20 @@ def plot_timing_breakdown(
             )
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
-        ax.set_ylabel("Seconds/update")
-        ax.set_title(f"{env_id} — Per-update runtime breakdown")
+        ax.set_ylabel("Seconds per update")
         ax.set_xticks(x)
-        ax.set_xticklabels([str(m) for m in methods_env], rotation=25, ha="right")
+        ax.set_xticklabels([method_label(m) for m in methods_env], rotation=25, ha="right")
+        if i == len(per_env) - 1:
+            ax.set_xlabel("Method")
 
         apply_grid(ax)
         ax.set_axisbelow(True)
+        add_row_label(ax, env_label(env_id))
 
-    fig.legend(
-        handles,
-        labels,
-        ncol=3,
-        framealpha=float(LEGEND_FRAMEALPHA),
-        fontsize=int(LEGEND_FONTSIZE),
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.01),
-    )
-    fig.tight_layout(rect=[0.0, 0.05, 1.0, 1.0])
+    top = add_legend_rows_top(fig, [(legend_handles, legend_labels, legend_ncol(len(legend_handles)))])
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
-    out_path = plots_root / "suite__timing_breakdown.png"
+    out_path = plots_root / "timing-breakdown.png"
     save_fig_atomic(fig, out_path)
     plt.close(fig)
 
