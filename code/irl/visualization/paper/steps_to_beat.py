@@ -14,6 +14,10 @@ from .thresholds import _SUPPORTED_SCORE_ENVS, fmt_threshold, solved_threshold
 _SOLVED_MIN_REACH_FRAC: float = 0.25
 _SOLVED_MIN_REACH_COUNT: int = 2
 
+_BAR_ALPHA_MIN: float = 0.25
+_BAR_ALPHA_MAX: float = 0.95
+_PCT_TEXT_PAD_FRAC: float = 0.03
+
 
 def _load_summary_raw(path: Path) -> pd.DataFrame | None:
     p = Path(path)
@@ -125,7 +129,9 @@ def _maybe_lower_solved_threshold(
     reach = int(np.sum(best_returns >= float(thr_ref)))
     required_count = int(min(int(min_reach_count), n))
 
-    required_frac = float(max(float(min_reach_frac), float(required_count) / float(n))) if n > 0 else 1.0
+    required_frac = (
+        float(max(float(min_reach_frac), float(required_count) / float(n))) if n > 0 else 1.0
+    )
     reach_frac = float(reach) / float(n) if n > 0 else 0.0
 
     if reach >= required_count and reach_frac >= required_frac:
@@ -200,13 +206,46 @@ def _steps_to_reach_threshold(steps: np.ndarray, values: np.ndarray, threshold: 
     return None
 
 
-def _half_threshold(threshold: float) -> float:
+def _threshold_fraction(threshold: float, frac: float) -> float:
     thr = float(threshold)
-    if not np.isfinite(thr):
+    f = float(frac)
+    if not (np.isfinite(thr) and np.isfinite(f)):
+        return thr
+    if f >= 1.0:
+        return thr
+    if f <= 0.0:
         return thr
     if thr >= 0.0:
-        return 0.5 * thr
-    return 1.5 * thr
+        return thr * f
+    return thr * (2.0 - f)
+
+
+def _pct_label(got: int, tot: int) -> str:
+    if int(tot) <= 0:
+        return "—"
+    pct = int(round(100.0 * float(got) / float(tot)))
+    pct = int(max(0, min(100, pct)))
+    return f"{pct}%"
+
+
+def _pct_to_alpha(got: int, tot: int) -> float:
+    if int(tot) <= 0:
+        p = 0.0
+    else:
+        p = float(got) / float(tot)
+    p = float(np.clip(p, 0.0, 1.0))
+    return float(_BAR_ALPHA_MIN + (_BAR_ALPHA_MAX - _BAR_ALPHA_MIN) * p)
+
+
+def _pct_fontsize(n_methods: int) -> int:
+    n = int(max(1, n_methods))
+    if n <= 4:
+        return 8
+    if n <= 6:
+        return 7
+    if n <= 8:
+        return 6
+    return 5
 
 
 def plot_steps_to_beat_by_env(
@@ -295,15 +334,21 @@ def plot_steps_to_beat_by_env(
         df_env_raw = raw_df.loc[raw_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
         thresholds_full[str(env_id)] = float(_score_to_beat(str(env_id), df_env, df_env_raw=df_env_raw))
 
-    thresholds_half = {e: _half_threshold(float(thresholds_full[e])) for e in envs}
+    thresholds_half = {e: _threshold_fraction(float(thresholds_full[e]), 0.5) for e in envs}
+    thresholds_quarter = {e: _threshold_fraction(float(thresholds_full[e]), 0.25) for e in envs}
 
     plt = apply_rcparams_paper()
+    n_panels = 3
+    fig_w = max(9.0, 1.1 + 1.0 * float(len(envs)))
+    fig_h = 3.7 * float(n_panels)
+
     fig, axes = plt.subplots(
-        2,
+        n_panels,
         1,
-        figsize=(max(9.0, 1.1 + 1.0 * float(len(envs))), 7.4),
+        figsize=(fig_w, fig_h),
         dpi=int(DPI),
         sharex=True,
+        squeeze=False,
     )
 
     n_env = int(len(envs))
@@ -312,6 +357,8 @@ def plot_steps_to_beat_by_env(
     x = np.arange(n_env, dtype=np.float64)
 
     def _panel(ax, *, thresholds: Mapping[str, float], label: str) -> None:
+        import matplotlib.colors as mcolors
+
         meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
         q25s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
         q75s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
@@ -343,43 +390,55 @@ def plot_steps_to_beat_by_env(
                 meds[ei, mi] = float(med)
                 q75s[ei, mi] = float(q75)
 
-        finite = np.isfinite(meds)
+        finite_pos = meds[np.isfinite(meds) & (meds > 0.0)]
         use_log = False
-        if bool(finite.any()):
-            finite_pos = meds[finite] > 0.0
-            if bool(finite_pos.any()):
-                mn = float(np.nanmin(meds[finite][finite_pos]))
-                mx = float(np.nanmax(meds[finite][finite_pos]))
-                if mn > 0.0 and mx / mn >= 50.0:
-                    use_log = True
+        if finite_pos.size >= 2:
+            ratio = float(finite_pos.max() / finite_pos.min())
+            if np.isfinite(ratio) and ratio >= 50.0:
+                use_log = True
+
+        base = 0.0
+        if use_log and finite_pos.size > 0:
+            base = float(max(1.0, 0.01 * float(finite_pos.min())))
+
+        patch_by_idx: dict[tuple[int, int], object] = {}
 
         for mi, mk in enumerate(methods):
             off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
             xpos = x + off
             y = meds[:, mi]
-            ok = np.isfinite(y)
+            ok = np.isfinite(y) & (y > base if use_log else np.isfinite(y))
             if not bool(ok.any()):
                 continue
 
-            alpha = 1.0 if str(mk).strip().lower() == "glpe" else 0.88
-            z = 10 if str(mk).strip().lower() == "glpe" else 2
+            y_top = y[ok]
+            heights = (y_top - base) if use_log else y_top
 
-            ax.bar(
+            bars = ax.bar(
                 xpos[ok],
-                y[ok],
+                heights,
                 width=width,
+                bottom=float(base),
                 color=_color_for_method(mk),
-                alpha=float(alpha),
-                edgecolor="none",
-                linewidth=0.0,
-                zorder=z,
+                edgecolor="black",
+                linewidth=0.9,
+                zorder=10 if str(mk).strip().lower() == "glpe" else 2,
             )
 
-            lo = np.maximum(0.0, y[ok] - q25s[:, mi][ok])
-            hi = np.maximum(0.0, q75s[:, mi][ok] - y[ok])
+            base_rgba = mcolors.to_rgba(_color_for_method(mk))
+            env_idxs = np.flatnonzero(ok).astype(int, copy=False)
+            for patch, ei in zip(bars.patches, env_idxs.tolist()):
+                a = _pct_to_alpha(int(n_reached[ei, mi]), int(n_total[ei, mi]))
+                patch.set_facecolor((base_rgba[0], base_rgba[1], base_rgba[2], float(a)))
+                patch.set_edgecolor((0.0, 0.0, 0.0, 1.0))
+                patch.set_linewidth(0.9)
+                patch_by_idx[(int(ei), int(mi))] = patch
+
+            lo = np.maximum(0.0, y_top - q25s[:, mi][ok])
+            hi = np.maximum(0.0, q75s[:, mi][ok] - y_top)
             ax.errorbar(
                 xpos[ok],
-                y[ok],
+                y_top,
                 yerr=np.vstack([lo, hi]),
                 fmt="none",
                 ecolor="black",
@@ -390,6 +449,36 @@ def plot_steps_to_beat_by_env(
                 zorder=30,
             )
 
+        pct_fs = _pct_fontsize(n_methods)
+        bbox = {"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "none", "alpha": 0.65}
+
+        for ei in range(n_env):
+            for mi in range(n_methods):
+                patch = patch_by_idx.get((int(ei), int(mi)))
+                if patch is None:
+                    continue
+
+                yv = float(meds[ei, mi])
+                if not np.isfinite(yv):
+                    continue
+
+                y_text = float(base + float(_PCT_TEXT_PAD_FRAC) * float(max(0.0, yv - base)))
+                txt = _pct_label(int(n_reached[ei, mi]), int(n_total[ei, mi]))
+
+                ax.text(
+                    float(x[ei] + (float(mi) - float(n_methods) / 2.0) * width + width / 2.0),
+                    y_text,
+                    txt,
+                    ha="center",
+                    va="bottom",
+                    fontsize=int(pct_fs),
+                    color="black",
+                    bbox=bbox,
+                    clip_on=True,
+                    clip_path=patch,
+                    zorder=40,
+                )
+
         ax.set_ylabel("Steps to reach")
         ax.set_title(label)
         apply_grid(ax)
@@ -397,52 +486,13 @@ def plot_steps_to_beat_by_env(
         if use_log:
             ax.set_yscale("log")
 
-        def _pct_label(got: int, tot: int) -> str:
-            if int(tot) <= 0:
-                return "âˆ…"
-            pct = int(round(100.0 * float(got) / float(tot)))
-            pct = int(max(0, min(100, pct)))
-            return f"{pct}%"
+    _panel(axes[0, 0], thresholds=thresholds_full, label="Solved threshold (successful runs only)")
+    _panel(axes[1, 0], thresholds=thresholds_half, label="Half threshold (successful runs only)")
+    _panel(axes[2, 0], thresholds=thresholds_quarter, label="Quarter threshold (successful runs only)")
 
-        ymax = float(np.nanmax(q75s[finite])) if bool(finite.any()) else float(
-            raw_df.loc[raw_df["env_id"].isin(envs), "ckpt_step"].max()
-        )
-        ymax = float(ymax) if np.isfinite(ymax) else 1.0
-        base_y = 1.05 if use_log else 0.0 + 0.03 * ymax
-
-        for ei in range(n_env):
-            for mi in range(n_methods):
-                tot = int(n_total[ei, mi])
-                got = int(n_reached[ei, mi])
-                off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
-                xpos = float(x[ei] + off)
-                txt = _pct_label(got, tot)
-
-                if tot <= 0:
-                    ax.text(xpos, base_y, txt, ha="center", va="bottom", fontsize=6, alpha=0.75)
-                    continue
-
-                if got <= 0 or not np.isfinite(meds[ei, mi]):
-                    ax.text(xpos, base_y, txt, ha="center", va="bottom", fontsize=6, alpha=0.9)
-                    continue
-
-                yv = float(meds[ei, mi])
-                y_text = yv * 1.08 if use_log else yv + 0.03 * ymax
-                ax.text(xpos, y_text, txt, ha="center", va="bottom", fontsize=6, alpha=0.9)
-
-        thr_labels = []
-        for env_id in envs:
-            thr_labels.append(
-                f"{env_id}: {fmt_threshold(float(thresholds.get(env_id, float('nan'))))}"
-            )
-        _ = thr_labels
-
-    _panel(axes[0], thresholds=thresholds_full, label="Solved threshold (successful runs only)")
-    _panel(axes[1], thresholds=thresholds_half, label="Half threshold (successful runs only)")
-
-    axes[-1].set_xticks(x)
-    axes[-1].set_xticklabels([str(e) for e in envs], rotation=20, ha="right")
-    axes[-1].set_xlabel("Environment")
+    axes[-1, 0].set_xticks(x)
+    axes[-1, 0].set_xticklabels([str(e) for e in envs], rotation=20, ha="right")
+    axes[-1, 0].set_xlabel("Environment")
 
     handles = []
     labels = []
@@ -467,12 +517,9 @@ def plot_steps_to_beat_by_env(
     )
 
     fig.suptitle(str(title))
-    fig.tight_layout()
+    fig.tight_layout(rect=[0.0, 0.04, 1.0, 0.95])
 
-    out = (
-        Path(plots_root)
-        / f"steps_to_beat__{filename_suffix}__success_only__full_and_half.png"
-    )
+    out = Path(plots_root) / f"steps_to_beat__{filename_suffix}__success_only__threshold_fractions.png"
     save_fig_atomic(fig, out)
     plt.close(fig)
     return out
