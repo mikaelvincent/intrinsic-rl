@@ -8,12 +8,12 @@ import numpy as np
 
 from irl.methods.spec import paper_method_groups as _paper_method_groups
 from irl.visualization.data import aggregate_runs as _aggregate_runs
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import (
     DPI,
-    FIGSIZE,
-    LEGEND_FRAMEALPHA,
+    FIG_WIDTH,
     LEGEND_FONTSIZE,
     alpha_for_method,
     apply_grid,
@@ -72,22 +72,6 @@ def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
     if "glpe" not in keys:
         return False
     return any(k.startswith("glpe_") for k in keys)
-
-
-def _grid(n: int) -> tuple[int, int]:
-    nn = int(n)
-    if nn <= 0:
-        return 0, 0
-    ncols = 1 if nn <= 2 else 2
-    nrows = int(math.ceil(float(nn) / float(ncols)))
-    return nrows, ncols
-
-
-def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
-    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
-    w = base_w if int(ncols) <= 1 else base_w * 1.75
-    h = base_h * float(max(1, int(nrows)))
-    return float(w), float(h)
 
 
 def _build_env_series(
@@ -151,31 +135,28 @@ def _build_env_series(
 def _plot_multienv_reward_decomp(
     series_by_env: Mapping[str, Mapping[str, Mapping[str, object]]],
     *,
-    title: str,
     out_path: Path,
 ) -> Path | None:
     envs = [str(e) for e in series_by_env.keys() if str(e).strip()]
     if not envs:
         return None
 
-    nrows, ncols = _grid(len(envs))
-    if nrows <= 0 or ncols <= 0:
-        return None
+    nrows = int(len(envs))
+    height = max(2.8, 2.3 * float(nrows))
 
     plt = apply_rcparams_paper()
     fig, axes = plt.subplots(
         nrows,
-        ncols,
-        figsize=_figsize(nrows, ncols),
+        1,
+        figsize=(float(FIG_WIDTH), float(height)),
         dpi=int(DPI),
         squeeze=False,
     )
-    axes_flat = list(axes.reshape(-1))
 
     methods_union: set[str] = set()
 
     for i, env_id in enumerate(envs):
-        ax_ext = axes_flat[i]
+        ax_ext = axes[i, 0]
         ax_int = ax_ext.twinx()
 
         series = series_by_env.get(env_id, {})
@@ -184,9 +165,6 @@ def _plot_multienv_reward_decomp(
             continue
 
         methods_union |= set(series.keys())
-
-        col = int(i % ncols)
-        row = int(i // ncols)
 
         for mk in draw_order(list(series.keys())):
             rec = series.get(mk)
@@ -219,7 +197,7 @@ def _plot_multienv_reward_decomp(
                 zorder=z,
             )
 
-            me = _markevery(int(x.size), target_markers=20)
+            me = _markevery(int(x.size), target_markers=18)
             ax_int.plot(
                 x,
                 y_int,
@@ -236,34 +214,28 @@ def _plot_multienv_reward_decomp(
                 zorder=z,
             )
 
-        ax_ext.set_title(str(env_id))
         apply_grid(ax_ext)
 
-        if row == nrows - 1:
-            ax_ext.set_xlabel("Environment steps")
+        if i == nrows - 1:
+            ax_ext.set_xlabel("Training steps")
+        else:
+            ax_ext.tick_params(axis="x", which="both", labelbottom=False)
 
-        if col == 0:
-            ax_ext.set_ylabel("Extrinsic reward (mean per step)")
-
-        if col == ncols - 1:
-            ax_int.set_ylabel("Intrinsic reward (mean per step)")
+        ax_ext.set_ylabel("Extrinsic reward")
+        ax_int.set_ylabel("Intrinsic reward")
 
         ax_int.tick_params(axis="y", which="major", length=4, width=1)
         ax_int.tick_params(axis="y", which="minor", length=2, width=1)
 
-    for j in range(len(envs), len(axes_flat)):
-        try:
-            axes_flat[j].axis("off")
-        except Exception:
-            pass
-
-    fig.suptitle(str(title))
+        add_row_label(ax_ext, env_label(env_id))
 
     methods = legend_order(sorted(methods_union))
     method_handles = [
         plt.Line2D([], [], color=_color_for_method(m), lw=3.0 if str(m) == "glpe" else 2.0, linestyle="-")
         for m in methods
     ]
+    method_labels = [method_label(m) for m in methods]
+
     style_handles = [
         plt.Line2D([], [], color="black", linewidth=2.0, linestyle="-"),
         plt.Line2D(
@@ -278,29 +250,15 @@ def _plot_multienv_reward_decomp(
             markeredgewidth=0.9,
         ),
     ]
+    style_labels = ["Extrinsic", "Intrinsic"]
 
-    bottom = 0.10 if method_handles else 0.06
-    fig.tight_layout(rect=[0.0, bottom, 1.0, 0.94])
-
+    rows = []
     if method_handles:
-        fig.legend(
-            handles=method_handles,
-            labels=[str(m) for m in methods],
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.02),
-            ncol=int(min(6, max(1, len(method_handles)))),
-            framealpha=float(LEGEND_FRAMEALPHA),
-            fontsize=int(LEGEND_FONTSIZE),
-        )
+        rows.append((method_handles, method_labels, legend_ncol(len(method_handles))))
+    rows.append((style_handles, style_labels, legend_ncol(len(style_handles), max_cols=4)))
 
-    fig.legend(
-        handles=style_handles,
-        labels=["Extrinsic (left axis)", "Intrinsic (right axis)"],
-        loc="upper left",
-        bbox_to_anchor=(0.01, 0.99),
-        framealpha=float(LEGEND_FRAMEALPHA),
-        fontsize=int(LEGEND_FONTSIZE),
-    )
+    top = add_legend_rows_top(fig, rows, fontsize=int(LEGEND_FONTSIZE))
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -366,12 +324,8 @@ def plot_training_reward_decomposition(
             baseline_series_by_env[str(env_id)] = s
 
     if baseline_series_by_env:
-        out_path = out_root / "train_reward_decomp__no_ablation.png"
-        p = _plot_multienv_reward_decomp(
-            baseline_series_by_env,
-            title="Reward decomposition (train) - no ablation",
-            out_path=out_path,
-        )
+        out_path = out_root / "train-reward-decomp-baselines.png"
+        p = _plot_multienv_reward_decomp(baseline_series_by_env, out_path=out_path)
         if p is not None:
             outputs.append(Path(p))
 
@@ -391,12 +345,8 @@ def plot_training_reward_decomposition(
             ablation_series_by_env[str(env_id)] = s
 
     if ablation_series_by_env:
-        out_path = out_root / "train_reward_decomp__ablation.png"
-        p = _plot_multienv_reward_decomp(
-            ablation_series_by_env,
-            title="Reward decomposition (train) - ablation",
-            out_path=out_path,
-        )
+        out_path = out_root / "train-reward-decomp-ablations.png"
+        p = _plot_multienv_reward_decomp(ablation_series_by_env, out_path=out_path)
         if p is not None:
             outputs.append(Path(p))
 
