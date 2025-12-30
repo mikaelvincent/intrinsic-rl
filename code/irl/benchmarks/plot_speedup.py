@@ -6,7 +6,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.style import GRID_ALPHA
+from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
 from .plot_common import finite_quantiles, get_result_by_name, pretty_name, run_meta_footer, save_fig, style
 
 
@@ -45,11 +45,11 @@ def _plot_cache_comparison(
     except Exception:
         cached_ci = None
 
-    base_label = "no cache" if base_ci is None else f"no cache (interval={base_ci})"
-    cached_label = "cached" if cached_ci is None else f"cached (interval={cached_ci})"
+    base_label = "Cache off" if base_ci is None else f"Cache off (k={base_ci})"
+    cached_label = "Cache on" if cached_ci is None else f"Cache on (k={cached_ci})"
 
     plt = style()
-    fig, ax = plt.subplots(figsize=(9.0, 5.5), dpi=150)
+    fig, ax = plt.subplots(figsize=(float(FIG_WIDTH), 3.6), dpi=int(DPI))
 
     labels = [base_label, cached_label]
     x = np.arange(2, dtype=np.float64)
@@ -64,7 +64,7 @@ def _plot_cache_comparison(
         x,
         medians,
         color=[_color_for_method("glpe"), _color_for_method("glpe_cache")],
-        alpha=0.88,
+        alpha=0.9,
         edgecolor="none",
         linewidth=0.0,
         zorder=2,
@@ -84,17 +84,7 @@ def _plot_cache_comparison(
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=12, ha="right")
-    ax.set_ylabel(unit)
-
-    speed = float("nan")
-    if float(b_med) > 0.0 and np.isfinite(float(b_med)) and np.isfinite(float(c_med)):
-        speed = float(c_med) / float(b_med)
-
-    title = "Gate median caching comparison (median ± IQR)"
-    if np.isfinite(speed):
-        title += f" — speedup ≈ {speed:.2f}×"
-    ax.set_title(title)
-
+    ax.set_ylabel(f"Throughput ({unit})")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
     footer = run_meta_footer(run_meta)
@@ -159,9 +149,9 @@ def plot_speedup(
     hi = np.maximum(hi, 0.0)
 
     x = np.arange(len(rows), dtype=np.float64)
-    fig, ax = plt.subplots(figsize=(max(9.0, 1.6 + 0.6 * len(rows)), 5.5), dpi=150)
+    fig, ax = plt.subplots(figsize=(float(FIG_WIDTH), 3.6), dpi=int(DPI))
 
-    ax.bar(x, medians, color=_color_for_method("glpe"), alpha=0.88, edgecolor="none", linewidth=0.0, zorder=2)
+    ax.bar(x, medians, color=_color_for_method("glpe"), alpha=0.9, edgecolor="none", linewidth=0.0, zorder=2)
     ax.errorbar(
         x,
         medians,
@@ -179,7 +169,6 @@ def plot_speedup(
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=20, ha="right")
     ax.set_ylabel("Speedup (×)")
-    ax.set_title("Caching speedup (median ± IQR)")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
     footer = run_meta_footer(run_meta)
