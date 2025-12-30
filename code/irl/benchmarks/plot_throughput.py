@@ -6,7 +6,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.style import GRID_ALPHA
+from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
 from .plot_common import finite_quantiles, pretty_name, run_meta_footer, save_fig, style
 
 
@@ -60,8 +60,10 @@ def plot_throughput(
 
     n_units = len(units)
     total_rows = sum(len(rows_by_unit[u]) for u in units)
-    height = max(3.0, 1.2 * n_units + 0.28 * total_rows)
-    fig, axes = plt.subplots(n_units, 1, figsize=(9.0, height), squeeze=False, dpi=150)
+    height = max(2.8, 1.0 * n_units + 0.32 * total_rows)
+    fig, axes = plt.subplots(
+        n_units, 1, figsize=(float(FIG_WIDTH), float(height)), squeeze=False, dpi=int(DPI)
+    )
 
     for ax, unit in zip(axes[:, 0], units):
         rows = list(rows_by_unit[unit])
@@ -77,7 +79,7 @@ def plot_throughput(
         y = np.arange(len(rows), dtype=np.float64)
         colors = [_color_for_method(str(r.get("group", "vanilla"))) for r in rows]
 
-        ax.barh(y, medians, color=colors, alpha=0.88, edgecolor="none", linewidth=0.0, zorder=2)
+        ax.barh(y, medians, color=colors, alpha=0.9, edgecolor="none", linewidth=0.0, zorder=2)
         ax.errorbar(
             medians,
             y,
@@ -94,8 +96,7 @@ def plot_throughput(
         ax.set_yticks(y)
         ax.set_yticklabels(labels)
         ax.invert_yaxis()
-        ax.set_xlabel(unit)
-        ax.set_title(f"Throughput ({unit})")
+        ax.set_xlabel(f"Throughput ({unit})")
         ax.grid(True, alpha=float(GRID_ALPHA))
 
         finite_pos = medians[np.isfinite(medians) & (medians > 0.0)]
@@ -104,15 +105,13 @@ def plot_throughput(
             if ratio >= 50.0:
                 ax.set_xscale("log")
 
-    fig.suptitle("Microbenchmarks throughput (median ± IQR)")
-
     footer = run_meta_footer(run_meta)
     bottom = 0.0
     if footer:
         fig.text(0.01, 0.01, footer, ha="left", va="bottom", fontsize=8, alpha=0.9)
         bottom = 0.04
 
-    fig.tight_layout(rect=[0.0, bottom, 1.0, 0.97])
+    fig.tight_layout(rect=[0.0, bottom, 1.0, 1.0])
 
     save_fig(fig, Path(out_path))
     plt.close(fig)
