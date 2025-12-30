@@ -32,10 +32,29 @@ def save_fig(fig, path: Path) -> None:
 
 def pretty_name(name: str) -> str:
     s = str(name).strip()
-    s = s.replace("glpe.gate_median_cache.baseline", "glpe.cache.off")
-    s = s.replace("glpe.gate_median_cache.cached", "glpe.cache.on")
-    s = s.replace("glpe.gate_median_cache.speedup", "glpe.cache.speedup")
-    s = s.replace("glpe.gate_median_cache.", "glpe.cache.")
+
+    s = s.replace("glpe.gate_median_cache.baseline", "GLPE cache off")
+    s = s.replace("glpe.gate_median_cache.cached", "GLPE cache on")
+    s = s.replace("glpe.gate_median_cache.speedup", "GLPE cache speedup")
+
+    if s.startswith("glpe."):
+        s = "GLPE " + s[len("glpe.") :]
+    elif s.startswith("riac."):
+        s = "RIAC " + s[len("riac.") :]
+    elif s.startswith("ppo."):
+        s = "PPO " + s[len("ppo.") :]
+    elif s.startswith("gae."):
+        s = "GAE " + s[len("gae.") :]
+    elif s.startswith("env."):
+        s = "Env " + s[len("env.") :]
+    elif s.startswith("kdtree."):
+        s = "KDTree " + s[len("kdtree.") :]
+
+    s = s.replace(".compute_batch", " compute")
+    s = s.replace(".bulk_insert", " bulk insert")
+    s = s.replace(".update", " update")
+    s = s.replace("_", " ")
+    s = " ".join(s.split())
     return s
 
 
