@@ -9,7 +9,7 @@ from .data import (
     read_scalars,
     smooth_series,
 )
-from .figures import plot_normalized_summary, plot_trajectory_heatmap
+from .figures import plot_trajectory_heatmap
 
 __all__ = [
     "AggregateResult",
@@ -19,6 +19,5 @@ __all__ = [
     "read_scalars",
     "smooth_series",
     "ensure_parent",
-    "plot_normalized_summary",
     "plot_trajectory_heatmap",
 ]
