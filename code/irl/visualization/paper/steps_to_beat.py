@@ -450,7 +450,7 @@ def plot_steps_to_beat_by_env(
             )
 
         pct_fs = _pct_fontsize(n_methods)
-        bbox = {"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "none", "alpha": 0.65}
+        bbox = {"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.65}
 
         for ei in range(n_env):
             for mi in range(n_methods):
@@ -471,6 +471,8 @@ def plot_steps_to_beat_by_env(
                     txt,
                     ha="center",
                     va="bottom",
+                    rotation=90,
+                    rotation_mode="anchor",
                     fontsize=int(pct_fs),
                     color="black",
                     bbox=bbox,
