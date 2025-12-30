@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Mapping
 
@@ -9,9 +8,10 @@ import numpy as np
 import typer
 
 from irl.visualization.data import aggregate_runs
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import DPI, FIGSIZE, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
+from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FONTSIZE, apply_grid
 
 
 def _is_effectively_one(vals: np.ndarray, *, tol: float) -> bool:
@@ -127,24 +127,6 @@ def _infer_eta_from_effective(taper: np.ndarray, eta_eff: np.ndarray) -> float |
     if est.size == 0:
         return None
     return float(np.median(est))
-
-
-def _grid(n: int) -> tuple[int, int]:
-    nn = int(n)
-    if nn <= 0:
-        return 0, 0
-    if nn == 1:
-        return 1, 1
-    ncols = 1 if nn <= 2 else 2
-    nrows = int(math.ceil(float(nn) / float(ncols)))
-    return nrows, ncols
-
-
-def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
-    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
-    w = base_w if int(ncols) <= 1 else base_w * 1.75
-    h = base_h * float(max(1, int(nrows)))
-    return float(w), float(h)
 
 
 def plot_intrinsic_taper_weight(
@@ -317,18 +299,19 @@ def plot_intrinsic_taper_weight(
         return []
 
     plt = apply_rcparams_paper()
-    nrows, ncols = _grid(len(env_recs))
+    nrows = int(len(env_recs))
+    height = max(2.8, 2.2 * float(nrows))
+
     fig, axes = plt.subplots(
         nrows,
-        ncols,
-        figsize=_figsize(nrows, ncols),
+        1,
+        figsize=(float(FIG_WIDTH), float(height)),
         dpi=int(DPI),
         squeeze=False,
     )
-    axes_flat = list(axes.reshape(-1))
 
     for i, rec in enumerate(env_recs):
-        ax = axes_flat[i]
+        ax = axes[i, 0]
         ax2 = ax.twinx()
 
         env_id = str(rec["env_id"])
@@ -368,45 +351,29 @@ def plot_intrinsic_taper_weight(
         )
         ax2.set_ylim(-0.05, 1.05)
 
-        row = int(i // ncols)
-        col = int(i % ncols)
-        if row == nrows - 1:
-            ax.set_xlabel("Environment steps")
-        if col == 0:
-            ax.set_ylabel("Intrinsic reward (mean)")
-        if col == ncols - 1:
-            ax2.set_ylabel("Taper ratio")
-
-        ax.set_title(f"{env_id} — {method}")
         apply_grid(ax)
 
-    for j in range(len(env_recs), len(axes_flat)):
-        try:
-            axes_flat[j].axis("off")
-        except Exception:
-            pass
+        if i == nrows - 1:
+            ax.set_xlabel("Training steps")
+        else:
+            ax.tick_params(axis="x", which="both", labelbottom=False)
+
+        ax.set_ylabel("Intrinsic reward")
+        ax2.set_ylabel("Taper weight")
+
+        add_row_label(ax, f"{env_label(env_id)} | {method_label(method)}")
 
     handles = [
         plt.Line2D([], [], color="black", linewidth=2.0, linestyle="--"),
         plt.Line2D([], [], color="black", linewidth=2.0, linestyle=":"),
         plt.Line2D([], [], color="black", linewidth=2.6, linestyle="-"),
     ]
-    labels = ["taper ratio", "original intrinsic", "final intrinsic"]
+    labels = ["Taper weight", "Original intrinsic", "Final intrinsic"]
 
-    fig.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.01),
-        ncol=3,
-        framealpha=float(LEGEND_FRAMEALPHA),
-        fontsize=int(LEGEND_FONTSIZE),
-    )
+    top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles), max_cols=6))], fontsize=int(LEGEND_FONTSIZE))
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
-    fig.suptitle("Intrinsic taper (GLPE family)")
-    fig.tight_layout(rect=[0.0, 0.07, 1.0, 0.94])
-
-    out_path = plots_root / "suite__intrinsic_taper.png"
+    out_path = plots_root / "glpe-intrinsic-taper.png"
     save_fig_atomic(fig, out_path)
     plt.close(fig)
 
