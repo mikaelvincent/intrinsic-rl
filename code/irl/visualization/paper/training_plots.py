@@ -24,10 +24,6 @@ from irl.visualization.style import (
 )
 
 
-def _env_tag(env_id: str) -> str:
-    return str(env_id).replace("/", "-")
-
-
 def _as_f64_1d(x: object) -> np.ndarray:
     return np.asarray(x, dtype=np.float64).reshape(-1)
 
@@ -92,19 +88,6 @@ def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
     w = base_w if int(ncols) <= 1 else base_w * 1.75
     h = base_h * float(max(1, int(nrows)))
     return float(w), float(h)
-
-
-def _cleanup_training_reward_decomp(out_root: Path) -> None:
-    out_root = Path(out_root)
-    if not out_root.exists():
-        return
-    for pat in ("*__train_reward_decomp.png", "train_reward_decomp__*.png", "training_reward_decomp__*.png"):
-        for p in out_root.glob(pat):
-            try:
-                if p.is_file():
-                    p.unlink()
-            except Exception:
-                pass
 
 
 def _build_env_series(
@@ -338,10 +321,8 @@ def plot_training_reward_decomposition(
     if not isinstance(groups_by_env, Mapping):
         return []
 
-    out_root = Path(plots_root) / "training"
+    out_root = Path(plots_root)
     out_root.mkdir(parents=True, exist_ok=True)
-
-    _cleanup_training_reward_decomp(out_root)
 
     env_methods: dict[str, dict[str, list[Path]]] = {}
     for env_id, by_method in groups_by_env.items():
@@ -375,7 +356,12 @@ def plot_training_reward_decomposition(
     for env_id in env_ids:
         by_method = env_methods.get(env_id, {})
         want = [m for m in baselines if m in by_method]
-        s = _build_env_series(by_method=by_method, methods_to_plot=want, smooth=int(smooth), align_mode=align_mode)
+        s = _build_env_series(
+            by_method=by_method,
+            methods_to_plot=want,
+            smooth=int(smooth),
+            align_mode=align_mode,
+        )
         if s:
             baseline_series_by_env[str(env_id)] = s
 
@@ -395,7 +381,12 @@ def plot_training_reward_decomposition(
         if not _has_glpe_and_variant(list(by_method.keys())):
             continue
         want = [m for m in ablations if m in by_method]
-        s = _build_env_series(by_method=by_method, methods_to_plot=want, smooth=int(smooth), align_mode=align_mode)
+        s = _build_env_series(
+            by_method=by_method,
+            methods_to_plot=want,
+            smooth=int(smooth),
+            align_mode=align_mode,
+        )
         if s:
             ablation_series_by_env[str(env_id)] = s
 
