@@ -72,29 +72,6 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
     return out
 
 
-_OBSOLETE_PLOT_PATTERNS: tuple[str, ...] = (
-    "*__auc__paper_baselines.png",
-    "*__auc__paper_ablations.png",
-    "*__glpe_extrinsic_vs_intrinsic.png",
-    "*__eval_scatter__paper_all_methods.png",
-    "steps_to_beat__*__success_only__full_and_half.png",
-)
-
-
-def _remove_obsolete_plots(plots_root: Path) -> list[Path]:
-    removed: list[Path] = []
-    root = Path(plots_root)
-    for pat in _OBSOLETE_PLOT_PATTERNS:
-        for p in sorted(root.glob(str(pat)), key=lambda x: x.name):
-            try:
-                if p.is_file():
-                    p.unlink()
-                    removed.append(p)
-            except Exception:
-                continue
-    return removed
-
-
 def _write_plots_manifest(path: Path, payload: dict[str, object]) -> None:
     try:
         text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -155,13 +132,6 @@ def run_plots_suite(
     runs_root_exists = bool(root.exists())
     if not runs_root_exists:
         msg = f"[suite] Runs root missing; timing plots skipped: {root}"
-        typer.echo(msg)
-        notes.append(str(msg))
-
-    removed = _remove_obsolete_plots(plots_root)
-    if removed:
-        removed_rel = [_rel(p, results_root) for p in removed]
-        msg = "[suite] Removed obsolete plots: " + ", ".join(removed_rel)
         typer.echo(msg)
         notes.append(str(msg))
 
