@@ -100,11 +100,39 @@ def add_legend_rows_top(
     fontsize: int | None = None,
 ) -> float:
     fs = int(LEGEND_FONTSIZE) if fontsize is None else int(fontsize)
+
+    fig_h_in = 0.0
+    try:
+        fig_h_in = float(fig.get_figheight())
+    except Exception:
+        fig_h_in = 0.0
+    fig_h_pt = 72.0 * fig_h_in if fig_h_in > 0.0 else 0.0
+
+    def _pt_to_fig(pt: float) -> float:
+        if fig_h_pt <= 0.0:
+            return 0.0
+        return float(pt) / float(fig_h_pt)
+
+    # Keep existing fractional API, but cap vertical gaps in physical units so tall figures
+    # don't inflate whitespace above the axes.
+    max_row_gap_pt = 14.0
+    gap_pt = float(row_gap) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
+    gap_pt = float(min(max_row_gap_pt, max(0.0, gap_pt)))
+    gap_fig = _pt_to_fig(gap_pt)
+
+    pad_axes_pt = float(0.01) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
+    pad_axes_pt = float(min(6.0, max(2.0, pad_axes_pt)))
+    pad_axes_fig = _pt_to_fig(pad_axes_pt)
+
     y = float(y_top)
+    legends: list[object] = []
+    renderer = None
+
     for handles, labels, ncol in rows:
         if not handles or not labels:
             continue
-        fig.legend(
+
+        leg = fig.legend(
             handles=handles,
             labels=labels,
             loc="upper center",
@@ -116,5 +144,38 @@ def add_legend_rows_top(
             columnspacing=1.2,
             handletextpad=0.6,
         )
-        y -= float(row_gap)
-    return float(max(0.0, y - 0.01))
+        legends.append(leg)
+
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            bbox = leg.get_window_extent(renderer=renderer)
+            bbox_fig = bbox.transformed(fig.transFigure.inverted())
+            y = float(bbox_fig.y0) - float(gap_fig)
+        except Exception:
+            y = float(y) - float(gap_fig)
+
+    if not legends:
+        return 1.0
+
+    min_y0 = None
+    try:
+        if renderer is None:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+
+        bottoms: list[float] = []
+        for leg in legends:
+            bbox = leg.get_window_extent(renderer=renderer)
+            bbox_fig = bbox.transformed(fig.transFigure.inverted())
+            bottoms.append(float(bbox_fig.y0))
+
+        if bottoms:
+            min_y0 = float(min(bottoms))
+    except Exception:
+        min_y0 = None
+
+    if min_y0 is None:
+        min_y0 = float(y)
+
+    return float(max(0.0, float(min_y0) - float(pad_axes_fig)))
