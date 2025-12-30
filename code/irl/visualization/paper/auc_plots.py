@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -82,157 +83,6 @@ def paper_method_groups(methods: Sequence[str]) -> tuple[list[str], list[str]]:
     return _paper_method_groups(methods)
 
 
-def plot_eval_auc_bars_by_env(
-    by_step_df: pd.DataFrame,
-    *,
-    plots_root: Path,
-    methods_to_plot: Sequence[str],
-    title: str,
-    filename_suffix: str,
-) -> list[Path]:
-    if by_step_df is None or by_step_df.empty:
-        return []
-
-    required = {"env_id", "ckpt_step", "mean_return_mean"}
-    if not required.issubset(set(by_step_df.columns)):
-        return []
-
-    df = by_step_df.copy()
-    df["env_id"] = df["env_id"].astype(str).str.strip()
-
-    if "method_key" not in df.columns:
-        if "method" not in df.columns:
-            return []
-        df["method_key"] = df["method"].astype(str).str.strip().str.lower()
-
-    df["method_key"] = df["method_key"].astype(str).str.strip().str.lower()
-
-    df["ckpt_step"] = pd.to_numeric(df["ckpt_step"], errors="coerce")
-    df = df.dropna(subset=["ckpt_step"]).copy()
-    df["ckpt_step"] = df["ckpt_step"].astype(int)
-    df = df.loc[df["ckpt_step"] >= 0].copy()
-
-    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
-    if not want:
-        return []
-
-    ablation_mode = _is_ablation_suffix(filename_suffix)
-
-    label_by_key = (
-        df.drop_duplicates(subset=["method_key"], keep="first")
-        .set_index("method_key")["method"]
-        .astype(str)
-        .to_dict()
-        if "method" in df.columns
-        else {}
-    )
-
-    plots_root = Path(plots_root)
-    plots_root.mkdir(parents=True, exist_ok=True)
-
-    plt = apply_rcparams_paper()
-    written: list[Path] = []
-
-    for env_id in sorted(df["env_id"].unique().tolist()):
-        df_env = df.loc[df["env_id"] == env_id].copy()
-        if df_env.empty:
-            continue
-
-        methods_present = sorted(set(df_env["method_key"].unique().tolist()) & set(want))
-        if not methods_present:
-            continue
-
-        if ablation_mode and not _has_glpe_and_variant(methods_present):
-            continue
-
-        auc_rows: list[dict[str, object]] = []
-        for mk in want:
-            df_m = df_env.loc[df_env["method_key"] == mk].copy()
-            if df_m.empty:
-                continue
-
-            df_m = df_m.sort_values("ckpt_step").drop_duplicates(subset=["ckpt_step"], keep="last")
-
-            steps = df_m["ckpt_step"].to_numpy(dtype=np.float64, copy=False)
-            mean = pd.to_numeric(df_m["mean_return_mean"], errors="coerce").to_numpy(dtype=np.float64)
-
-            auc, max_step = _auc_from_curve(steps, mean)
-
-            n_seeds = 0
-            if "n_seeds" in df_m.columns:
-                try:
-                    n_seeds = int(pd.to_numeric(df_m["n_seeds"], errors="coerce").max())
-                except Exception:
-                    n_seeds = 0
-
-            auc_rows.append(
-                {
-                    "method_key": mk,
-                    "label": str(label_by_key.get(mk, mk)),
-                    "auc": float(auc),
-                    "n_seeds": int(n_seeds),
-                    "max_step": int(max_step),
-                }
-            )
-
-        if not auc_rows:
-            continue
-
-        labels = [str(r["label"]) for r in auc_rows]
-        vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
-        colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
-        ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
-
-        x = np.arange(len(auc_rows), dtype=np.float64)
-
-        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
-        for i, (mk, v) in enumerate(zip([r["method_key"] for r in auc_rows], vals.tolist())):
-            alpha = 1.0 if str(mk) == "glpe" else 0.88
-            z = 10 if str(mk) == "glpe" else 2
-            ax.bar(
-                float(x[i]),
-                float(v),
-                color=colors[i],
-                alpha=float(alpha),
-                edgecolor="none",
-                linewidth=0.0,
-                zorder=z,
-            )
-
-        span = (
-            max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
-        )
-        txt_off = 0.02 * span
-        for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
-            ax.text(
-                float(xi),
-                float(yi + txt_off) if yi >= 0.0 else float(yi - txt_off),
-                f"n={int(n)}" if int(n) > 0 else "n=?",
-                ha="center",
-                va="bottom" if yi >= 0.0 else "top",
-                fontsize=8,
-                alpha=0.9,
-                zorder=30,
-            )
-
-        ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_xlabel("Method")
-        ax.set_ylabel("AUC (return × steps)")
-        ax.set_title(f"{env_id} — {title}")
-
-        apply_grid(ax)
-        fig.tight_layout()
-
-        out = plots_root / f"{_env_tag(env_id)}__auc__{filename_suffix}.png"
-        save_fig_atomic(fig, out)
-        plt.close(fig)
-        written.append(out)
-
-    return written
-
-
 _TIME_COLS_UPDATE: tuple[str, ...] = (
     "time_rollout_s",
     "time_intrinsic_compute_s",
@@ -300,9 +150,7 @@ def _time_curve_seconds(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
     for col in _TIME_COLS_UPDATE:
         if col not in df.columns:
             continue
-        vals = (
-            pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64, copy=False)
-        )
+        vals = pd.to_numeric(df[col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64, copy=False)
         dt += vals
 
     dt = np.clip(dt, 0.0, None)
@@ -433,6 +281,201 @@ def _auc_from_time_curve(
     return float(auc), float(budget)
 
 
+def _grid(n: int) -> tuple[int, int]:
+    nn = int(n)
+    if nn <= 0:
+        return 0, 0
+    if nn == 1:
+        return 1, 1
+    ncols = 2
+    nrows = int(math.ceil(float(nn) / float(ncols)))
+    return nrows, ncols
+
+
+def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
+    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
+    w = base_w if int(ncols) <= 1 else base_w * 1.75
+    h = base_h * float(max(1, int(nrows)))
+    return float(w), float(h)
+
+
+def plot_eval_auc_bars_by_env(
+    by_step_df: pd.DataFrame,
+    *,
+    plots_root: Path,
+    methods_to_plot: Sequence[str],
+    title: str,
+    filename_suffix: str,
+) -> list[Path]:
+    if by_step_df is None or by_step_df.empty:
+        return []
+
+    required = {"env_id", "ckpt_step", "mean_return_mean"}
+    if not required.issubset(set(by_step_df.columns)):
+        return []
+
+    df = by_step_df.copy()
+    df["env_id"] = df["env_id"].astype(str).str.strip()
+
+    if "method_key" not in df.columns:
+        if "method" not in df.columns:
+            return []
+        df["method_key"] = df["method"].astype(str).str.strip().str.lower()
+
+    df["method_key"] = df["method_key"].astype(str).str.strip().str.lower()
+
+    df["ckpt_step"] = pd.to_numeric(df["ckpt_step"], errors="coerce")
+    df = df.dropna(subset=["ckpt_step"]).copy()
+    df["ckpt_step"] = df["ckpt_step"].astype(int)
+    df = df.loc[df["ckpt_step"] >= 0].copy()
+
+    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+    if not want:
+        return []
+
+    ablation_mode = _is_ablation_suffix(filename_suffix)
+
+    label_by_key = (
+        df.drop_duplicates(subset=["method_key"], keep="first")
+        .set_index("method_key")["method"]
+        .astype(str)
+        .to_dict()
+        if "method" in df.columns
+        else {}
+    )
+
+    env_recs: list[tuple[str, list[dict[str, object]]]] = []
+
+    for env_id in sorted(df["env_id"].unique().tolist()):
+        df_env = df.loc[df["env_id"] == env_id].copy()
+        if df_env.empty:
+            continue
+
+        methods_present = sorted(set(df_env["method_key"].unique().tolist()) & set(want))
+        if not methods_present:
+            continue
+
+        if ablation_mode and not _has_glpe_and_variant(methods_present):
+            continue
+
+        auc_rows: list[dict[str, object]] = []
+        for mk in want:
+            df_m = df_env.loc[df_env["method_key"] == mk].copy()
+            if df_m.empty:
+                continue
+
+            df_m = df_m.sort_values("ckpt_step").drop_duplicates(subset=["ckpt_step"], keep="last")
+
+            steps = df_m["ckpt_step"].to_numpy(dtype=np.float64, copy=False)
+            mean = pd.to_numeric(df_m["mean_return_mean"], errors="coerce").to_numpy(dtype=np.float64)
+
+            auc, _max_step = _auc_from_curve(steps, mean)
+
+            n_seeds = 0
+            if "n_seeds" in df_m.columns:
+                try:
+                    n_seeds = int(pd.to_numeric(df_m["n_seeds"], errors="coerce").max())
+                except Exception:
+                    n_seeds = 0
+
+            auc_rows.append(
+                {
+                    "method_key": mk,
+                    "label": str(label_by_key.get(mk, mk)),
+                    "auc": float(auc),
+                    "n_seeds": int(n_seeds),
+                }
+            )
+
+        if auc_rows:
+            env_recs.append((str(env_id), auc_rows))
+
+    if not env_recs:
+        return []
+
+    plots_root = Path(plots_root)
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    plt = apply_rcparams_paper()
+    nrows, ncols = _grid(len(env_recs))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=_figsize(nrows, ncols),
+        dpi=int(DPI),
+        squeeze=False,
+    )
+    axes_flat = list(axes.reshape(-1))
+
+    for i, (env_id, auc_rows) in enumerate(env_recs):
+        ax = axes_flat[i]
+
+        labels = [str(r["label"]) for r in auc_rows]
+        vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
+        colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
+        ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
+
+        x = np.arange(len(auc_rows), dtype=np.float64)
+
+        for j, r in enumerate(auc_rows):
+            mk = str(r.get("method_key", "")).strip().lower()
+            alpha = 1.0 if mk == "glpe" else 0.88
+            z = 10 if mk == "glpe" else 2
+            ax.bar(
+                float(x[j]),
+                float(vals[j]),
+                color=colors[j],
+                alpha=float(alpha),
+                edgecolor="none",
+                linewidth=0.0,
+                zorder=z,
+            )
+
+        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
+        txt_off = 0.02 * span
+        for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
+            if not np.isfinite(float(yi)):
+                continue
+            ax.text(
+                float(xi),
+                float(yi + txt_off) if yi >= 0.0 else float(yi - txt_off),
+                f"n={int(n)}" if int(n) > 0 else "n=?",
+                ha="center",
+                va="bottom" if yi >= 0.0 else "top",
+                fontsize=8,
+                alpha=0.9,
+                zorder=30,
+            )
+
+        ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+
+        row = int(i // ncols)
+        col = int(i % ncols)
+        if row == nrows - 1:
+            ax.set_xlabel("Method")
+        if col == 0:
+            ax.set_ylabel("AUC (return × steps)")
+
+        ax.set_title(str(env_id))
+        apply_grid(ax)
+
+    for j in range(len(env_recs), len(axes_flat)):
+        try:
+            axes_flat[j].axis("off")
+        except Exception:
+            pass
+
+    fig.suptitle(str(title))
+    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.94])
+
+    out = Path(plots_root) / f"eval_auc__{str(filename_suffix).strip()}.png"
+    save_fig_atomic(fig, out)
+    plt.close(fig)
+    return [out]
+
+
 def plot_eval_auc_time_bars_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -482,9 +525,6 @@ def plot_eval_auc_time_bars_by_env(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    plt = apply_rcparams_paper()
-    written: list[Path] = []
-
     curve_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
 
     def _mean_times(env_id: str, method_key: str, ckpt_steps: np.ndarray) -> np.ndarray | None:
@@ -524,6 +564,8 @@ def plot_eval_auc_time_bars_by_env(
         arr = np.stack(per_run, axis=0).astype(np.float64, copy=False)
         mean = np.mean(arr, axis=0)
         return mean.astype(np.float64, copy=False)
+
+    env_recs: list[tuple[str, list[dict[str, object]], float]] = []
 
     for env_id in sorted(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
@@ -583,7 +625,6 @@ def plot_eval_auc_time_bars_by_env(
                 {
                     "method_key": mk,
                     "label": str(label_by_key.get(mk, mk)),
-                    "steps": steps.astype(np.int64, copy=False),
                     "times_s": times.astype(np.float64, copy=False),
                     "returns": returns.astype(np.float64, copy=False),
                     "n_seeds": int(n_seeds),
@@ -622,8 +663,25 @@ def plot_eval_auc_time_bars_by_env(
                 }
             )
 
-        if not auc_rows:
-            continue
+        if auc_rows:
+            env_recs.append((str(env_id), auc_rows, float(budget_s)))
+
+    if not env_recs:
+        return []
+
+    plt = apply_rcparams_paper()
+    nrows, ncols = _grid(len(env_recs))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=_figsize(nrows, ncols),
+        dpi=int(DPI),
+        squeeze=False,
+    )
+    axes_flat = list(axes.reshape(-1))
+
+    for i, (env_id, auc_rows, budget_s) in enumerate(env_recs):
+        ax = axes_flat[i]
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
@@ -632,25 +690,25 @@ def plot_eval_auc_time_bars_by_env(
 
         x = np.arange(len(auc_rows), dtype=np.float64)
 
-        fig, ax = plt.subplots(figsize=FIGSIZE, dpi=int(DPI))
-        for i, (mk, v) in enumerate(zip([r["method_key"] for r in auc_rows], vals.tolist())):
-            alpha = 1.0 if str(mk) == "glpe" else 0.88
-            z = 10 if str(mk) == "glpe" else 2
+        for j, r in enumerate(auc_rows):
+            mk = str(r.get("method_key", "")).strip().lower()
+            alpha = 1.0 if mk == "glpe" else 0.88
+            z = 10 if mk == "glpe" else 2
             ax.bar(
-                float(x[i]),
-                float(v),
-                color=colors[i],
+                float(x[j]),
+                float(vals[j]),
+                color=colors[j],
                 alpha=float(alpha),
                 edgecolor="none",
                 linewidth=0.0,
                 zorder=z,
             )
 
-        span = (
-            max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
-        )
+        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
         txt_off = 0.02 * span
         for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
+            if not np.isfinite(float(yi)):
+                continue
             ax.text(
                 float(xi),
                 float(yi + txt_off) if yi >= 0.0 else float(yi - txt_off),
@@ -665,18 +723,28 @@ def plot_eval_auc_time_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_xlabel("Method")
-        ax.set_ylabel("AUC (return × seconds)")
+
+        row = int(i // ncols)
+        col = int(i % ncols)
+        if row == nrows - 1:
+            ax.set_xlabel("Method")
+        if col == 0:
+            ax.set_ylabel("AUC (return × seconds)")
 
         budget_min = float(budget_s) / 60.0
-        ax.set_title(f"{env_id} — {title} (budget={budget_min:.1f} min)")
-
+        ax.set_title(f"{env_id} (budget={budget_min:.1f} min)")
         apply_grid(ax)
-        fig.tight_layout()
 
-        out = plots_root / f"{_env_tag(env_id)}__auc_time__{filename_suffix}.png"
-        save_fig_atomic(fig, out)
-        plt.close(fig)
-        written.append(out)
+    for j in range(len(env_recs), len(axes_flat)):
+        try:
+            axes_flat[j].axis("off")
+        except Exception:
+            pass
 
-    return written
+    fig.suptitle(str(title))
+    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.94])
+
+    out = Path(plots_root) / f"eval_auc_time__{str(filename_suffix).strip()}.png"
+    save_fig_atomic(fig, out)
+    plt.close(fig)
+    return [out]
