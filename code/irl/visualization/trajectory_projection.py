@@ -12,8 +12,6 @@ def _as_2d_obs(obs: np.ndarray) -> np.ndarray | None:
 
 def _stable_pca_components(vt: np.ndarray) -> np.ndarray:
     comps = np.asarray(vt[:2], dtype=np.float64, copy=True)
-
-    # Fix component sign so re-runs produce consistent axes.
     for i in range(int(comps.shape[0])):
         j = int(np.argmax(np.abs(comps[i])))
         if float(comps[i, j]) < 0.0:
@@ -86,13 +84,13 @@ def trajectory_projection(
     e = (env_id or "").strip()
 
     if e.startswith("MountainCar") and D >= 2:
-        return x[:, 0], x[:, 1], "position", "velocity", None
+        return x[:, 0], x[:, 1], "Position", "Velocity", None
 
     if e.startswith("BipedalWalker") and not bool(include_bipedalwalker):
         return None
 
     if D == 2:
-        return x[:, 0], x[:, 1], "obs[0]", "obs[1]", None
+        return x[:, 0], x[:, 1], "State 1", "State 2", None
 
     out = _pca_project(x, max_fit_points=int(max_pca_points))
     if out is None:
@@ -100,8 +98,8 @@ def trajectory_projection(
     pc1, pc2, v1, v2 = out
 
     if np.isfinite(v1) and np.isfinite(v2):
-        note = f"PCA(zscore, D={D}, var={100.0 * v1:.1f}%/{100.0 * v2:.1f}%)"
+        note = f"PCA (z-scored, D={D}, var={100.0 * v1:.1f}%/{100.0 * v2:.1f}%)"
     else:
-        note = f"PCA(zscore, D={D})"
+        note = f"PCA (z-scored, D={D})"
 
     return pc1, pc2, "PC1", "PC2", note
