@@ -96,7 +96,7 @@ def add_legend_rows_top(
     rows: Iterable[tuple[list[object], list[str], int]],
     *,
     y_top: float = 0.995,
-    row_gap: float = 0.045,
+    row_gap: float = 0.012,
     fontsize: int | None = None,
 ) -> float:
     fs = int(LEGEND_FONTSIZE) if fontsize is None else int(fontsize)
@@ -113,16 +113,22 @@ def add_legend_rows_top(
             return 0.0
         return float(pt) / float(fig_h_pt)
 
-    # Keep existing fractional API, but cap vertical gaps in physical units so tall figures
-    # don't inflate whitespace above the axes.
-    max_row_gap_pt = 14.0
+    # Keep the public fractional API, but clamp to a small physical gap so multi-row
+    # legend groups stack tightly and consistently across figure sizes.
+    max_row_gap_pt = 5.0
     gap_pt = float(row_gap) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
     gap_pt = float(min(max_row_gap_pt, max(0.0, gap_pt)))
     gap_fig = _pt_to_fig(gap_pt)
 
-    pad_axes_pt = float(0.01) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
-    pad_axes_pt = float(min(6.0, max(2.0, pad_axes_pt)))
+    # Small fixed clearance between legend block and the top subplot.
+    pad_axes_pt = float(0.006) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
+    pad_axes_pt = float(min(5.0, max(2.5, pad_axes_pt)))
     pad_axes_fig = _pt_to_fig(pad_axes_pt)
+
+    # Compensate for tight_layout()'s default padding so the visible gap between the
+    # legend block and the top subplot is governed primarily by pad_axes_pt.
+    tight_layout_pad_mult = 1.08
+    tight_pad_fig = _pt_to_fig(float(tight_layout_pad_mult) * float(fs))
 
     y = float(y_top)
     legends: list[object] = []
@@ -178,4 +184,5 @@ def add_legend_rows_top(
     if min_y0 is None:
         min_y0 = float(y)
 
-    return float(max(0.0, float(min_y0) - float(pad_axes_fig)))
+    top = float(min_y0) - float(pad_axes_fig) + float(tight_pad_fig)
+    return float(max(0.0, min(1.0, top)))
