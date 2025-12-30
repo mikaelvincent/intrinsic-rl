@@ -7,21 +7,11 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import (
-    DPI,
-    FIGSIZE,
-    LEGEND_FRAMEALPHA,
-    LEGEND_FONTSIZE,
-    alpha_for_method,
-    apply_grid,
-    draw_order,
-    legend_order,
-    linestyle_for_method,
-    linewidth_for_method,
-    zorder_for_method,
-)
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method, draw_order, legend_order
+from irl.visualization.style import linestyle_for_method, linewidth_for_method, zorder_for_method
 from .thresholds import add_solved_threshold_line
 
 SCATTER_POINT_SIZE: float = 18.0
@@ -109,24 +99,6 @@ def _method_offset_multipliers(methods: Sequence[str]) -> dict[str, float]:
     return {m: float(i) - center for i, m in enumerate(ms)}
 
 
-def _grid(n: int) -> tuple[int, int]:
-    nn = int(n)
-    if nn <= 0:
-        return 0, 0
-    if nn == 1:
-        return 1, 1
-    ncols = 2
-    nrows = int(math.ceil(float(nn) / float(ncols)))
-    return nrows, ncols
-
-
-def _figsize(nrows: int, ncols: int) -> tuple[float, float]:
-    base_w, base_h = float(FIGSIZE[0]), float(FIGSIZE[1])
-    w = base_w if int(ncols) <= 1 else base_w * 1.75
-    h = base_h * float(max(1, int(nrows)))
-    return float(w), float(h)
-
-
 def plot_eval_curves_by_env(
     by_step_df: pd.DataFrame,
     *,
@@ -136,6 +108,7 @@ def plot_eval_curves_by_env(
     filename_suffix: str,
     summary_raw_csv: Path | None = None,
 ) -> list[Path]:
+    _ = title
     if by_step_df is None or by_step_df.empty:
         return []
 
@@ -155,15 +128,6 @@ def plot_eval_curves_by_env(
             return []
         df["method_key"] = df["method"].astype(str).str.strip().str.lower()
     df["method_key"] = df["method_key"].astype(str).str.strip().str.lower()
-
-    label_by_key = (
-        df.drop_duplicates(subset=["method_key"], keep="first")
-        .set_index("method_key")["method"]
-        .astype(str)
-        .to_dict()
-        if "method" in df.columns
-        else {}
-    )
 
     raw_df = _load_summary_raw(Path(summary_raw_csv)) if summary_raw_csv is not None else None
 
@@ -195,19 +159,20 @@ def plot_eval_curves_by_env(
 
     legend_methods = legend_order([m for m in want if m in methods_union])
 
+    nrows = int(len(env_recs))
+    height = max(2.8, 2.2 * float(nrows))
+
     plt = apply_rcparams_paper()
-    nrows, ncols = _grid(len(env_recs))
     fig, axes = plt.subplots(
         nrows,
-        ncols,
-        figsize=_figsize(nrows, ncols),
+        1,
+        figsize=(float(FIG_WIDTH), float(height)),
         dpi=int(DPI),
         squeeze=False,
     )
-    axes_flat = list(axes.reshape(-1))
 
     for i, (env_id, df_env, methods_present) in enumerate(env_recs):
-        ax = axes_flat[i]
+        ax = axes[i, 0]
 
         methods_draw = draw_order([m for m in want if m in set(methods_present)])
         for mk in methods_draw:
@@ -237,14 +202,13 @@ def plot_eval_curves_by_env(
         add_solved_threshold_line(ax, str(env_id))
         apply_grid(ax)
 
-        row = int(i // ncols)
-        col = int(i % ncols)
-        if row == nrows - 1:
-            ax.set_xlabel("Checkpoint step (env steps)")
-        if col == 0:
-            ax.set_ylabel("Mean episode return")
+        ax.set_ylabel("Mean return")
+        if i == nrows - 1:
+            ax.set_xlabel("Training steps")
+        else:
+            ax.tick_params(axis="x", which="both", labelbottom=False)
 
-        ax.set_title(str(env_id))
+        add_row_label(ax, env_label(env_id))
 
         if raw_df is not None:
             df_raw_env = raw_df.loc[raw_df["env_id"] == str(env_id)].copy()
@@ -296,12 +260,6 @@ def plot_eval_curves_by_env(
                             zorder=20,
                         )
 
-    for j in range(len(env_recs), len(axes_flat)):
-        try:
-            axes_flat[j].axis("off")
-        except Exception:
-            pass
-
     handles = []
     labels = []
     for mk in legend_methods:
@@ -315,25 +273,14 @@ def plot_eval_curves_by_env(
                 alpha=float(alpha_for_method(mk)),
             )
         )
-        labels.append(str(label_by_key.get(mk, mk)))
+        labels.append(method_label(mk))
 
-    bottom = 0.03
+    top = 1.0
     if handles:
-        fig.legend(
-            handles=handles,
-            labels=labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.01),
-            ncol=int(min(6, max(1, len(handles)))),
-            framealpha=float(LEGEND_FRAMEALPHA),
-            fontsize=int(LEGEND_FONTSIZE),
-        )
-        bottom = 0.07
+        top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles)))])
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
-    fig.suptitle(str(title))
-    fig.tight_layout(rect=[0.0, bottom, 1.0, 0.94])
-
-    out = plots_root / f"eval_curves__{str(filename_suffix).strip()}.png"
+    out = plots_root / f"eval-curves-{slugify(filename_suffix)}.png"
     save_fig_atomic(fig, out)
     plt.close(fig)
     return [out]
