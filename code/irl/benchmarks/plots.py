@@ -21,11 +21,11 @@ def write_benchmark_plots(payload: Mapping[str, Any], *, out_dir: Path) -> dict[
 
     created: dict[str, str] = {}
 
-    throughput_path = out_dir / "bench_latest_throughput.png"
+    throughput_path = out_dir / "bench-throughput.png"
     if _plot_throughput(results, throughput_path, run_meta=run_meta):
         created["throughput"] = str(throughput_path)
 
-    speedup_path = out_dir / "bench_latest_speedup.png"
+    speedup_path = out_dir / "bench-speedup.png"
     if _plot_speedup(results, speedup_path, run_meta=run_meta):
         created["speedup"] = str(speedup_path)
 
