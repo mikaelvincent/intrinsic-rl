@@ -78,16 +78,27 @@ def legend_ncol(n_items: int, *, max_cols: int = 6) -> int:
     return int(min(max_cols, n))
 
 
-def add_row_label(ax, label: str, *, x: float = -0.08, fontsize: int | None = None) -> None:
+def add_row_label(ax, label: str, *, fontsize: int | None = None) -> None:
+    # Point-based offset keeps the label-to-axes gap consistent across subplot sizes.
     fs = int(LEGEND_FONTSIZE) if fontsize is None else int(fontsize)
+    fig = getattr(ax, "figure", None)
+    if fig is None:
+        return
+    try:
+        import matplotlib.transforms as mtransforms
+    except Exception:
+        return
+
+    dy_pt = 1.5
+    trans = ax.transAxes + mtransforms.ScaledTranslation(0.0, dy_pt / 72.0, fig.dpi_scale_trans)
+
     ax.text(
-        float(x),
-        0.5,
+        0.0,
+        1.0,
         str(label),
-        transform=ax.transAxes,
-        rotation=90,
-        va="center",
-        ha="right",
+        transform=trans,
+        va="bottom",
+        ha="left",
         fontsize=fs,
         clip_on=False,
     )
