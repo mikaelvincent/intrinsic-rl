@@ -36,6 +36,16 @@ _COMPONENT_LABELS: dict[str, str] = {
     "lp": "Learning progress",
 }
 
+ROW_LABEL_DY_PT: float = 2
+
+LEGEND_GROUP_GAP_PT: float = 2
+LEGEND_BLOCK_TO_CONTENT_PAD_EXTRA_PT: float = 6.0
+LEGEND_BLOCK_TO_CONTENT_PAD_PT: float = (
+    float(ROW_LABEL_DY_PT) + float(LEGEND_FONTSIZE) + float(LEGEND_BLOCK_TO_CONTENT_PAD_EXTRA_PT)
+)
+
+LEGEND_TIGHT_LAYOUT_PAD_MULT: float = 1.08
+
 
 def slugify(tag: object) -> str:
     s = str(tag).strip().lower()
@@ -89,8 +99,7 @@ def add_row_label(ax, label: str, *, fontsize: int | None = None) -> None:
     except Exception:
         return
 
-    dy_pt = 1.5
-    trans = ax.transAxes + mtransforms.ScaledTranslation(0.0, dy_pt / 72.0, fig.dpi_scale_trans)
+    trans = ax.transAxes + mtransforms.ScaledTranslation(0.0, float(ROW_LABEL_DY_PT) / 72.0, fig.dpi_scale_trans)
 
     ax.text(
         0.5,
@@ -175,41 +184,34 @@ def add_legend_rows_top(
             return 0.0
         return float(pt) / float(fig_h_pt)
 
-    def _target_gap_pt(fs_pt: int) -> float:
-        return float(max(1.0, min(2.5, 0.22 * float(fs_pt))))
-
-    target_gap_pt = _target_gap_pt(int(fs))
-
+    group_gap_pt = float(LEGEND_GROUP_GAP_PT)
     try:
-        gap_pt_req = float(row_gap) * float(fig_h_pt)
+        req_gap_pt = float(row_gap) * float(fig_h_pt)
+        if math.isfinite(req_gap_pt) and req_gap_pt > 0.0:
+            group_gap_pt = float(min(float(LEGEND_GROUP_GAP_PT), float(req_gap_pt)))
     except Exception:
-        gap_pt_req = float("nan")
+        group_gap_pt = float(LEGEND_GROUP_GAP_PT)
+    group_gap_fig = _pt_to_fig(group_gap_pt)
 
-    if not (math.isfinite(gap_pt_req) and gap_pt_req > 0.0):
-        gap_pt_req = float(target_gap_pt)
-
-    gap_pt = float(min(float(target_gap_pt), max(0.5 * float(target_gap_pt), float(gap_pt_req))))
-    gap_fig = _pt_to_fig(gap_pt)
-
-    if pad_axes_pt is None:
-        pad_pt = float(target_gap_pt)
-    else:
+    block_pad_pt = float(LEGEND_BLOCK_TO_CONTENT_PAD_PT)
+    if pad_axes_pt is not None:
         try:
-            pad_pt = float(pad_axes_pt)
+            req_pad = float(pad_axes_pt)
+            if math.isfinite(req_pad) and req_pad > 0.0:
+                block_pad_pt = float(max(block_pad_pt, req_pad))
         except Exception:
-            pad_pt = float(target_gap_pt)
-    pad_pt = float(max(0.0, min(5.0, pad_pt)))
-    pad_axes_fig = _pt_to_fig(pad_pt)
+            pass
+    block_pad_fig = _pt_to_fig(block_pad_pt)
 
-    tight_layout_pad_mult = 1.08
     base_fs = float(fs)
     try:
         import matplotlib as mpl
 
-        base_fs = float(mpl.rcParams.get("font.size", float(fs)))
+        base_fs = float(mpl.rcParams.get("font.size", base_fs))
     except Exception:
         base_fs = float(fs)
-    tight_pad_fig = _pt_to_fig(float(tight_layout_pad_mult) * float(base_fs))
+
+    tight_pad_fig = _pt_to_fig(float(LEGEND_TIGHT_LAYOUT_PAD_MULT) * float(base_fs))
 
     y = float(y_top)
     legends: list[object] = []
@@ -247,9 +249,9 @@ def add_legend_rows_top(
             renderer = fig.canvas.get_renderer()
             bbox = leg.get_window_extent(renderer=renderer)
             bbox_fig = bbox.transformed(fig.transFigure.inverted())
-            y = float(bbox_fig.y0) - float(gap_fig)
+            y = float(bbox_fig.y0) - float(group_gap_fig)
         except Exception:
-            y = float(y) - float(gap_fig)
+            y = float(y) - float(group_gap_fig)
 
     if not legends:
         return 1.0
@@ -274,5 +276,5 @@ def add_legend_rows_top(
     if min_y0 is None:
         min_y0 = float(y)
 
-    top = float(min_y0) - float(pad_axes_fig) + float(tight_pad_fig)
+    top = float(min_y0) - float(block_pad_fig) + float(tight_pad_fig)
     return float(max(0.0, min(1.0, top)))
