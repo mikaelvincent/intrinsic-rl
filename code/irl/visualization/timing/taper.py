@@ -10,8 +10,8 @@ import typer
 from irl.visualization.data import aggregate_runs
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FONTSIZE, apply_grid
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
+from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FONTSIZE, apply_grid, legend_order as _legend_order
 
 
 def _is_effectively_one(vals: np.ndarray, *, tol: float) -> bool:
@@ -20,32 +20,6 @@ def _is_effectively_one(vals: np.ndarray, *, tol: float) -> bool:
     if arr.size == 0:
         return True
     return float(np.max(np.abs(arr - 1.0))) <= float(tol)
-
-
-def _method_order(methods: list[str]) -> list[str]:
-    order = [
-        "vanilla",
-        "icm",
-        "rnd",
-        "ride",
-        "riac",
-        "glpe_lp_only",
-        "glpe_impact_only",
-        "glpe_nogate",
-        "glpe_cache",
-        "glpe",
-    ]
-    idx = {m: i for i, m in enumerate(order)}
-
-    def key(m: str) -> tuple[int, str]:
-        ml = str(m).strip().lower()
-        if ml in idx:
-            return idx[ml], ml
-        if ml.startswith("glpe_"):
-            return 90, ml
-        return 100, ml
-
-    return sorted(list(methods), key=key)
 
 
 def _interp_to(x_src: np.ndarray, y_src: np.ndarray, x_dst: np.ndarray) -> np.ndarray:
@@ -151,7 +125,8 @@ def plot_intrinsic_taper_weight(
 
     env_recs: list[dict[str, object]] = []
 
-    for env_id, by_method in sorted(groups_by_env.items(), key=lambda kv: str(kv[0])):
+    for env_id in _sort_env_ids(list(groups_by_env.keys())):
+        by_method = groups_by_env.get(env_id)
         if not isinstance(by_method, Mapping):
             continue
 
@@ -164,12 +139,7 @@ def plot_intrinsic_taper_weight(
         if not glpe_methods:
             continue
 
-        candidates: list[str] = []
-        if "glpe" in glpe_methods:
-            candidates.append("glpe")
-        for m in _method_order(list(glpe_methods.keys())):
-            if m != "glpe":
-                candidates.append(m)
+        candidates = _legend_order(list(glpe_methods.keys()))
 
         chosen_method: str | None = None
         agg_taper = None
