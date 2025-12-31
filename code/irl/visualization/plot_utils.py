@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -89,27 +90,32 @@ def save_fig_atomic(
     atomic_replace(tmp, path)
 
 
-_ENV_ORDER: tuple[str, ...] = (
-    "MountainCar-v0",
-    "BipedalWalker-v3",
-    "HalfCheetah-v5",
-    "Ant-v5",
-    "CarRacing-v3",
-    "Humanoid-v5",
+_ENV_ORDER_BASE: tuple[str, ...] = (
+    "mountaincar",
+    "bipedalwalker",
+    "halfcheetah",
+    "ant",
+    "carracing",
+    "humanoid",
 )
+_ENV_RANK: dict[str, int] = {env: i for i, env in enumerate(_ENV_ORDER_BASE)}
+_ENV_VERSION_RE = re.compile(r"-v\d+$", re.IGNORECASE)
 
-_ENV_RANK: dict[str, int] = {env: i for i, env in enumerate(_ENV_ORDER)}
+
+def _env_base(env_id: str) -> str:
+    s = str(env_id).strip().replace("/", "-")
+    s = _ENV_VERSION_RE.sub("", s)
+    return s.lower()
 
 
-def env_sort_key(env_id: object) -> tuple[int, str]:
+def env_sort_key(env_id: object) -> tuple[int, str, str]:
     s = str(env_id).strip()
     if not s:
-        return (10_000, "")
+        return (10_000, "", "")
     key = s.replace("/", "-")
-    rank = _ENV_RANK.get(key)
-    if rank is None:
-        rank = 10_000
-    return (int(rank), key.lower())
+    base = _env_base(key)
+    rank = int(_ENV_RANK.get(base, 10_000))
+    return (rank, base, key.lower())
 
 
 def sort_env_ids(env_ids: Iterable[object]) -> list[str]:
