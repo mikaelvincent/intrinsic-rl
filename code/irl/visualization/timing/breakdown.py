@@ -292,10 +292,6 @@ def plot_timing_breakdown(
             [float(by_name.get(m, ({}, 0.0, 0.0, 0))[2]) for m in methods_env],
             dtype=np.float64,
         )
-        ns = np.asarray(
-            [int(by_name.get(m, ({}, 0.0, 0.0, 0))[3]) for m in methods_env],
-            dtype=np.int64,
-        )
 
         ax.errorbar(
             x,
@@ -309,36 +305,6 @@ def plot_timing_breakdown(
             alpha=0.9,
             zorder=10,
         )
-
-        clip_patches: list[object | None] = [None] * int(n_methods)
-        try:
-            from matplotlib.patches import Rectangle  # type: ignore
-        except Exception:
-            Rectangle = None  # type: ignore[assignment]
-
-        if Rectangle is not None:
-            w = 0.75
-            half = 0.5 * float(w)
-            for j, (xi, yi) in enumerate(zip(x.tolist(), totals.tolist())):
-                if not np.isfinite(float(yi)):
-                    continue
-                rect = Rectangle(
-                    (float(xi) - float(half), 0.0),
-                    float(w),
-                    float(yi),
-                    facecolor="none",
-                    edgecolor="none",
-                    linewidth=0.0,
-                )
-                ax.add_patch(rect)
-                clip_patches[int(j)] = rect
-
-        for patch, yi, n in zip(clip_patches, totals.tolist(), ns.tolist()):
-            if patch is None:
-                continue
-            if int(n) <= 0 or not np.isfinite(float(yi)):
-                continue
-            _annotate_bar_label(ax, patch, f"n={int(n)}")
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
         ax.set_ylabel("Seconds per update")
