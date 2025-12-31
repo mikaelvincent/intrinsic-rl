@@ -466,15 +466,13 @@ def plot_eval_auc_bars_by_env(
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
-        ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
-        bar_patches: list[object | None] = [None] * int(len(auc_rows))
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
             alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
-            bars = ax.bar(
+            ax.bar(
                 float(x[j]),
                 float(vals[j]),
                 color=colors[j],
@@ -483,16 +481,6 @@ def plot_eval_auc_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
-            try:
-                if hasattr(bars, "patches") and bars.patches:
-                    bar_patches[int(j)] = bars.patches[0]
-            except Exception:
-                bar_patches[int(j)] = None
-
-        for patch, n in zip(bar_patches, ns):
-            if patch is None:
-                continue
-            _annotate_bar_label(ax, patch, f"n={int(n)}" if int(n) > 0 else "n=?")
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
@@ -717,16 +705,13 @@ def plot_eval_auc_time_bars_by_env(
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
-        ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
-
-        bar_patches: list[object | None] = [None] * int(len(auc_rows))
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
             alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
-            bars = ax.bar(
+            ax.bar(
                 float(x[j]),
                 float(vals[j]),
                 color=colors[j],
@@ -735,16 +720,6 @@ def plot_eval_auc_time_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
-            try:
-                if hasattr(bars, "patches") and bars.patches:
-                    bar_patches[int(j)] = bars.patches[0]
-            except Exception:
-                bar_patches[int(j)] = None
-
-        for patch, n in zip(bar_patches, ns):
-            if patch is None:
-                continue
-            _annotate_bar_label(ax, patch, f"n={int(n)}" if int(n) > 0 else "n=?")
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
