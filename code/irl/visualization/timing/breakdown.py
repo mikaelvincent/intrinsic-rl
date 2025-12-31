@@ -11,7 +11,7 @@ from irl.visualization.data import read_scalars
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, legend_order as _legend_order
 
 _LABEL_TEXT_PAD_FRAC: float = 0.03
 _LABEL_BG_ALPHA: float = 0.25
@@ -137,33 +137,6 @@ def _component_medians(df_tail: pd.DataFrame) -> dict[str, float] | None:
     return {k: float(meds.get(k, 0.0)) for k in comp.columns.tolist()}
 
 
-def _method_order(methods: Sequence[str]) -> list[str]:
-    order = [
-        "vanilla",
-        "icm",
-        "rnd",
-        "ride",
-        "riac",
-        "glpe",
-        "glpe_lp_only",
-        "glpe_impact_only",
-        "glpe_nogate",
-        "glpe_cache",
-    ]
-    idx = {m: i for i, m in enumerate(order)}
-    ms = list(methods)
-
-    def key(m: str) -> tuple[int, str]:
-        ml = str(m).strip().lower()
-        if ml in idx:
-            return idx[ml], ml
-        if ml.startswith("glpe_"):
-            return 90, ml
-        return 100, ml
-
-    return sorted(ms, key=key)
-
-
 def plot_timing_breakdown(
     groups_by_env: Mapping[str, Mapping[str, list[Path]]],
     *,
@@ -249,7 +222,7 @@ def plot_timing_breakdown(
         if not method_rows:
             continue
 
-        methods_env = _method_order([m for m, *_ in method_rows])
+        methods_env = _legend_order([m for m, *_ in method_rows])
         max_methods = max(max_methods, int(len(methods_env)))
 
         by_name = {m: (cm, tm, te, n) for m, cm, tm, te, n in method_rows}
