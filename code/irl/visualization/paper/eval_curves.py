@@ -252,12 +252,12 @@ def plot_eval_curves_by_env(
                         ax.scatter(
                             x_off,
                             y_pts,
-                            s=float(SCATTER_POINT_SIZE),
+                            s=float(SCATTER_POINT_SIZE) * 0.75,
                             c=_color_for_method(mk),
                             marker="o",
                             edgecolors="none",
                             linewidths=0.0,
-                            alpha=0.5,
+                            alpha=0.375,
                             zorder=20,
                         )
 
