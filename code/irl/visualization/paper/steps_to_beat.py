@@ -9,7 +9,7 @@ import pandas as pd
 from irl.visualization.labels import add_legend_rows_top, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid
+from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid, legend_order as _legend_order
 from .thresholds import _SUPPORTED_SCORE_ENVS, solved_threshold
 
 _SOLVED_MIN_REACH_FRAC: float = 0.25
@@ -225,7 +225,7 @@ def _threshold_fraction(threshold: float, frac: float) -> float:
 def _reach_label(reached: int, total: int) -> str:
     tot = int(total)
     if tot <= 0:
-        return "—"
+        return "â€”"
     r = int(reached)
     r = int(max(0, min(r, tot)))
     return f"{r}/{tot}"
@@ -296,7 +296,7 @@ def plot_steps_to_beat_by_env(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+    want = _legend_order(methods_to_plot)
     if not want:
         return None
 
