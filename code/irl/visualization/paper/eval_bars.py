@@ -182,12 +182,10 @@ def plot_eval_bars_by_env(
             [float(rows_by_method[m].get("mean_return_ci95_hi", float("nan"))) for m in methods_present],
             dtype=np.float64,
         )
-        n_seeds = [int(rows_by_method[m].get("n_seeds", 0) or 0) for m in methods_present]
 
         x = np.arange(len(methods_present), dtype=np.float64)
-        bar_patches: list[object | None] = [None] * int(len(methods_present))
         for j, mk in enumerate(methods_present):
-            bars = ax.bar(
+            ax.bar(
                 float(x[j]),
                 float(means[j]),
                 color=_color_for_method(mk),
@@ -196,11 +194,6 @@ def plot_eval_bars_by_env(
                 linewidth=0.0,
                 zorder=10 if str(mk) == "glpe" else 2,
             )
-            try:
-                if hasattr(bars, "patches") and bars.patches:
-                    bar_patches[int(j)] = bars.patches[0]
-            except Exception:
-                bar_patches[int(j)] = None
 
         yerr = np.vstack([np.maximum(0.0, means - ci_lo), np.maximum(0.0, ci_hi - means)])
         ax.errorbar(
@@ -217,11 +210,6 @@ def plot_eval_bars_by_env(
         )
 
         add_solved_threshold_line(ax, str(env_id))
-
-        for patch, n in zip(bar_patches, n_seeds):
-            if patch is None:
-                continue
-            _annotate_bar_label(ax, patch, f"n={int(n)}" if int(n) > 0 else "n=?")
 
         ax.set_ylabel("Mean return")
         ax.set_xticks(x)
