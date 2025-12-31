@@ -30,6 +30,29 @@ def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
     return any(k.startswith("glpe_") for k in keys)
 
 
+_LABEL_TEXT_PAD_FRAC: float = 0.03
+_LABEL_BG_ALPHA: float = 0.25
+
+
+def _bar_label_pos(patch: object, *, pad_frac: float) -> tuple[float, float, str] | None:
+    try:
+        x0 = float(getattr(patch, "get_x")())
+        w = float(getattr(patch, "get_width")())
+        y0 = float(getattr(patch, "get_y")())
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        return None
+
+    if not (np.isfinite(x0) and np.isfinite(w) and np.isfinite(y0) and np.isfinite(h)):
+        return None
+
+    cx = x0 + 0.5 * w
+    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
+    cy = y0 + frac * h
+    va = "bottom" if h >= 0.0 else "top"
+    return float(cx), float(cy), va
+
+
 def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
     try:
         return float(np.trapezoid(y, x))
@@ -387,6 +410,13 @@ def plot_eval_auc_bars_by_env(
         squeeze=False,
     )
 
+    bbox = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": float(_LABEL_BG_ALPHA),
+    }
+
     for i, (env_id, auc_rows) in enumerate(env_recs):
         ax = axes[i, 0]
 
@@ -396,11 +426,13 @@ def plot_eval_auc_bars_by_env(
         ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
+        bar_patches: list[object | None] = []
+
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
             alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
-            ax.bar(
+            cont = ax.bar(
                 float(x[j]),
                 float(vals[j]),
                 color=colors[j],
@@ -409,21 +441,31 @@ def plot_eval_auc_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
+            patch = cont.patches[0] if getattr(cont, "patches", None) else None
+            bar_patches.append(patch)
 
-        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
-        txt_off = 0.02 * span
-        for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
+        for patch, yi, n in zip(bar_patches, vals.tolist(), ns):
+            if patch is None:
+                continue
             if not np.isfinite(float(yi)):
                 continue
+            pos = _bar_label_pos(patch, pad_frac=float(_LABEL_TEXT_PAD_FRAC))
+            if pos is None:
+                continue
+            cx, cy, va = pos
             ax.text(
-                float(xi),
-                float(yi + txt_off) if yi >= 0.0 else float(yi - txt_off),
+                float(cx),
+                float(cy),
                 f"n={int(n)}" if int(n) > 0 else "n=?",
                 ha="center",
-                va="bottom" if yi >= 0.0 else "top",
+                va=str(va),
+                rotation=90,
                 fontsize=8,
-                alpha=0.9,
-                zorder=30,
+                color="black",
+                bbox=bbox,
+                clip_on=True,
+                clip_path=patch,
+                zorder=40,
             )
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
@@ -643,6 +685,13 @@ def plot_eval_auc_time_bars_by_env(
         squeeze=False,
     )
 
+    bbox = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": float(_LABEL_BG_ALPHA),
+    }
+
     for i, (env_id, auc_rows, budget_s) in enumerate(env_recs):
         ax = axes[i, 0]
 
@@ -652,12 +701,13 @@ def plot_eval_auc_time_bars_by_env(
         ns = [int(r.get("n_seeds", 0) or 0) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
+        bar_patches: list[object | None] = []
 
         for j, r in enumerate(auc_rows):
             mk = str(r.get("method_key", "")).strip().lower()
             alpha = 1.0 if mk == "glpe" else 0.9
             z = 10 if mk == "glpe" else 2
-            ax.bar(
+            cont = ax.bar(
                 float(x[j]),
                 float(vals[j]),
                 color=colors[j],
@@ -666,21 +716,31 @@ def plot_eval_auc_time_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
+            patch = cont.patches[0] if getattr(cont, "patches", None) else None
+            bar_patches.append(patch)
 
-        span = max(1e-9, float(np.nanmax(vals) - np.nanmin(vals))) if np.isfinite(vals).any() else 1.0
-        txt_off = 0.02 * span
-        for xi, yi, n in zip(x.tolist(), vals.tolist(), ns):
+        for patch, yi, n in zip(bar_patches, vals.tolist(), ns):
+            if patch is None:
+                continue
             if not np.isfinite(float(yi)):
                 continue
+            pos = _bar_label_pos(patch, pad_frac=float(_LABEL_TEXT_PAD_FRAC))
+            if pos is None:
+                continue
+            cx, cy, va = pos
             ax.text(
-                float(xi),
-                float(yi + txt_off) if yi >= 0.0 else float(yi - txt_off),
+                float(cx),
+                float(cy),
                 f"n={int(n)}" if int(n) > 0 else "n=?",
                 ha="center",
-                va="bottom" if yi >= 0.0 else "top",
+                va=str(va),
+                rotation=90,
                 fontsize=8,
-                alpha=0.9,
-                zorder=30,
+                color="black",
+                bbox=bbox,
+                clip_on=True,
+                clip_path=patch,
+                zorder=40,
             )
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
