@@ -175,35 +175,41 @@ def add_legend_rows_top(
             return 0.0
         return float(pt) / float(fig_h_pt)
 
-    max_row_gap_pt = 5.0
-    gap_pt = float(row_gap) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
-    gap_pt = float(min(max_row_gap_pt, max(0.0, gap_pt)))
+    def _target_gap_pt(fs_pt: int) -> float:
+        return float(max(1.0, min(2.5, 0.22 * float(fs_pt))))
+
+    target_gap_pt = _target_gap_pt(int(fs))
+
+    try:
+        gap_pt_req = float(row_gap) * float(fig_h_pt)
+    except Exception:
+        gap_pt_req = float("nan")
+
+    if not (math.isfinite(gap_pt_req) and gap_pt_req > 0.0):
+        gap_pt_req = float(target_gap_pt)
+
+    gap_pt = float(min(float(target_gap_pt), max(0.5 * float(target_gap_pt), float(gap_pt_req))))
     gap_fig = _pt_to_fig(gap_pt)
 
-    tight_layout_pad_mult = 1.08
-    tight_pad_fig = _pt_to_fig(float(tight_layout_pad_mult) * float(fs))
-
-    subplot_gap_fig: float | None = None
-    try:
-        fig.tight_layout()
-        fig.canvas.draw()
-        subplot_gap_fig = _median_subplot_row_gap(fig)
-    except Exception:
-        subplot_gap_fig = None
-
-    if subplot_gap_fig is not None and math.isfinite(float(subplot_gap_fig)) and float(subplot_gap_fig) > 0.0:
-        pad_axes_fig = float(subplot_gap_fig)
+    if pad_axes_pt is None:
+        pad_pt = float(target_gap_pt)
     else:
-        if pad_axes_pt is None:
-            pad_pt = float(0.006) * float(fig_h_pt) if fig_h_pt > 0.0 else 0.0
-            pad_pt = float(min(5.0, max(2.5, pad_pt)))
-        else:
-            try:
-                pad_pt = float(pad_axes_pt)
-            except Exception:
-                pad_pt = 0.0
-            pad_pt = float(min(5.0, max(0.0, pad_pt)))
-        pad_axes_fig = _pt_to_fig(pad_pt)
+        try:
+            pad_pt = float(pad_axes_pt)
+        except Exception:
+            pad_pt = float(target_gap_pt)
+    pad_pt = float(max(0.0, min(5.0, pad_pt)))
+    pad_axes_fig = _pt_to_fig(pad_pt)
+
+    tight_layout_pad_mult = 1.08
+    base_fs = float(fs)
+    try:
+        import matplotlib as mpl
+
+        base_fs = float(mpl.rcParams.get("font.size", float(fs)))
+    except Exception:
+        base_fs = float(fs)
+    tight_pad_fig = _pt_to_fig(float(tight_layout_pad_mult) * float(base_fs))
 
     y = float(y_top)
     legends: list[object] = []
