@@ -91,6 +91,29 @@ def _method_order(methods: Sequence[str]) -> list[str]:
     return sorted(ms, key=key)
 
 
+_LABEL_TEXT_PAD_FRAC: float = 0.03
+_LABEL_BG_ALPHA: float = 0.25
+
+
+def _bar_label_pos(patch: object, *, pad_frac: float) -> tuple[float, float, str] | None:
+    try:
+        x0 = float(getattr(patch, "get_x")())
+        w = float(getattr(patch, "get_width")())
+        y0 = float(getattr(patch, "get_y")())
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        return None
+
+    if not (np.isfinite(x0) and np.isfinite(w) and np.isfinite(y0) and np.isfinite(h)):
+        return None
+
+    cx = x0 + 0.5 * w
+    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
+    cy = y0 + frac * h
+    va = "bottom" if h >= 0.0 else "top"
+    return float(cx), float(cy), va
+
+
 def plot_timing_breakdown(
     groups_by_env: Mapping[str, Mapping[str, list[Path]]],
     *,
@@ -206,6 +229,15 @@ def plot_timing_breakdown(
     legend_handles = [plt.Line2D([], [], color=col, lw=8.0) for _k, _lab, col in components]
     legend_labels = [str(lab) for _k, lab, _c in components]
 
+    bbox = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": float(_LABEL_BG_ALPHA),
+    }
+
+    import matplotlib.patches as mpatches
+
     for i, rec in enumerate(per_env):
         ax = axes[i, 0]
         env_id = str(rec.get("env_id", ""))
@@ -264,21 +296,33 @@ def plot_timing_breakdown(
             zorder=10,
         )
 
-        ymax = float(np.nanmax(totals)) if totals.size else 0.0
-        yoff = 0.02 * float(max(1e-9, ymax))
-
+        width = 0.75
         for xi, yi, n in zip(x.tolist(), totals.tolist(), ns.tolist()):
             if int(n) <= 0 or not np.isfinite(float(yi)):
                 continue
+
+            left = float(xi) - 0.5 * float(width)
+            clip_patch = mpatches.Rectangle((left, 0.0), float(width), float(yi))
+            clip_patch.set_transform(ax.transData)
+
+            pos = _bar_label_pos(clip_patch, pad_frac=float(_LABEL_TEXT_PAD_FRAC))
+            if pos is None:
+                continue
+
+            cx, cy, va = pos
             ax.text(
-                float(xi),
-                float(yi) + yoff,
+                float(cx),
+                float(cy),
                 f"n={int(n)}",
                 ha="center",
-                va="bottom",
+                va=str(va),
+                rotation=90,
                 fontsize=8,
-                alpha=0.9,
-                zorder=20,
+                color="black",
+                bbox=bbox,
+                clip_on=True,
+                clip_path=clip_patch,
+                zorder=40,
             )
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
