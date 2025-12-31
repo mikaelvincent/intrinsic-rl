@@ -430,11 +430,24 @@ def plot_eval_auc_bars_by_env(
                 except Exception:
                     n_seeds = 0
 
+            auc_std = 0.0
+            if "mean_return_ci95_lo" in df_m.columns and "mean_return_ci95_hi" in df_m.columns:
+                lo = pd.to_numeric(df_m["mean_return_ci95_lo"], errors="coerce").to_numpy(dtype=np.float64)
+                hi = pd.to_numeric(df_m["mean_return_ci95_hi"], errors="coerce").to_numpy(dtype=np.float64)
+                auc_lo, _ = _auc_from_curve(steps, lo)
+                auc_hi, _ = _auc_from_curve(steps, hi)
+                half = 0.5 * abs(float(auc_hi) - float(auc_lo))
+                n_eff = int(max(1, int(n_seeds)))
+                auc_std = (half / 1.96) * math.sqrt(float(n_eff))
+                if not np.isfinite(float(auc_std)) or float(auc_std) < 0.0:
+                    auc_std = 0.0
+
             auc_rows.append(
                 {
                     "method_key": mk,
                     "label": method_label(mk),
                     "auc": float(auc),
+                    "auc_std": float(auc_std),
                     "n_seeds": int(n_seeds),
                 }
             )
@@ -465,6 +478,8 @@ def plot_eval_auc_bars_by_env(
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
+        stds = np.asarray([float(r.get("auc_std", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
@@ -481,6 +496,19 @@ def plot_eval_auc_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
+
+        ax.errorbar(
+            x,
+            vals,
+            yerr=stds,
+            fmt="none",
+            ecolor="black",
+            elinewidth=0.9,
+            capsize=3,
+            capthick=0.9,
+            alpha=0.9,
+            zorder=20,
+        )
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
@@ -612,9 +640,18 @@ def plot_eval_auc_time_bars_by_env(
             steps = df_m["ckpt_step"].to_numpy(dtype=np.int64, copy=False)
             returns = pd.to_numeric(df_m["mean_return_mean"], errors="coerce").to_numpy(dtype=np.float64)
 
+            ci_lo = None
+            ci_hi = None
+            if "mean_return_ci95_lo" in df_m.columns and "mean_return_ci95_hi" in df_m.columns:
+                ci_lo = pd.to_numeric(df_m["mean_return_ci95_lo"], errors="coerce").to_numpy(dtype=np.float64)
+                ci_hi = pd.to_numeric(df_m["mean_return_ci95_hi"], errors="coerce").to_numpy(dtype=np.float64)
+
             ok = np.isfinite(steps.astype(np.float64)) & np.isfinite(returns)
             steps = steps[ok]
             returns = returns[ok]
+            if ci_lo is not None and ci_hi is not None:
+                ci_lo = ci_lo[ok]
+                ci_hi = ci_hi[ok]
             if int(steps.size) == 0:
                 continue
 
@@ -629,6 +666,9 @@ def plot_eval_auc_time_bars_by_env(
             steps = steps[ok2]
             returns = returns[ok2]
             times = np.asarray(times, dtype=np.float64).reshape(-1)[ok2]
+            if ci_lo is not None and ci_hi is not None:
+                ci_lo = np.asarray(ci_lo, dtype=np.float64).reshape(-1)[ok2]
+                ci_hi = np.asarray(ci_hi, dtype=np.float64).reshape(-1)[ok2]
             if int(times.size) == 0:
                 continue
 
@@ -645,6 +685,12 @@ def plot_eval_auc_time_bars_by_env(
                     "label": method_label(mk),
                     "times_s": times.astype(np.float64, copy=False),
                     "returns": returns.astype(np.float64, copy=False),
+                    "returns_ci95_lo": None
+                    if ci_lo is None
+                    else np.asarray(ci_lo, dtype=np.float64).reshape(-1).astype(np.float64, copy=False),
+                    "returns_ci95_hi": None
+                    if ci_hi is None
+                    else np.asarray(ci_hi, dtype=np.float64).reshape(-1).astype(np.float64, copy=False),
                     "n_seeds": int(n_seeds),
                     "t_end_s": float(times[-1]),
                 }
@@ -672,11 +718,33 @@ def plot_eval_auc_time_bars_by_env(
                 np.asarray(c["returns"], dtype=np.float64),
                 budget_s=budget_s,
             )
+
+            auc_std = 0.0
+            lo = c.get("returns_ci95_lo")
+            hi = c.get("returns_ci95_hi")
+            if isinstance(lo, np.ndarray) and isinstance(hi, np.ndarray):
+                auc_lo, _ = _auc_from_time_curve(
+                    np.asarray(c["times_s"], dtype=np.float64),
+                    np.asarray(lo, dtype=np.float64),
+                    budget_s=budget_s,
+                )
+                auc_hi, _ = _auc_from_time_curve(
+                    np.asarray(c["times_s"], dtype=np.float64),
+                    np.asarray(hi, dtype=np.float64),
+                    budget_s=budget_s,
+                )
+                half = 0.5 * abs(float(auc_hi) - float(auc_lo))
+                n_eff = int(max(1, int(c.get("n_seeds", 0) or 0)))
+                auc_std = (half / 1.96) * math.sqrt(float(n_eff))
+                if not np.isfinite(float(auc_std)) or float(auc_std) < 0.0:
+                    auc_std = 0.0
+
             auc_rows.append(
                 {
                     "method_key": str(c["method_key"]),
                     "label": str(c["label"]),
                     "auc": float(auc),
+                    "auc_std": float(auc_std),
                     "n_seeds": int(c["n_seeds"]),
                 }
             )
@@ -704,6 +772,8 @@ def plot_eval_auc_time_bars_by_env(
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
+        stds = np.asarray([float(r.get("auc_std", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
@@ -720,6 +790,19 @@ def plot_eval_auc_time_bars_by_env(
                 linewidth=0.0,
                 zorder=z,
             )
+
+        ax.errorbar(
+            x,
+            vals,
+            yerr=stds,
+            fmt="none",
+            ecolor="black",
+            elinewidth=0.9,
+            capsize=3,
+            capthick=0.9,
+            alpha=0.9,
+            zorder=20,
+        )
 
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
