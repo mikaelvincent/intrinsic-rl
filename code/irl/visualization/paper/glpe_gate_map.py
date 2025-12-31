@@ -6,7 +6,7 @@ import numpy as np
 
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FONTSIZE, apply_grid
 from irl.visualization.trajectory_projection import trajectory_projection
 
@@ -32,7 +32,11 @@ def plot_glpe_state_gate_map(
         return []
 
     env_recs: list[dict[str, object]] = []
-    for env_id, paths in sorted(by_env.items(), key=lambda kv: str(kv[0])):
+    for env_id in _sort_env_ids(list(by_env.keys())):
+        paths = by_env.get(str(env_id), [])
+        if not paths:
+            continue
+
         obs_all: list[np.ndarray] = []
         gates_all: list[np.ndarray] = []
 
