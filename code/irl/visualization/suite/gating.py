@@ -60,7 +60,7 @@ def _generate_gating_plot(
         c_rew = _color_for_component("reward")
         c_gate = _color_for_component("gate")
 
-        ax1.plot(agg_rew.steps, agg_rew.mean, color=c_rew, linewidth=1.9, alpha=0.88, label="Reward")
+        ax1.plot(agg_rew.steps, agg_rew.mean, color=c_rew, linewidth=0.95, alpha=0.88, label="Reward")
         ax1.set_xlabel("Environment steps")
         ax1.set_ylabel("Extrinsic reward")
 
@@ -76,7 +76,7 @@ def _generate_gating_plot(
             agg_gate.steps,
             agg_gate.mean,
             color=c_gate,
-            linewidth=3.6,
+            linewidth=1.8,
             alpha=1.0,
             linestyle="-",
             label="Gate rate",
