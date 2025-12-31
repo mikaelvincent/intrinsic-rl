@@ -13,6 +13,79 @@ from irl.visualization.palette import color_for_component as _color_for_componen
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
 
+_LABEL_TEXT_PAD_FRAC: float = 0.03
+_LABEL_BG_ALPHA: float = 0.25
+
+
+def _y_text_for_patch(patch: object, *, use_log: bool, pad_frac: float) -> float:
+    try:
+        y0 = float(getattr(patch, "get_y")())
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        return float("nan")
+
+    if not np.isfinite(y0) or not np.isfinite(h):
+        return float("nan")
+
+    y1 = y0 + h
+    if not np.isfinite(y1):
+        return float("nan")
+
+    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
+
+    if not use_log:
+        return float(y0 + frac * h)
+
+    if y0 <= 0.0 or y1 <= 0.0:
+        return float(y0 + frac * h)
+
+    ratio = float(y1 / y0)
+    if not np.isfinite(ratio) or ratio <= 1.0:
+        return float(y0)
+
+    return float(y0 * (ratio**frac))
+
+
+def _annotate_bar_label(ax, patch: object, text: str) -> None:
+    try:
+        cx = float(getattr(patch, "get_x")()) + 0.5 * float(getattr(patch, "get_width")())
+    except Exception:
+        return
+
+    try:
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        h = 0.0
+
+    use_log = str(getattr(ax, "get_yscale", lambda: "linear")()).strip().lower() == "log"
+    y = _y_text_for_patch(patch, use_log=bool(use_log), pad_frac=float(_LABEL_TEXT_PAD_FRAC))
+    if not (np.isfinite(float(cx)) and np.isfinite(float(y))):
+        return
+
+    bbox = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": float(_LABEL_BG_ALPHA),
+    }
+
+    va = "bottom" if float(h) >= 0.0 else "top"
+
+    ax.text(
+        float(cx),
+        float(y),
+        str(text),
+        ha="center",
+        va=str(va),
+        rotation=0,
+        fontsize=8,
+        color="black",
+        bbox=bbox,
+        clip_on=True,
+        clip_path=patch,
+        zorder=40,
+    )
+
 
 def _tail_frame(df: pd.DataFrame, *, tail_frac: float, min_rows: int, max_rows: int) -> pd.DataFrame:
     n = int(len(df))
@@ -89,29 +162,6 @@ def _method_order(methods: Sequence[str]) -> list[str]:
         return 100, ml
 
     return sorted(ms, key=key)
-
-
-_LABEL_TEXT_PAD_FRAC: float = 0.03
-_LABEL_BG_ALPHA: float = 0.25
-
-
-def _bar_label_pos(patch: object, *, pad_frac: float) -> tuple[float, float, str] | None:
-    try:
-        x0 = float(getattr(patch, "get_x")())
-        w = float(getattr(patch, "get_width")())
-        y0 = float(getattr(patch, "get_y")())
-        h = float(getattr(patch, "get_height")())
-    except Exception:
-        return None
-
-    if not (np.isfinite(x0) and np.isfinite(w) and np.isfinite(y0) and np.isfinite(h)):
-        return None
-
-    cx = x0 + 0.5 * w
-    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
-    cy = y0 + frac * h
-    va = "bottom" if h >= 0.0 else "top"
-    return float(cx), float(cy), va
 
 
 def plot_timing_breakdown(
@@ -229,15 +279,6 @@ def plot_timing_breakdown(
     legend_handles = [plt.Line2D([], [], color=col, lw=8.0) for _k, _lab, col in components]
     legend_labels = [str(lab) for _k, lab, _c in components]
 
-    bbox = {
-        "boxstyle": "round,pad=0.12",
-        "facecolor": "white",
-        "edgecolor": "none",
-        "alpha": float(_LABEL_BG_ALPHA),
-    }
-
-    import matplotlib.patches as mpatches
-
     for i, rec in enumerate(per_env):
         ax = axes[i, 0]
         env_id = str(rec.get("env_id", ""))
@@ -296,34 +337,35 @@ def plot_timing_breakdown(
             zorder=10,
         )
 
-        width = 0.75
-        for xi, yi, n in zip(x.tolist(), totals.tolist(), ns.tolist()):
+        clip_patches: list[object | None] = [None] * int(n_methods)
+        try:
+            from matplotlib.patches import Rectangle  # type: ignore
+        except Exception:
+            Rectangle = None  # type: ignore[assignment]
+
+        if Rectangle is not None:
+            w = 0.75
+            half = 0.5 * float(w)
+            for j, (xi, yi) in enumerate(zip(x.tolist(), totals.tolist())):
+                if not np.isfinite(float(yi)):
+                    continue
+                rect = Rectangle(
+                    (float(xi) - float(half), 0.0),
+                    float(w),
+                    float(yi),
+                    facecolor="none",
+                    edgecolor="none",
+                    linewidth=0.0,
+                )
+                ax.add_patch(rect)
+                clip_patches[int(j)] = rect
+
+        for patch, yi, n in zip(clip_patches, totals.tolist(), ns.tolist()):
+            if patch is None:
+                continue
             if int(n) <= 0 or not np.isfinite(float(yi)):
                 continue
-
-            left = float(xi) - 0.5 * float(width)
-            clip_patch = mpatches.Rectangle((left, 0.0), float(width), float(yi))
-            clip_patch.set_transform(ax.transData)
-
-            pos = _bar_label_pos(clip_patch, pad_frac=float(_LABEL_TEXT_PAD_FRAC))
-            if pos is None:
-                continue
-
-            cx, cy, va = pos
-            ax.text(
-                float(cx),
-                float(cy),
-                f"n={int(n)}",
-                ha="center",
-                va=str(va),
-                rotation=90,
-                fontsize=8,
-                color="black",
-                bbox=bbox,
-                clip_on=True,
-                clip_path=clip_patch,
-                zorder=40,
-            )
+            _annotate_bar_label(ax, patch, f"n={int(n)}")
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
         ax.set_ylabel("Seconds per update")
