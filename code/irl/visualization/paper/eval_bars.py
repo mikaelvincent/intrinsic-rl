@@ -6,12 +6,13 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from irl.visualization.labels import add_row_label, env_label, method_label, slugify
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, legend_order as _legend_order
 
-from .thresholds import add_solved_threshold_line
+from .thresholds import SOLVED_THRESHOLD_LABEL, add_solved_threshold_line, solved_threshold_legend_handle
+
 
 _LABEL_TEXT_PAD_FRAC: float = 0.03
 _LABEL_BG_ALPHA: float = 0.25
@@ -167,6 +168,8 @@ def plot_eval_bars_by_env(
         squeeze=False,
     )
 
+    has_solved_threshold = False
+
     for i, (env_id, rows_by_method, methods_present) in enumerate(env_recs):
         ax = axes[i, 0]
 
@@ -224,7 +227,9 @@ def plot_eval_bars_by_env(
             zorder=20,
         )
 
-        add_solved_threshold_line(ax, str(env_id))
+        thr = add_solved_threshold_line(ax, str(env_id))
+        if thr is not None:
+            has_solved_threshold = True
 
         ax.set_ylabel("Mean return")
         ax.set_xticks(x)
@@ -240,7 +245,14 @@ def plot_eval_bars_by_env(
 
     axes[-1, 0].set_xlabel("Method")
 
-    fig.tight_layout()
+    rows = []
+    if has_solved_threshold:
+        rows.append(([solved_threshold_legend_handle(plt)], [SOLVED_THRESHOLD_LABEL], 1))
+
+    top = 1.0
+    if rows:
+        top = add_legend_rows_top(fig, rows)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out = plots_root / f"eval-bars-{slugify(filename_suffix)}.png"
     save_fig_atomic(fig, out)
