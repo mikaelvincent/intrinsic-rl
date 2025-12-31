@@ -256,12 +256,12 @@ def plot_eval_curves_by_env(
                         ax.scatter(
                             x_off,
                             y_pts,
-                            s=float(SCATTER_POINT_SIZE) * 0.75,
+                            s=float(SCATTER_POINT_SIZE),
                             c=_color_for_method(mk),
                             marker="o",
                             edgecolors="none",
                             linewidths=0.0,
-                            alpha=0.375,
+                            alpha=0.5,
                             zorder=1.5 if mk == "glpe" else 1.0,
                         )
 
