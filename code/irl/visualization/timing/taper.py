@@ -296,7 +296,7 @@ def plot_intrinsic_taper_weight(
             steps,
             original,
             linestyle=":",
-            linewidth=2.0,
+            linewidth=1.0,
             alpha=0.9,
             color=c,
             zorder=3,
@@ -305,7 +305,7 @@ def plot_intrinsic_taper_weight(
             steps,
             final,
             linestyle="-",
-            linewidth=2.6,
+            linewidth=1.3,
             alpha=1.0,
             color=c,
             zorder=4,
@@ -314,7 +314,7 @@ def plot_intrinsic_taper_weight(
             steps,
             taper,
             linestyle="--",
-            linewidth=1.9,
+            linewidth=0.95,
             alpha=0.85,
             color="black",
             zorder=2,
@@ -334,9 +334,9 @@ def plot_intrinsic_taper_weight(
         add_row_label(ax, f"{env_label(env_id)} | {method_label(method)}")
 
     handles = [
-        plt.Line2D([], [], color="black", linewidth=2.0, linestyle="--"),
-        plt.Line2D([], [], color="black", linewidth=2.0, linestyle=":"),
-        plt.Line2D([], [], color="black", linewidth=2.6, linestyle="-"),
+        plt.Line2D([], [], color="black", linewidth=1.0, linestyle="--"),
+        plt.Line2D([], [], color="black", linewidth=1.0, linestyle=":"),
+        plt.Line2D([], [], color="black", linewidth=1.3, linestyle="-"),
     ]
     labels = ["Taper weight", "Original intrinsic", "Final intrinsic"]
 
