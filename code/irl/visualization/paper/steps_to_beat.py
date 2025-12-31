@@ -373,6 +373,7 @@ def plot_steps_to_beat_by_env(
         meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
         q25s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
         q75s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
+        stds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
         n_reached = np.zeros((n_env, n_methods), dtype=np.int64)
         n_total = np.zeros((n_env, n_methods), dtype=np.int64)
 
@@ -400,6 +401,7 @@ def plot_steps_to_beat_by_env(
                 q25s[ei, mi] = float(q25)
                 meds[ei, mi] = float(med)
                 q75s[ei, mi] = float(q75)
+                stds[ei, mi] = float(np.std(arr, ddof=0))
 
         finite_pos = meds[np.isfinite(meds) & (meds > 0.0)]
         use_log = False
@@ -445,12 +447,12 @@ def plot_steps_to_beat_by_env(
                 patch.set_linewidth(0.9)
                 patch_by_idx[(int(ei), int(mi))] = patch
 
-            lo = np.maximum(0.0, y_top - q25s[:, mi][ok])
-            hi = np.maximum(0.0, q75s[:, mi][ok] - y_top)
+            err = stds[:, mi][ok]
+            err = np.where(np.isfinite(err) & (err >= 0.0), err, 0.0)
             ax.errorbar(
                 xpos[ok],
                 y_top,
-                yerr=np.vstack([lo, hi]),
+                yerr=err,
                 fmt="none",
                 ecolor="black",
                 elinewidth=0.9,
