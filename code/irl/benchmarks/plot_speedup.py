@@ -7,7 +7,7 @@ import numpy as np
 
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
-from .plot_common import finite_quantiles, get_result_by_name, pretty_name, run_meta_footer, save_fig, style
+from .plot_common import finite_quantiles, finite_std, get_result_by_name, pretty_name, run_meta_footer, save_fig, style
 
 
 def _plot_cache_comparison(
@@ -19,11 +19,13 @@ def _plot_cache_comparison(
 ) -> bool:
     qs_base = finite_quantiles(base.get("values"))
     qs_cached = finite_quantiles(cached.get("values"))
-    if qs_base is None or qs_cached is None:
+    std_base = finite_std(base.get("values"))
+    std_cached = finite_std(cached.get("values"))
+    if qs_base is None or qs_cached is None or std_base is None or std_cached is None:
         return False
 
-    b_q25, b_med, b_q75 = qs_base
-    c_q25, c_med, c_q75 = qs_cached
+    _b_q25, b_med, _b_q75 = qs_base
+    _c_q25, c_med, _c_q75 = qs_cached
 
     if not (np.isfinite(b_med) and np.isfinite(c_med)):
         return False
@@ -55,10 +57,8 @@ def _plot_cache_comparison(
     x = np.arange(2, dtype=np.float64)
 
     medians = np.asarray([b_med, c_med], dtype=np.float64)
-    lo = medians - np.asarray([b_q25, c_q25], dtype=np.float64)
-    hi = np.asarray([b_q75, c_q75], dtype=np.float64) - medians
-    lo = np.maximum(lo, 0.0)
-    hi = np.maximum(hi, 0.0)
+    stds = np.asarray([std_base, std_cached], dtype=np.float64)
+    stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
 
     ax.bar(
         x,
@@ -72,7 +72,7 @@ def _plot_cache_comparison(
     ax.errorbar(
         x,
         medians,
-        yerr=np.vstack([lo, hi]),
+        yerr=stds,
         fmt="none",
         ecolor="black",
         elinewidth=0.9,
@@ -122,16 +122,20 @@ def plot_speedup(
         qs = finite_quantiles(r.get("values"))
         if qs is None:
             continue
-        q25, med, q75 = qs
+        _q25, med, _q75 = qs
+
+        std = finite_std(r.get("values"))
+        if std is None:
+            continue
+
         name = str(r.get("name", "")).strip()
         if not name:
             continue
         rows.append(
             {
                 "label": pretty_name(name),
-                "q25": float(q25),
                 "median": float(med),
-                "q75": float(q75),
+                "std": float(std),
             }
         )
 
@@ -143,10 +147,8 @@ def plot_speedup(
 
     labels = [r["label"] for r in rows]
     medians = np.asarray([float(r["median"]) for r in rows], dtype=np.float64)
-    lo = medians - np.asarray([float(r["q25"]) for r in rows], dtype=np.float64)
-    hi = np.asarray([float(r["q75"]) for r in rows], dtype=np.float64) - medians
-    lo = np.maximum(lo, 0.0)
-    hi = np.maximum(hi, 0.0)
+    stds = np.asarray([float(r["std"]) for r in rows], dtype=np.float64)
+    stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
 
     x = np.arange(len(rows), dtype=np.float64)
     fig, ax = plt.subplots(figsize=(float(FIG_WIDTH), 3.6), dpi=int(DPI))
@@ -155,7 +157,7 @@ def plot_speedup(
     ax.errorbar(
         x,
         medians,
-        yerr=np.vstack([lo, hi]),
+        yerr=stds,
         fmt="none",
         ecolor="black",
         elinewidth=0.9,
@@ -168,7 +170,7 @@ def plot_speedup(
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("Speedup (×)")
+    ax.set_ylabel("Speedup (Ã—)")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
     footer = run_meta_footer(run_meta)
