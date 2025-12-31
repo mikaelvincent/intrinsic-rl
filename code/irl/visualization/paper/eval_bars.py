@@ -13,6 +13,79 @@ from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
 
 from .thresholds import add_solved_threshold_line
 
+_LABEL_TEXT_PAD_FRAC: float = 0.03
+_LABEL_BG_ALPHA: float = 0.25
+
+
+def _y_text_for_patch(patch: object, *, use_log: bool, pad_frac: float) -> float:
+    try:
+        y0 = float(getattr(patch, "get_y")())
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        return float("nan")
+
+    if not np.isfinite(y0) or not np.isfinite(h):
+        return float("nan")
+
+    y1 = y0 + h
+    if not np.isfinite(y1):
+        return float("nan")
+
+    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
+
+    if not use_log:
+        return float(y0 + frac * h)
+
+    if y0 <= 0.0 or y1 <= 0.0:
+        return float(y0 + frac * h)
+
+    ratio = float(y1 / y0)
+    if not np.isfinite(ratio) or ratio <= 1.0:
+        return float(y0)
+
+    return float(y0 * (ratio**frac))
+
+
+def _annotate_bar_label(ax, patch: object, text: str) -> None:
+    try:
+        cx = float(getattr(patch, "get_x")()) + 0.5 * float(getattr(patch, "get_width")())
+    except Exception:
+        return
+
+    try:
+        h = float(getattr(patch, "get_height")())
+    except Exception:
+        h = 0.0
+
+    use_log = str(getattr(ax, "get_yscale", lambda: "linear")()).strip().lower() == "log"
+    y = _y_text_for_patch(patch, use_log=bool(use_log), pad_frac=float(_LABEL_TEXT_PAD_FRAC))
+    if not (np.isfinite(float(cx)) and np.isfinite(float(y))):
+        return
+
+    bbox = {
+        "boxstyle": "round,pad=0.12",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": float(_LABEL_BG_ALPHA),
+    }
+
+    va = "bottom" if float(h) >= 0.0 else "top"
+
+    ax.text(
+        float(cx),
+        float(y),
+        str(text),
+        ha="center",
+        va=str(va),
+        rotation=0,
+        fontsize=8,
+        color="black",
+        bbox=bbox,
+        clip_on=True,
+        clip_path=patch,
+        zorder=40,
+    )
+
 
 def _is_ablation_suffix(filename_suffix: str) -> bool:
     return "ablation" in str(filename_suffix).strip().lower()
@@ -23,29 +96,6 @@ def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
     if "glpe" not in keys:
         return False
     return any(k.startswith("glpe_") for k in keys)
-
-
-_LABEL_TEXT_PAD_FRAC: float = 0.03
-_LABEL_BG_ALPHA: float = 0.25
-
-
-def _bar_label_pos(patch: object, *, pad_frac: float) -> tuple[float, float, str] | None:
-    try:
-        x0 = float(getattr(patch, "get_x")())
-        w = float(getattr(patch, "get_width")())
-        y0 = float(getattr(patch, "get_y")())
-        h = float(getattr(patch, "get_height")())
-    except Exception:
-        return None
-
-    if not (np.isfinite(x0) and np.isfinite(w) and np.isfinite(y0) and np.isfinite(h)):
-        return None
-
-    cx = x0 + 0.5 * w
-    frac = float(np.clip(float(pad_frac), 0.0, 0.5))
-    cy = y0 + frac * h
-    va = "bottom" if h >= 0.0 else "top"
-    return float(cx), float(cy), va
 
 
 def plot_eval_bars_by_env(
@@ -117,13 +167,6 @@ def plot_eval_bars_by_env(
         squeeze=False,
     )
 
-    bbox = {
-        "boxstyle": "round,pad=0.12",
-        "facecolor": "white",
-        "edgecolor": "none",
-        "alpha": float(_LABEL_BG_ALPHA),
-    }
-
     for i, (env_id, rows_by_method, methods_present) in enumerate(env_recs):
         ax = axes[i, 0]
 
@@ -142,10 +185,9 @@ def plot_eval_bars_by_env(
         n_seeds = [int(rows_by_method[m].get("n_seeds", 0) or 0) for m in methods_present]
 
         x = np.arange(len(methods_present), dtype=np.float64)
-
-        bar_patches: list[object | None] = []
+        bar_patches: list[object | None] = [None] * int(len(methods_present))
         for j, mk in enumerate(methods_present):
-            cont = ax.bar(
+            bars = ax.bar(
                 float(x[j]),
                 float(means[j]),
                 color=_color_for_method(mk),
@@ -154,8 +196,11 @@ def plot_eval_bars_by_env(
                 linewidth=0.0,
                 zorder=10 if str(mk) == "glpe" else 2,
             )
-            patch = cont.patches[0] if getattr(cont, "patches", None) else None
-            bar_patches.append(patch)
+            try:
+                if hasattr(bars, "patches") and bars.patches:
+                    bar_patches[int(j)] = bars.patches[0]
+            except Exception:
+                bar_patches[int(j)] = None
 
         yerr = np.vstack([np.maximum(0.0, means - ci_lo), np.maximum(0.0, ci_hi - means)])
         ax.errorbar(
@@ -173,29 +218,10 @@ def plot_eval_bars_by_env(
 
         add_solved_threshold_line(ax, str(env_id))
 
-        for patch, yi, n in zip(bar_patches, means.tolist(), n_seeds):
+        for patch, n in zip(bar_patches, n_seeds):
             if patch is None:
                 continue
-            if not np.isfinite(float(yi)):
-                continue
-            pos = _bar_label_pos(patch, pad_frac=float(_LABEL_TEXT_PAD_FRAC))
-            if pos is None:
-                continue
-            cx, cy, va = pos
-            ax.text(
-                float(cx),
-                float(cy),
-                f"n={int(n)}" if int(n) > 0 else "n=?",
-                ha="center",
-                va=str(va),
-                rotation=90,
-                fontsize=8,
-                color="black",
-                bbox=bbox,
-                clip_on=True,
-                clip_path=patch,
-                zorder=40,
-            )
+            _annotate_bar_label(ax, patch, f"n={int(n)}" if int(n) > 0 else "n=?")
 
         ax.set_ylabel("Mean return")
         ax.set_xticks(x)
