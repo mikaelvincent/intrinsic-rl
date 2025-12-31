@@ -79,10 +79,10 @@ def linestyle_for_method(method: Any) -> str | tuple[int, tuple[int, ...]]:
 def linewidth_for_method(method: Any) -> float:
     k = method_key(method)
     if k == PROPOSED_METHOD_KEY:
-        return 3.6
-    if is_ablation(k):
         return 1.8
-    return 1.9
+    if is_ablation(k):
+        return 0.9
+    return 0.95
 
 
 def alpha_for_method(method: Any) -> float:
