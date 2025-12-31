@@ -10,7 +10,7 @@ import pandas as pd
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method, draw_order, legend_order
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method, legend_order
 from irl.visualization.style import linestyle_for_method, linewidth_for_method, zorder_for_method
 from .thresholds import add_solved_threshold_line
 
@@ -174,7 +174,7 @@ def plot_eval_curves_by_env(
     for i, (env_id, df_env, methods_present) in enumerate(env_recs):
         ax = axes[i, 0]
 
-        methods_draw = draw_order([m for m in want if m in set(methods_present)])
+        methods_draw = list(methods_present)
         for mk in methods_draw:
             df_m = df_env.loc[df_env["method_key"] == mk].copy()
             if df_m.empty:
@@ -213,8 +213,12 @@ def plot_eval_curves_by_env(
         if raw_df is not None:
             df_raw_env = raw_df.loc[raw_df["env_id"] == str(env_id)].copy()
             if not df_raw_env.empty:
-                methods_offset = [m for m in want if m in set(methods_present)]
-                mult = _method_offset_multipliers(methods_offset)
+                methods_offset = list(methods_present)
+
+                offset_order = list(methods_offset)
+                if "glpe" in offset_order:
+                    offset_order = [m for m in offset_order if m != "glpe"] + ["glpe"]
+                mult = _method_offset_multipliers(offset_order)
 
                 try:
                     x0, x1 = ax.get_xlim()
@@ -258,7 +262,7 @@ def plot_eval_curves_by_env(
                             edgecolors="none",
                             linewidths=0.0,
                             alpha=0.375,
-                            zorder=20,
+                            zorder=1.5 if mk == "glpe" else 1.0,
                         )
 
     handles = []
