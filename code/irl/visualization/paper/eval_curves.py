@@ -14,7 +14,7 @@ from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method
 from irl.visualization.style import linestyle_for_method, linewidth_for_method, zorder_for_method
 from .thresholds import add_solved_threshold_line
 
-SCATTER_POINT_SIZE: float = 18.0
+SCATTER_POINT_SIZE: float = 9.0
 SCATTER_OFFSET_P_SCALE: float = 0.25
 
 
@@ -257,6 +257,7 @@ def plot_eval_curves_by_env(
                             marker="o",
                             edgecolors="none",
                             linewidths=0.0,
+                            alpha=0.5,
                             zorder=20,
                         )
 
