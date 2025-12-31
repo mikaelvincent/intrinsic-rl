@@ -93,12 +93,12 @@ def add_row_label(ax, label: str, *, fontsize: int | None = None) -> None:
     trans = ax.transAxes + mtransforms.ScaledTranslation(0.0, dy_pt / 72.0, fig.dpi_scale_trans)
 
     ax.text(
-        0.0,
+        0.5,
         1.0,
         str(label),
         transform=trans,
         va="bottom",
-        ha="left",
+        ha="center",
         fontsize=fs,
         clip_on=False,
     )
