@@ -22,6 +22,19 @@ def finite_quantiles(values: Any) -> tuple[float, float, float] | None:
     return float(q25), float(q50), float(q75)
 
 
+def finite_std(values: Any) -> float | None:
+    if not isinstance(values, (list, tuple)):
+        return None
+    try:
+        arr = np.asarray([float(v) for v in values], dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None
+    return float(np.std(arr, ddof=0))
+
+
 def style():
     return apply_rcparams_paper()
 
