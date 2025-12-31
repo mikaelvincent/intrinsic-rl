@@ -182,6 +182,22 @@ def plot_eval_bars_by_env(
             [float(rows_by_method[m].get("mean_return_ci95_hi", float("nan"))) for m in methods_present],
             dtype=np.float64,
         )
+        n_seeds = np.asarray(
+            [float(rows_by_method[m].get("n_seeds", float("nan"))) for m in methods_present],
+            dtype=np.float64,
+        )
+
+        half = 0.5 * np.abs(ci_hi - ci_lo)
+        se = half / 1.96
+        n_eff = np.where(np.isfinite(n_seeds) & (n_seeds >= 1.0), n_seeds, 1.0)
+        stds = se * np.sqrt(n_eff)
+
+        std_direct = np.asarray(
+            [float(rows_by_method[m].get("mean_return_std", float("nan"))) for m in methods_present],
+            dtype=np.float64,
+        )
+        stds = np.where(np.isfinite(std_direct), std_direct, stds)
+        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
 
         x = np.arange(len(methods_present), dtype=np.float64)
         for j, mk in enumerate(methods_present):
@@ -195,11 +211,10 @@ def plot_eval_bars_by_env(
                 zorder=10 if str(mk) == "glpe" else 2,
             )
 
-        yerr = np.vstack([np.maximum(0.0, means - ci_lo), np.maximum(0.0, ci_hi - means)])
         ax.errorbar(
             x,
             means,
-            yerr=yerr,
+            yerr=stds,
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
