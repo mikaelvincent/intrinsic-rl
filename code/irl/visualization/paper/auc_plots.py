@@ -11,8 +11,8 @@ import pandas as pd
 from irl.visualization.data import read_scalars
 from irl.visualization.labels import add_row_label, env_label, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
-from irl.visualization.style import DPI, FIG_WIDTH, apply_grid
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
+from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, legend_order as _legend_order
 
 _LABEL_TEXT_PAD_FRAC: float = 0.03
 _LABEL_BG_ALPHA: float = 0.25
@@ -390,7 +390,7 @@ def plot_eval_auc_bars_by_env(
     df["ckpt_step"] = df["ckpt_step"].astype(int)
     df = df.loc[df["ckpt_step"] >= 0].copy()
 
-    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+    want = _legend_order(methods_to_plot)
     if not want:
         return []
 
@@ -398,7 +398,7 @@ def plot_eval_auc_bars_by_env(
 
     env_recs: list[tuple[str, list[dict[str, object]]]] = []
 
-    for env_id in sorted(df["env_id"].unique().tolist()):
+    for env_id in _sort_env_ids(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
         if df_env.empty:
             continue
@@ -546,7 +546,7 @@ def plot_eval_auc_time_bars_by_env(
     df["ckpt_step"] = df["ckpt_step"].astype(int)
     df = df.loc[df["ckpt_step"] >= 0].copy()
 
-    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+    want = _legend_order(methods_to_plot)
     if not want:
         return []
 
@@ -597,7 +597,7 @@ def plot_eval_auc_time_bars_by_env(
 
     env_recs: list[tuple[str, list[dict[str, object]], float]] = []
 
-    for env_id in sorted(df["env_id"].unique().tolist()):
+    for env_id in _sort_env_ids(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
         if df_env.empty:
             continue
