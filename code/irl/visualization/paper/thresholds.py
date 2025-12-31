@@ -22,6 +22,24 @@ _KNOWN_SCORE_THRESHOLDS: dict[str, float] = {
     "MountainCar-v0": -110.0,
 }
 
+SOLVED_THRESHOLD_LABEL: str = "Solved threshold"
+
+_SOLVED_THRESHOLD_COLOR: str = "black"
+_SOLVED_THRESHOLD_ALPHA: float = 0.35
+_SOLVED_THRESHOLD_LINEWIDTH: float = 1.0
+_SOLVED_THRESHOLD_LINESTYLE: str = ":"
+
+
+def solved_threshold_legend_handle(plt: Any) -> object:
+    return plt.Line2D(
+        [],
+        [],
+        color=_SOLVED_THRESHOLD_COLOR,
+        linewidth=float(_SOLVED_THRESHOLD_LINEWIDTH),
+        linestyle=_SOLVED_THRESHOLD_LINESTYLE,
+        alpha=float(_SOLVED_THRESHOLD_ALPHA),
+    )
+
 
 def reward_threshold_from_gym_spec(env_id: str) -> float | None:
     try:
@@ -75,7 +93,14 @@ def add_solved_threshold_line(ax, env_id: str) -> float | None:
         return None
 
     try:
-        ax.axhline(thr_f, linewidth=1.0, alpha=0.35, color="black")
+        ax.axhline(
+            thr_f,
+            linewidth=float(_SOLVED_THRESHOLD_LINEWIDTH),
+            alpha=float(_SOLVED_THRESHOLD_ALPHA),
+            color=_SOLVED_THRESHOLD_COLOR,
+            linestyle=_SOLVED_THRESHOLD_LINESTYLE,
+            label=SOLVED_THRESHOLD_LABEL,
+        )
     except Exception:
         return None
 
