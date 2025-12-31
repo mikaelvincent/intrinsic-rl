@@ -7,7 +7,7 @@ import numpy as np
 
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
-from .plot_common import finite_quantiles, pretty_name, run_meta_footer, save_fig, style
+from .plot_common import finite_quantiles, finite_std, pretty_name, run_meta_footer, save_fig, style
 
 
 def _bench_group_key(name: str) -> str:
@@ -34,7 +34,12 @@ def plot_throughput(
         qs = finite_quantiles(r.get("values"))
         if qs is None:
             continue
-        q25, med, q75 = qs
+        _q25, med, _q75 = qs
+
+        std = finite_std(r.get("values"))
+        if std is None:
+            continue
+
         name = str(r.get("name", "")).strip()
         if not name:
             continue
@@ -42,9 +47,8 @@ def plot_throughput(
             {
                 "name": name,
                 "label": pretty_name(name),
-                "q25": float(q25),
                 "median": float(med),
-                "q75": float(q75),
+                "std": float(std),
                 "group": _bench_group_key(name),
             }
         )
@@ -71,10 +75,8 @@ def plot_throughput(
 
         labels = [r["label"] for r in rows]
         medians = np.asarray([float(r["median"]) for r in rows], dtype=np.float64)
-        lo = medians - np.asarray([float(r["q25"]) for r in rows], dtype=np.float64)
-        hi = np.asarray([float(r["q75"]) for r in rows], dtype=np.float64) - medians
-        lo = np.maximum(lo, 0.0)
-        hi = np.maximum(hi, 0.0)
+        stds = np.asarray([float(r["std"]) for r in rows], dtype=np.float64)
+        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
 
         y = np.arange(len(rows), dtype=np.float64)
         colors = [_color_for_method(str(r.get("group", "vanilla"))) for r in rows]
@@ -83,7 +85,7 @@ def plot_throughput(
         ax.errorbar(
             medians,
             y,
-            xerr=np.vstack([lo, hi]),
+            xerr=stds,
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
