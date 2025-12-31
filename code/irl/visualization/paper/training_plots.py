@@ -202,7 +202,7 @@ def _plot_multienv_reward_decomp(
                 x,
                 y_int,
                 color=c,
-                linewidth=max(1.0, 0.9 * lw),
+                linewidth=max(0.5, 0.9 * lw),
                 linestyle="--",
                 alpha=a,
                 marker="o",
@@ -231,18 +231,18 @@ def _plot_multienv_reward_decomp(
 
     methods = legend_order(sorted(methods_union))
     method_handles = [
-        plt.Line2D([], [], color=_color_for_method(m), lw=3.0 if str(m) == "glpe" else 2.0, linestyle="-")
+        plt.Line2D([], [], color=_color_for_method(m), lw=1.5 if str(m) == "glpe" else 1.0, linestyle="-")
         for m in methods
     ]
     method_labels = [method_label(m) for m in methods]
 
     style_handles = [
-        plt.Line2D([], [], color="black", linewidth=2.0, linestyle="-"),
+        plt.Line2D([], [], color="black", linewidth=1.0, linestyle="-"),
         plt.Line2D(
             [],
             [],
             color="black",
-            linewidth=2.0,
+            linewidth=1.0,
             linestyle="--",
             marker="o",
             markersize=3.0,
