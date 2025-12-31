@@ -58,7 +58,7 @@ def _generate_component_plot(
             agg_imp.mean,
             label="Impact (novelty)",
             color=_color_for_component("impact"),
-            linewidth=1.9,
+            linewidth=0.95,
             alpha=0.88,
         )
         ax.plot(
@@ -66,7 +66,7 @@ def _generate_component_plot(
             agg_lp.mean,
             label="LP (competence)",
             color=_color_for_component("lp"),
-            linewidth=1.9,
+            linewidth=0.95,
             alpha=0.88,
         )
 
