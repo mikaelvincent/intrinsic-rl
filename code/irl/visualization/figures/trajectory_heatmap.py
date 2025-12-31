@@ -92,8 +92,8 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
             x[gated],
             y[gated],
             c="lightgray",
-            s=18,
-            alpha=0.55,
+            s=9,
+            alpha=0.5,
             edgecolor="none",
             label="Gated/Off",
             zorder=2,
@@ -104,8 +104,8 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
             x[active],
             y[active],
             c=active_color,
-            s=22,
-            alpha=0.85,
+            s=11,
+            alpha=0.5,
             edgecolor="none",
             label="Active/On",
             zorder=10,
@@ -113,7 +113,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
 
     ax.set_xlabel(xlab)
     ax.set_ylabel(ylab)
-    ax.set_title(" — ".join(title_bits))
+    ax.set_title(" â€” ".join(title_bits))
 
     apply_grid(ax)
 
