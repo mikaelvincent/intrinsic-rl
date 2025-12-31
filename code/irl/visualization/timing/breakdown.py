@@ -210,13 +210,9 @@ def plot_timing_breakdown(
                 comp_mean[k] = float(np.mean([r.get(k, 0.0) for r in per_run]))
 
             total_mean = float(np.mean(totals))
-            total_se = (
-                float(np.std(totals, ddof=0) / np.sqrt(float(len(totals))))
-                if len(totals) > 1
-                else 0.0
-            )
+            total_std = float(np.std(totals, ddof=0)) if len(totals) > 1 else 0.0
             method_rows.append(
-                (str(method).strip().lower(), comp_mean, total_mean, total_se, int(len(totals)))
+                (str(method).strip().lower(), comp_mean, total_mean, total_std, int(len(totals)))
             )
 
         if not method_rows:
