@@ -320,6 +320,8 @@ def plot_training_reward_decomposition(
         all_methods |= set(m.keys())
 
     baselines, ablations = _paper_method_groups(sorted(all_methods))
+    baselines = legend_order(baselines)
+    ablations = legend_order(ablations)
 
     align_mode = str(align).strip().lower() or "interpolate"
     if align_mode not in {"union", "intersection", "interpolate"}:
