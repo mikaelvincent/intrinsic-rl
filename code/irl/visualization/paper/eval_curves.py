@@ -9,7 +9,7 @@ import pandas as pd
 
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
-from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic
+from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method, draw_order, legend_order
 from irl.visualization.style import linestyle_for_method, linewidth_for_method, zorder_for_method
 from .thresholds import add_solved_threshold_line
@@ -115,7 +115,7 @@ def plot_eval_curves_by_env(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    want = [str(m).strip().lower() for m in methods_to_plot if str(m).strip()]
+    want = legend_order(methods_to_plot)
     if not want:
         return []
 
@@ -134,13 +134,13 @@ def plot_eval_curves_by_env(
     env_recs: list[tuple[str, pd.DataFrame, list[str]]] = []
     methods_union: set[str] = set()
 
-    for env_id in sorted(df["env_id"].unique().tolist()):
+    for env_id in _sort_env_ids(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
         if df_env.empty:
             continue
 
-        methods_present = sorted(set(df_env["method_key"].tolist()) & set(want))
-        methods_present = [m for m in want if m in set(methods_present)]
+        methods_present_set = set(df_env["method_key"].tolist()) & set(want)
+        methods_present = [m for m in want if m in methods_present_set]
         if not methods_present:
             continue
 
