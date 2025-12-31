@@ -12,7 +12,7 @@ from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, apply_grid, alpha_for_method, legend_order
 from irl.visualization.style import linestyle_for_method, linewidth_for_method, zorder_for_method
-from .thresholds import add_solved_threshold_line
+from .thresholds import SOLVED_THRESHOLD_LABEL, add_solved_threshold_line, solved_threshold_legend_handle
 
 SCATTER_POINT_SIZE: float = 9.0
 SCATTER_OFFSET_P_SCALE: float = 0.25
@@ -171,6 +171,8 @@ def plot_eval_curves_by_env(
         squeeze=False,
     )
 
+    has_solved_threshold = False
+
     for i, (env_id, df_env, methods_present) in enumerate(env_recs):
         ax = axes[i, 0]
 
@@ -199,7 +201,9 @@ def plot_eval_curves_by_env(
                 zorder=int(zorder_for_method(mk)),
             )
 
-        add_solved_threshold_line(ax, str(env_id))
+        thr = add_solved_threshold_line(ax, str(env_id))
+        if thr is not None:
+            has_solved_threshold = True
         apply_grid(ax)
 
         ax.set_ylabel("Mean return")
@@ -280,9 +284,15 @@ def plot_eval_curves_by_env(
         )
         labels.append(method_label(mk))
 
-    top = 1.0
+    rows = []
     if handles:
-        top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles)))])
+        rows.append((handles, labels, legend_ncol(len(handles))))
+    if has_solved_threshold:
+        rows.append(([solved_threshold_legend_handle(plt)], [SOLVED_THRESHOLD_LABEL], 1))
+
+    top = 1.0
+    if rows:
+        top = add_legend_rows_top(fig, rows)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out = plots_root / f"eval-curves-{slugify(filename_suffix)}.png"
