@@ -257,24 +257,7 @@ def _plot_multienv_reward_decomp(
         rows.append((method_handles, method_labels, legend_ncol(len(method_handles))))
     rows.append((style_handles, style_labels, legend_ncol(len(style_handles), max_cols=4)))
 
-    gap_pt = float(max(1.0, min(2.5, 0.22 * float(LEGEND_FONTSIZE))))
-    row_gap = 0.012
-    try:
-        fig_h_in = float(fig.get_figheight())
-        fig_h_pt = 72.0 * fig_h_in if fig_h_in > 0.0 else 0.0
-        if fig_h_pt > 0.0:
-            row_gap = float(gap_pt) / float(fig_h_pt)
-    except Exception:
-        row_gap = 0.012
-
-    top = add_legend_rows_top(
-        fig,
-        rows,
-        fontsize=int(LEGEND_FONTSIZE),
-        row_gap=float(row_gap),
-        pad_axes_pt=float(gap_pt),
-        legend_kwargs={"borderpad": 0.0, "borderaxespad": 0.0},
-    )
+    top = add_legend_rows_top(fig, rows, fontsize=int(LEGEND_FONTSIZE))
     fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out_path = Path(out_path)
