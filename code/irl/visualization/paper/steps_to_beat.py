@@ -9,7 +9,14 @@ import pandas as pd
 from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
-from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid, legend_order as _legend_order
+from irl.visualization.style import (
+    DPI,
+    FIG_WIDTH,
+    LEGEND_FRAMEALPHA,
+    LEGEND_FONTSIZE,
+    apply_grid,
+    legend_order as _legend_order,
+)
 from .thresholds import _SUPPORTED_SCORE_ENVS, solved_threshold
 
 _SOLVED_MIN_REACH_FRAC: float = 0.25
@@ -266,7 +273,7 @@ def _y_text_for_patch(patch: object, *, use_log: bool, pad_frac: float) -> float
     if not np.isfinite(ratio) or ratio <= 1.0:
         return float(y0)
 
-    return float(y0 * (ratio ** frac))
+    return float(y0 * (ratio**frac))
 
 
 def plot_steps_to_beat_by_env(
@@ -352,36 +359,41 @@ def plot_steps_to_beat_by_env(
     thresholds_quarter = {e: _threshold_fraction(float(thresholds_full[e]), 0.25) for e in envs}
 
     plt = apply_rcparams_paper()
-    n_panels = 3
+
+    thr_dicts: tuple[Mapping[str, float], ...] = (thresholds_full, thresholds_half, thresholds_quarter)
+    thr_labels: tuple[str, ...] = ("100%", "50%", "25%")
+
+    n_env = int(len(envs))
+    n_thr = int(len(thr_dicts))
+    n_methods = int(len(methods))
+
+    width = 0.8 / float(max(1, n_methods))
+    x = np.arange(n_thr, dtype=np.float64)
+
+    fig_h = max(3.4, 2.3 * float(n_env))
     fig, axes = plt.subplots(
-        n_panels,
+        n_env,
         1,
-        figsize=(float(FIG_WIDTH), 8.6),
+        figsize=(float(FIG_WIDTH), float(fig_h)),
         dpi=int(DPI),
         sharex=True,
         squeeze=False,
     )
 
-    n_env = int(len(envs))
-    n_methods = int(len(methods))
-    width = 0.8 / float(max(1, n_methods))
-    x = np.arange(n_env, dtype=np.float64)
-
-    def _panel(ax, *, thresholds: Mapping[str, float], panel_label: str) -> None:
+    def _panel(ax, *, env_id: str) -> None:
         import matplotlib.colors as mcolors
 
-        meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
-        q25s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
-        q75s = np.full((n_env, n_methods), np.nan, dtype=np.float64)
-        stds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
-        n_reached = np.zeros((n_env, n_methods), dtype=np.int64)
-        n_total = np.zeros((n_env, n_methods), dtype=np.int64)
+        meds = np.full((n_thr, n_methods), np.nan, dtype=np.float64)
+        stds = np.full((n_thr, n_methods), np.nan, dtype=np.float64)
+        n_reached = np.zeros((n_thr, n_methods), dtype=np.int64)
+        n_total = np.zeros((n_thr, n_methods), dtype=np.int64)
 
-        for ei, env_id in enumerate(envs):
-            thr = float(thresholds.get(env_id, float("nan")))
+        for ti, thr_map in enumerate(thr_dicts):
+            thr = float(thr_map.get(str(env_id), float("nan")))
             for mi, mk in enumerate(methods):
-                curves = by_env_method.get((env_id, mk), [])
-                n_total[ei, mi] = int(len(curves))
+                curves = by_env_method.get((str(env_id), str(mk)), [])
+                n_total[ti, mi] = int(len(curves))
+
                 hits: list[float] = []
                 for c in curves:
                     if c is None:
@@ -392,16 +404,13 @@ def plot_steps_to_beat_by_env(
                         continue
                     hits.append(float(hit))
 
-                n_reached[ei, mi] = int(len(hits))
+                n_reached[ti, mi] = int(len(hits))
                 if not hits:
                     continue
 
                 arr = np.asarray(hits, dtype=np.float64)
-                q25, med, q75 = np.quantile(arr, [0.25, 0.5, 0.75])
-                q25s[ei, mi] = float(q25)
-                meds[ei, mi] = float(med)
-                q75s[ei, mi] = float(q75)
-                stds[ei, mi] = float(np.std(arr, ddof=0))
+                meds[ti, mi] = float(np.median(arr))
+                stds[ti, mi] = float(np.std(arr, ddof=0))
 
         finite_pos = meds[np.isfinite(meds) & (meds > 0.0)]
         use_log = False
@@ -414,11 +423,14 @@ def plot_steps_to_beat_by_env(
         if use_log and finite_pos.size > 0:
             base = float(max(1.0, 0.01 * float(finite_pos.min())))
 
+        base_floor = float(max(0.0, base))
+
         patch_by_idx: dict[tuple[int, int], object] = {}
 
         for mi, mk in enumerate(methods):
             off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
             xpos = x + off
+
             y = meds[:, mi]
             ok = np.isfinite(y) & (y > base if use_log else np.isfinite(y))
             if not bool(ok.any()):
@@ -439,20 +451,24 @@ def plot_steps_to_beat_by_env(
             )
 
             base_rgba = mcolors.to_rgba(_color_for_method(mk))
-            env_idxs = np.flatnonzero(ok).astype(int, copy=False)
-            for patch, ei in zip(bars.patches, env_idxs.tolist()):
-                a = _reach_to_alpha(int(n_reached[ei, mi]), int(n_total[ei, mi]))
+            thr_idxs = np.flatnonzero(ok).astype(int, copy=False)
+            for patch, ti in zip(bars.patches, thr_idxs.tolist()):
+                a = _reach_to_alpha(int(n_reached[ti, mi]), int(n_total[ti, mi]))
                 patch.set_facecolor((base_rgba[0], base_rgba[1], base_rgba[2], float(a)))
                 patch.set_edgecolor((0.0, 0.0, 0.0, 1.0))
                 patch.set_linewidth(0.9)
-                patch_by_idx[(int(ei), int(mi))] = patch
+                patch_by_idx[(int(ti), int(mi))] = patch
 
             err = stds[:, mi][ok]
             err = np.where(np.isfinite(err) & (err >= 0.0), err, 0.0)
+
+            lower = np.minimum(err, y_top - base_floor)
+            lower = np.clip(lower, 0.0, None)
+
             ax.errorbar(
                 xpos[ok],
                 y_top,
-                yerr=err,
+                yerr=np.vstack([lower, err]),
                 fmt="none",
                 ecolor="black",
                 elinewidth=0.9,
@@ -471,17 +487,17 @@ def plot_steps_to_beat_by_env(
 
         xform = ax.get_xaxis_transform()
 
-        for ei in range(n_env):
+        for ti in range(n_thr):
             for mi in range(n_methods):
-                reached = int(n_reached[ei, mi])
-                total = int(n_total[ei, mi])
+                reached = int(n_reached[ti, mi])
+                total = int(n_total[ti, mi])
                 txt = _reach_label(reached, total)
 
-                patch = patch_by_idx.get((int(ei), int(mi)))
+                patch = patch_by_idx.get((int(ti), int(mi)))
                 if patch is None:
                     if total > 0 and reached == 0:
                         off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
-                        cx = float(x[ei] + off)
+                        cx = float(x[ti] + off)
                         ax.text(
                             float(cx),
                             0.02,
@@ -526,19 +542,24 @@ def plot_steps_to_beat_by_env(
                     zorder=40,
                 )
 
+        ax.set_xlim(-0.5, float(n_thr) - 0.5)
         ax.set_ylabel("Training steps")
+        ax.set_xticks(x)
+
         apply_grid(ax)
-        add_row_label(ax, str(panel_label))
+        add_row_label(ax, env_label(env_id))
+
         if use_log:
             ax.set_yscale("log")
 
-    _panel(axes[0, 0], thresholds=thresholds_full, panel_label="100% threshold")
-    _panel(axes[1, 0], thresholds=thresholds_half, panel_label="50% threshold")
-    _panel(axes[2, 0], thresholds=thresholds_quarter, panel_label="25% threshold")
+    for i, env_id in enumerate(envs):
+        ax = axes[i, 0]
+        _panel(ax, env_id=str(env_id))
+        if i != n_env - 1:
+            ax.tick_params(axis="x", which="both", labelbottom=False)
 
-    axes[-1, 0].set_xticks(x)
-    axes[-1, 0].set_xticklabels([env_label(e) for e in envs], rotation=20, ha="right")
-    axes[-1, 0].set_xlabel("Task")
+    axes[-1, 0].set_xticklabels(list(thr_labels))
+    axes[-1, 0].set_xlabel("Threshold fraction")
 
     handles = []
     labels = []
@@ -556,6 +577,7 @@ def plot_steps_to_beat_by_env(
     top = 1.0
     if handles:
         top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles)))])
+
     fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out = Path(plots_root) / f"steps-to-beat-{slugify(filename_suffix)}.png"
