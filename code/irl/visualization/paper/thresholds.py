@@ -27,7 +27,7 @@ SOLVED_THRESHOLD_LABEL: str = "Solved threshold"
 _SOLVED_THRESHOLD_COLOR: str = "black"
 _SOLVED_THRESHOLD_ALPHA: float = 0.35
 _SOLVED_THRESHOLD_LINEWIDTH: float = 1.0
-_SOLVED_THRESHOLD_LINESTYLE: str = ":"
+_SOLVED_THRESHOLD_LINESTYLE: str = "--"
 
 
 def solved_threshold_legend_handle(plt: Any) -> object:
