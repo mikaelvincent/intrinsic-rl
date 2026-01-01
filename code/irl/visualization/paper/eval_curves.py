@@ -18,6 +18,14 @@ SCATTER_POINT_SIZE: float = 9.0
 SCATTER_OFFSET_P_SCALE: float = 0.25
 
 
+def _eval_curve_linestyle(method_key: str) -> str | tuple[int, tuple[int, ...]]:
+    # Eval curves encode method identity by color; keep GLPE variants solid to match reward-decomp figures.
+    k = str(method_key).strip().lower()
+    if k.startswith("glpe_"):
+        return "-"
+    return linestyle_for_method(k)
+
+
 def _is_ablation_suffix(filename_suffix: str) -> bool:
     return "ablation" in str(filename_suffix).strip().lower()
 
@@ -196,7 +204,7 @@ def plot_eval_curves_by_env(
                 y,
                 color=_color_for_method(mk),
                 lw=float(linewidth_for_method(mk)),
-                ls=linestyle_for_method(mk),
+                ls=_eval_curve_linestyle(mk),
                 alpha=float(alpha_for_method(mk)),
                 zorder=int(zorder_for_method(mk)),
             )
@@ -284,7 +292,7 @@ def plot_eval_curves_by_env(
                 [],
                 color=_color_for_method(mk),
                 lw=float(linewidth_for_method(mk)),
-                ls=linestyle_for_method(mk),
+                ls=_eval_curve_linestyle(mk),
                 alpha=float(alpha_for_method(mk)),
             )
         )
