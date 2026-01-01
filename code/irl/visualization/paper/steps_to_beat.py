@@ -6,7 +6,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from irl.visualization.labels import add_legend_rows_top, env_label, legend_ncol, method_label, slugify
+from irl.visualization.labels import add_legend_rows_top, add_row_label, env_label, legend_ncol, method_label, slugify
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.plot_utils import apply_rcparams_paper, save_fig_atomic, sort_env_ids as _sort_env_ids
 from irl.visualization.style import DPI, FIG_WIDTH, LEGEND_FRAMEALPHA, LEGEND_FONTSIZE, apply_grid, legend_order as _legend_order
@@ -367,7 +367,7 @@ def plot_steps_to_beat_by_env(
     width = 0.8 / float(max(1, n_methods))
     x = np.arange(n_env, dtype=np.float64)
 
-    def _panel(ax, *, thresholds: Mapping[str, float], ylab: str) -> None:
+    def _panel(ax, *, thresholds: Mapping[str, float], panel_label: str) -> None:
         import matplotlib.colors as mcolors
 
         meds = np.full((n_env, n_methods), np.nan, dtype=np.float64)
@@ -479,8 +479,6 @@ def plot_steps_to_beat_by_env(
 
                 patch = patch_by_idx.get((int(ei), int(mi)))
                 if patch is None:
-                    # No bar is drawn when no runs reach the threshold; still show 0/N to
-                    # distinguish from "no runs available".
                     if total > 0 and reached == 0:
                         off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
                         cx = float(x[ei] + off)
@@ -528,14 +526,15 @@ def plot_steps_to_beat_by_env(
                     zorder=40,
                 )
 
-        ax.set_ylabel(str(ylab))
+        ax.set_ylabel("Training steps")
         apply_grid(ax)
+        add_row_label(ax, str(panel_label))
         if use_log:
             ax.set_yscale("log")
 
-    _panel(axes[0, 0], thresholds=thresholds_full, ylab="Training steps\n(solved threshold)")
-    _panel(axes[1, 0], thresholds=thresholds_half, ylab="Training steps\n(50% threshold)")
-    _panel(axes[2, 0], thresholds=thresholds_quarter, ylab="Training steps\n(25% threshold)")
+    _panel(axes[0, 0], thresholds=thresholds_full, panel_label="100% threshold")
+    _panel(axes[1, 0], thresholds=thresholds_half, panel_label="50% threshold")
+    _panel(axes[2, 0], thresholds=thresholds_quarter, panel_label="25% threshold")
 
     axes[-1, 0].set_xticks(x)
     axes[-1, 0].set_xticklabels([env_label(e) for e in envs], rotation=20, ha="right")
