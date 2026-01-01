@@ -491,13 +491,12 @@ def plot_steps_to_beat_by_env(
         label = env_label(env_id)
         if run_n > 0:
             run_word = "run" if run_n == 1 else "runs"
-            label = f"{label} ({run_n} {run_word})"
+            label = f"{label} (out of {run_n} {run_word})"
         add_row_label(ax, label)
 
         if use_log:
             ax.set_yscale("log")
 
-        # Text annotations don't affect autoscaling; add headroom to prevent clipping.
         try:
             y0, y1 = ax.get_ylim()
             if use_log:
