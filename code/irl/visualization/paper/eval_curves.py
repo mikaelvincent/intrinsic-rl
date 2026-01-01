@@ -221,7 +221,13 @@ def plot_eval_curves_by_env(
 
                 offset_order = list(methods_offset)
                 if "glpe" in offset_order:
-                    offset_order = [m for m in offset_order if m != "glpe"] + ["glpe"]
+                    tail: list[str] = []
+                    for k in ("glpe", "glpe_nogate"):
+                        if k in offset_order:
+                            offset_order = [m for m in offset_order if m != k]
+                            tail.append(k)
+                    offset_order = offset_order + tail
+
                 mult = _method_offset_multipliers(offset_order)
 
                 try:
