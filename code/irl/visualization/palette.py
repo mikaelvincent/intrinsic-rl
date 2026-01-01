@@ -3,16 +3,16 @@ from __future__ import annotations
 import hashlib
 
 _METHOD_COLORS: dict[str, str] = {
-    "glpe": "#1B2A49",
-    "vanilla": "#8EC7E8",
-    "icm": "#93D18B",
-    "rnd": "#B8A5D1",
-    "ride": "#F3B07C",
-    "riac": "#F08A8A",
-    "glpe_lp_only": "#7ED6C2",
-    "glpe_impact_only": "#9FA9E8",
-    "glpe_nogate": "#D7C27A",
-    "glpe_cache": "#D49AC6",
+    "vanilla": "#ae8981",
+    "icm": "#eba0d4",
+    "rnd": "#a5a5a5",
+    "ride": "#d0d164",
+    "riac": "#5dd2dd",
+    "glpe": "#1f77b4",
+    "glpe_nogate": "#ff7f0e",
+    "glpe_lp_only": "#6bbc6b",
+    "glpe_impact_only": "#e26868",
+    "glpe_cache": "#b495d1",
 }
 
 _TAB20: tuple[str, ...] = (
