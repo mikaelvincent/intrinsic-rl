@@ -164,6 +164,41 @@ def _median_subplot_row_gap(fig) -> float | None:
     return float(median(gaps))
 
 
+def _split_legend_group_even_rows(
+    handles: list[object],
+    labels: list[str],
+    *,
+    max_cols: int,
+) -> list[tuple[list[object], list[str], int]]:
+    n = int(len(handles))
+    if n <= 0 or n != int(len(labels)):
+        return [(handles, labels, int(max(1, max_cols)))]
+
+    cols = int(max(1, int(max_cols)))
+    if cols <= 1 or n <= cols:
+        return [(handles, labels, int(min(cols, n)))]
+
+    n_rows = int(math.ceil(float(n) / float(cols)))
+    n_rows = int(max(1, n_rows))
+
+    base = n // n_rows
+    rem = n % n_rows
+
+    out: list[tuple[list[object], list[str], int]] = []
+    i = 0
+    for r in range(n_rows):
+        k = int(base + (1 if r < rem else 0))
+        if k <= 0:
+            continue
+        out.append((handles[i : i + k], labels[i : i + k], k))
+        i += k
+
+    if i < n:
+        out.append((handles[i:], labels[i:], int(n - i)))
+
+    return out
+
+
 def add_legend_rows_top(
     fig,
     rows: Iterable[tuple[list[object], list[str], int]],
@@ -234,7 +269,23 @@ def add_legend_rows_top(
                 continue
             base_leg_kwargs[str(k)] = v
 
+    expanded: list[tuple[list[object], list[str], int]] = []
     for handles, labels, ncol in rows:
+        hs = list(handles) if isinstance(handles, (list, tuple)) else []
+        ls = list(labels) if isinstance(labels, (list, tuple)) else []
+
+        try:
+            cols = int(ncol)
+        except Exception:
+            cols = int(len(hs)) if hs else 1
+        cols = int(max(1, cols))
+
+        if cols >= 2 and int(len(hs)) > cols and int(len(hs)) == int(len(ls)):
+            expanded.extend(_split_legend_group_even_rows(hs, ls, max_cols=cols))
+        else:
+            expanded.append((hs, ls, cols))
+
+    for handles, labels, ncol in expanded:
         if not handles or not labels:
             continue
 
