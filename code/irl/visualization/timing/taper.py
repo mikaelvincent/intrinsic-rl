@@ -331,7 +331,7 @@ def plot_intrinsic_taper_weight(
         ax.set_ylabel("Intrinsic reward")
         ax2.set_ylabel("Taper weight")
 
-        add_row_label(ax, f"{env_label(env_id)} | {method_label(method)}")
+        add_row_label(ax, f"{env_label(env_id)} | {method_label(method)}".replace(" | GLPE", ""))
 
     handles = [
         plt.Line2D([], [], color="black", linewidth=1.0, linestyle="--"),
@@ -340,7 +340,11 @@ def plot_intrinsic_taper_weight(
     ]
     labels = ["Taper weight", "Original intrinsic", "Final intrinsic"]
 
-    top = add_legend_rows_top(fig, [(handles, labels, legend_ncol(len(handles), max_cols=6))], fontsize=int(LEGEND_FONTSIZE))
+    top = add_legend_rows_top(
+        fig,
+        [(handles, labels, legend_ncol(len(handles), max_cols=6))],
+        fontsize=int(LEGEND_FONTSIZE),
+    )
     fig.tight_layout(rect=[0.0, 0.0, 1.0, float(top)])
 
     out_path = plots_root / "glpe-intrinsic-taper.png"
