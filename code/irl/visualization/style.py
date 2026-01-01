@@ -99,6 +99,10 @@ def alpha_for_method(method: Any) -> float:
 
 def zorder_for_method(method: Any) -> int:
     k = method_key(method)
+    if k == PROPOSED_METHOD_KEY:
+        return 51
+    if k == _GLPE_NOGATE_KEY:
+        return 50
     if is_emphasized(k):
         return 50
     r = _METHOD_RANK.get(k)
