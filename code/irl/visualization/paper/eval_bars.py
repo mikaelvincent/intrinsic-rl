@@ -18,6 +18,11 @@ _LABEL_TEXT_PAD_FRAC: float = 0.03
 _LABEL_BG_ALPHA: float = 0.25
 
 
+def _wants_combined_plot(filename_suffix: str) -> bool:
+    s = str(filename_suffix).strip().lower()
+    return ("baseline" in s) or ("ablation" in s)
+
+
 def _y_text_for_patch(patch: object, *, use_log: bool, pad_frac: float) -> float:
     try:
         y0 = float(getattr(patch, "get_y")())
@@ -114,11 +119,7 @@ def plot_eval_bars_by_env(
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
 
-    want = _legend_order(methods_to_plot)
-    if not want:
-        return []
-
-    ablation_mode = _is_ablation_suffix(filename_suffix)
+    combine = _wants_combined_plot(str(filename_suffix))
 
     df = summary_df.copy()
     if "env_id" not in df.columns:
@@ -130,6 +131,22 @@ def plot_eval_bars_by_env(
             return []
         df["method_key"] = df["method"].astype(str).str.strip().str.lower()
     df["method_key"] = df["method_key"].astype(str).str.strip().str.lower()
+
+    if combine:
+        filename_suffix = "all-methods"
+        methods_to_plot = sorted(
+            {
+                str(m).strip().lower()
+                for m in df["method_key"].unique().tolist()
+                if str(m).strip()
+            }
+        )
+
+    want = _legend_order(methods_to_plot)
+    if not want:
+        return []
+
+    ablation_mode = _is_ablation_suffix(filename_suffix)
 
     env_recs: list[tuple[str, dict[str, pd.Series], list[str]]] = []
 
