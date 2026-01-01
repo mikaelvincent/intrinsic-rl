@@ -100,6 +100,7 @@ def add_solved_threshold_line(ax, env_id: str) -> float | None:
             color=_SOLVED_THRESHOLD_COLOR,
             linestyle=_SOLVED_THRESHOLD_LINESTYLE,
             label=SOLVED_THRESHOLD_LABEL,
+            zorder=1,
         )
     except Exception:
         return None
