@@ -5,18 +5,30 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
 from .plot_common import finite_quantiles, finite_std, pretty_name, run_meta_footer, save_fig, style
 
 
-def _bench_group_key(name: str) -> str:
+def _bench_color(name: str) -> str:
     s = str(name).strip().lower()
-    if s.startswith("glpe"):
-        return "glpe"
-    if s.startswith("riac"):
-        return "riac"
-    return "vanilla"
+
+    if s.startswith("glpe.gate_median_cache.cached"):
+        return _color_for_method("glpe_cache")
+    if s.startswith("glpe."):
+        return _color_for_method("glpe")
+    if s.startswith("riac."):
+        return _color_for_method("riac")
+    if s.startswith("ppo."):
+        return _color_for_component("ppo")
+    if s.startswith("gae."):
+        return _color_for_component("gae")
+    if s.startswith("env."):
+        return _color_for_component("env_step")
+    if s.startswith("kdtree."):
+        return _color_for_component("other")
+    return _color_for_component("other")
 
 
 def plot_throughput(
@@ -49,7 +61,7 @@ def plot_throughput(
                 "label": pretty_name(name),
                 "median": float(med),
                 "std": float(std),
-                "group": _bench_group_key(name),
+                "color": _bench_color(name),
             }
         )
 
@@ -79,7 +91,7 @@ def plot_throughput(
         stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
 
         y = np.arange(len(rows), dtype=np.float64)
-        colors = [_color_for_method(str(r.get("group", "vanilla"))) for r in rows]
+        colors = [str(r.get("color", _color_for_component("other"))) for r in rows]
 
         ax.barh(y, medians, color=colors, alpha=0.9, edgecolor="none", linewidth=0.0, zorder=2)
         ax.errorbar(
