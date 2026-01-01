@@ -469,10 +469,35 @@ def plot_steps_to_beat_by_env(
             "alpha": float(_LABEL_BG_ALPHA),
         }
 
+        xform = ax.get_xaxis_transform()
+
         for ei in range(n_env):
             for mi in range(n_methods):
+                reached = int(n_reached[ei, mi])
+                total = int(n_total[ei, mi])
+                txt = _reach_label(reached, total)
+
                 patch = patch_by_idx.get((int(ei), int(mi)))
                 if patch is None:
+                    # No bar is drawn when no runs reach the threshold; still show 0/N to
+                    # distinguish from "no runs available".
+                    if total > 0 and reached == 0:
+                        off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
+                        cx = float(x[ei] + off)
+                        ax.text(
+                            float(cx),
+                            0.02,
+                            txt,
+                            transform=xform,
+                            ha="center",
+                            va="bottom",
+                            rotation=90,
+                            fontsize=8,
+                            color="black",
+                            bbox=bbox,
+                            clip_on=True,
+                            zorder=40,
+                        )
                     continue
 
                 try:
@@ -487,8 +512,6 @@ def plot_steps_to_beat_by_env(
                 )
                 if not np.isfinite(float(y_text)):
                     continue
-
-                txt = _reach_label(int(n_reached[ei, mi]), int(n_total[ei, mi]))
 
                 ax.text(
                     float(cx),
