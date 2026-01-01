@@ -46,6 +46,10 @@ LEGEND_BLOCK_TO_CONTENT_PAD_PT: float = (
 
 LEGEND_TIGHT_LAYOUT_PAD_MULT: float = 1.08
 
+# If set, overrides tight_layout h_pad/w_pad (multiples of font size).
+TIGHT_LAYOUT_H_PAD_MULT: float | None = None
+TIGHT_LAYOUT_W_PAD_MULT: float | None = None
+
 
 def slugify(tag: object) -> str:
     s = str(tag).strip().lower()
