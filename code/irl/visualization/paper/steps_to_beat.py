@@ -431,8 +431,6 @@ def plot_steps_to_beat_by_env(
 
         base_floor = float(max(0.0, base))
 
-        patch_by_idx: dict[tuple[int, int], object] = {}
-
         for mi, mk in enumerate(methods):
             off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
             xpos = x + off
@@ -463,7 +461,6 @@ def plot_steps_to_beat_by_env(
                 patch.set_facecolor((base_rgba[0], base_rgba[1], base_rgba[2], float(a)))
                 patch.set_edgecolor((0.0, 0.0, 0.0, 1.0))
                 patch.set_linewidth(0.9)
-                patch_by_idx[(int(ti), int(mi))] = patch
 
             err = stds[:, mi][ok]
             err = np.where(np.isfinite(err) & (err >= 0.0), err, 0.0)
@@ -484,75 +481,12 @@ def plot_steps_to_beat_by_env(
                 zorder=30,
             )
 
-        bbox = {
-            "boxstyle": "round,pad=0.12",
-            "facecolor": "white",
-            "edgecolor": "none",
-            "alpha": float(_LABEL_BG_ALPHA),
-        }
-
-        xform = ax.get_xaxis_transform()
-
-        for ti in range(n_thr):
-            for mi in range(n_methods):
-                reached = int(n_reached[ti, mi])
-                total = int(n_total[ti, mi])
-                txt = _reach_label(reached, total)
-
-                patch = patch_by_idx.get((int(ti), int(mi)))
-                if patch is None:
-                    if total > 0 and reached == 0:
-                        off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
-                        cx = float(x[ti] + off)
-                        ax.text(
-                            float(cx),
-                            0.02,
-                            txt,
-                            transform=xform,
-                            ha="center",
-                            va="bottom",
-                            rotation=0,
-                            fontsize=8,
-                            color="black",
-                            bbox=bbox,
-                            clip_on=True,
-                            zorder=40,
-                        )
-                    continue
-
-                try:
-                    cx = float(patch.get_x()) + 0.5 * float(patch.get_width())
-                except Exception:
-                    continue
-
-                y_text = _y_text_for_patch(
-                    patch,
-                    use_log=bool(use_log),
-                    pad_frac=float(_LABEL_TEXT_PAD_FRAC),
-                )
-                if not np.isfinite(float(y_text)):
-                    continue
-
-                ax.text(
-                    float(cx),
-                    float(y_text),
-                    txt,
-                    ha="center",
-                    va="bottom",
-                    rotation=0,
-                    fontsize=8,
-                    color="black",
-                    bbox=bbox,
-                    clip_on=True,
-                    clip_path=patch,
-                    zorder=40,
-                )
-
         ax.set_xlim(-0.5, float(n_thr) - 0.5)
         ax.set_ylabel("Training steps")
         ax.set_xticks(x)
 
         apply_grid(ax)
+        ax.set_axisbelow(True)
         run_n = int(max(0, int(total_runs)))
         label = env_label(env_id)
         if run_n > 0:
@@ -562,6 +496,57 @@ def plot_steps_to_beat_by_env(
 
         if use_log:
             ax.set_yscale("log")
+
+        # Text annotations don't affect autoscaling; add headroom to prevent clipping.
+        try:
+            y0, y1 = ax.get_ylim()
+            if use_log:
+                if np.isfinite(float(y1)) and float(y1) > 0.0:
+                    ax.set_ylim(float(y0), float(y1) * 1.12)
+            else:
+                span = float(y1 - y0)
+                if np.isfinite(span) and span > 0.0:
+                    ax.set_ylim(float(y0), float(y1) + 0.08 * span)
+        except Exception:
+            pass
+
+        for ti in range(n_thr):
+            for mi in range(n_methods):
+                total = int(n_total[ti, mi])
+                if total <= 0:
+                    continue
+
+                reached = int(n_reached[ti, mi])
+                txt = _reach_label(reached, total)
+
+                off = (float(mi) - float(n_methods) / 2.0) * width + width / 2.0
+                cx = float(x[ti] + off)
+
+                y_med = float(meds[ti, mi])
+                y_err = float(stds[ti, mi]) if np.isfinite(float(stds[ti, mi])) else 0.0
+
+                if np.isfinite(y_med):
+                    y_anchor = float(y_med) + max(0.0, float(y_err))
+                else:
+                    y_anchor = float(base) if use_log else 0.0
+
+                if use_log and not (np.isfinite(float(y_anchor)) and float(y_anchor) > 0.0):
+                    y_anchor = float(base if base > 0.0 else 1.0)
+                elif not np.isfinite(float(y_anchor)):
+                    y_anchor = float(base) if use_log else 0.0
+
+                ax.annotate(
+                    txt,
+                    xy=(float(cx), float(y_anchor)),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color="black",
+                    clip_on=False,
+                    zorder=40,
+                )
 
     for i, env_id in enumerate(envs):
         ax = axes[i, 0]
