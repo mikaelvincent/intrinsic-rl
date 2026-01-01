@@ -105,7 +105,8 @@ def plot_glpe_state_gate_map(
         squeeze=False,
     )
 
-    glpe_c = _color_for_method("glpe")
+    gate_on_c = _color_for_method("glpe")
+    gate_off_c = _color_for_method("glpe_nogate")
 
     for i, rec in enumerate(env_recs):
         ax = axes[i, 0]
@@ -119,24 +120,24 @@ def plot_glpe_state_gate_map(
             ax.scatter(
                 x[gated],
                 y[gated],
-                c="lightgray",
+                c=gate_off_c,
                 s=2,
-                alpha=0.1,
+                alpha=0.5,
                 edgecolor="none",
                 linewidth=0.0,
-                zorder=2,
+                zorder=10,
             )
 
         if bool(gate_on.any()):
             ax.scatter(
                 x[gate_on],
                 y[gate_on],
-                c=glpe_c,
+                c=gate_on_c,
                 s=4,
-                alpha=0.1,
+                alpha=0.05,
                 edgecolor="none",
                 linewidth=0.0,
-                zorder=10,
+                zorder=2,
             )
 
         ax.set_xlabel(str(rec["xlab"]) if i == nrows - 1 else "")
@@ -148,8 +149,8 @@ def plot_glpe_state_gate_map(
         add_row_label(ax, env_label(env_id))
 
     handles = [
-        plt.Line2D([], [], color="lightgray", marker="o", linestyle="none", markersize=6),
-        plt.Line2D([], [], color=glpe_c, marker="o", linestyle="none", markersize=6),
+        plt.Line2D([], [], color=gate_off_c, marker="o", linestyle="none", markersize=6),
+        plt.Line2D([], [], color=gate_on_c, marker="o", linestyle="none", markersize=6),
     ]
     labels = ["Gate off", "Gate on"]
 
