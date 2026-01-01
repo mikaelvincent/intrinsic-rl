@@ -74,6 +74,41 @@ def _has_glpe_and_variant(method_keys: Sequence[str]) -> bool:
     return any(k.startswith("glpe_") for k in keys)
 
 
+def _ensure_glpe_nogate_in_groups(
+    baselines: Sequence[str],
+    ablations: Sequence[str],
+) -> tuple[list[str], list[str]]:
+    b: list[str] = []
+    a: list[str] = []
+
+    seen_b: set[str] = set()
+    for m in baselines:
+        k = str(m).strip().lower()
+        if not k or k in seen_b:
+            continue
+        b.append(k)
+        seen_b.add(k)
+
+    seen_a: set[str] = set()
+    for m in ablations:
+        k = str(m).strip().lower()
+        if not k or k in seen_a:
+            continue
+        a.append(k)
+        seen_a.add(k)
+
+    # Keep GLPE and GLPE (no gate) in both groups for side-by-side comparisons.
+    for k in ("glpe", "glpe_nogate"):
+        if k not in seen_b:
+            b.append(k)
+            seen_b.add(k)
+        if k not in seen_a:
+            a.append(k)
+            seen_a.add(k)
+
+    return b, a
+
+
 def _build_env_series(
     *,
     by_method: Mapping[str, Sequence[Path]],
@@ -303,6 +338,7 @@ def plot_training_reward_decomposition(
         all_methods |= set(m.keys())
 
     baselines, ablations = _paper_method_groups(sorted(all_methods))
+    baselines, ablations = _ensure_glpe_nogate_in_groups(baselines, ablations)
     baselines = legend_order(baselines)
     ablations = legend_order(ablations)
 
