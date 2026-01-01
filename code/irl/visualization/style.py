@@ -12,6 +12,7 @@ LEGEND_FONTSIZE: int = 9
 LEGEND_FRAMEALPHA: float = 0.0
 
 PROPOSED_METHOD_KEY: str = "glpe"
+_GLPE_NOGATE_KEY: str = "glpe_nogate"
 
 # Canonical ordering for multi-panel figures and method legends.
 _METHOD_ORDER: tuple[str, ...] = (
@@ -21,10 +22,10 @@ _METHOD_ORDER: tuple[str, ...] = (
     "ride",
     "riac",
     "glpe",
+    "glpe_nogate",
     "glpe_cache",
     "glpe_lp_only",
     "glpe_impact_only",
-    "glpe_nogate",
 )
 _METHOD_RANK: dict[str, int] = {m: i for i, m in enumerate(_METHOD_ORDER)}
 
@@ -93,6 +94,8 @@ def zorder_for_method(method: Any) -> int:
     k = method_key(method)
     if k == PROPOSED_METHOD_KEY:
         return 50
+    if k == _GLPE_NOGATE_KEY:
+        return 49
     r = _METHOD_RANK.get(k)
     if r is None:
         return 2
@@ -102,7 +105,12 @@ def zorder_for_method(method: Any) -> int:
 def draw_order(methods: Sequence[str]) -> list[str]:
     ordered = order_methods(methods)
     if PROPOSED_METHOD_KEY in ordered:
-        ordered = [m for m in ordered if m != PROPOSED_METHOD_KEY] + [PROPOSED_METHOD_KEY]
+        tail: list[str] = []
+        for k in (PROPOSED_METHOD_KEY, _GLPE_NOGATE_KEY):
+            if k in ordered:
+                ordered = [m for m in ordered if m != k]
+                tail.append(k)
+        ordered = ordered + tail
     return ordered
 
 
