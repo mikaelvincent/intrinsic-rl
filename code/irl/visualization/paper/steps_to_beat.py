@@ -57,11 +57,6 @@ def _is_ablation_suffix(filename_suffix: str) -> bool:
     return "ablation" in str(filename_suffix).strip().lower()
 
 
-def _wants_combined_plot(filename_suffix: str) -> bool:
-    s = str(filename_suffix).strip().lower()
-    return ("baseline" in s) or ("ablation" in s)
-
-
 def _eligible_ablation_envs(raw_df: pd.DataFrame) -> set[str]:
     eligible: set[str] = set()
     if raw_df is None or raw_df.empty:
@@ -297,17 +292,6 @@ def plot_steps_to_beat_by_env(
     raw_df = _load_summary_raw(Path(summary_raw_csv))
     if raw_df is None or raw_df.empty:
         return None
-
-    combine = _wants_combined_plot(str(filename_suffix))
-    if combine:
-        filename_suffix = "all-methods"
-        methods_to_plot = sorted(
-            {
-                str(m).strip().lower()
-                for m in raw_df["method_key"].unique().tolist()
-                if str(m).strip()
-            }
-        )
 
     plots_root = Path(plots_root)
     plots_root.mkdir(parents=True, exist_ok=True)
