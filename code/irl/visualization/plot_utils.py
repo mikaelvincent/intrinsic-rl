@@ -52,6 +52,58 @@ def _disable_matplotlib_titles() -> None:
     setattr(matplotlib.axes.Axes, "_irl_titles_disabled", True)
 
 
+def _patch_matplotlib_tight_layout_defaults() -> None:
+    import matplotlib.figure
+
+    if bool(getattr(matplotlib.figure.Figure, "_irl_tight_layout_patched", False)):
+        return
+
+    orig_tight_layout = matplotlib.figure.Figure.tight_layout
+
+    def _tight_layout(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if args:
+            return orig_tight_layout(self, *args, **kwargs)
+
+        from irl.visualization.labels import (
+            LEGEND_TIGHT_LAYOUT_PAD_MULT,
+            TIGHT_LAYOUT_H_PAD_MULT,
+            TIGHT_LAYOUT_W_PAD_MULT,
+        )
+
+        rect = kwargs.pop("rect", None)
+
+        h_pad_in = "h_pad" in kwargs
+        w_pad_in = "w_pad" in kwargs
+
+        pad = kwargs.pop("pad", None)
+        h_pad = kwargs.pop("h_pad", None)
+        w_pad = kwargs.pop("w_pad", None)
+
+        if pad is None:
+            pad = float(LEGEND_TIGHT_LAYOUT_PAD_MULT)
+        try:
+            pad_f = float(pad)
+        except Exception:
+            pad_f = float(LEGEND_TIGHT_LAYOUT_PAD_MULT)
+
+        if not h_pad_in and h_pad is None and TIGHT_LAYOUT_H_PAD_MULT is not None:
+            try:
+                h_pad = float(TIGHT_LAYOUT_H_PAD_MULT)
+            except Exception:
+                h_pad = None
+
+        if not w_pad_in and w_pad is None and TIGHT_LAYOUT_W_PAD_MULT is not None:
+            try:
+                w_pad = float(TIGHT_LAYOUT_W_PAD_MULT)
+            except Exception:
+                w_pad = None
+
+        return orig_tight_layout(self, pad=pad_f, h_pad=h_pad, w_pad=w_pad, rect=rect)
+
+    matplotlib.figure.Figure.tight_layout = _tight_layout  # type: ignore[assignment]
+    setattr(matplotlib.figure.Figure, "_irl_tight_layout_patched", True)
+
+
 def apply_rcparams_paper():
     import matplotlib
 
@@ -63,6 +115,7 @@ def apply_rcparams_paper():
 
     plt.rcParams.update(_STYLE_RCPARAMS)
     _disable_matplotlib_titles()
+    _patch_matplotlib_tight_layout_defaults()
     return plt
 
 
