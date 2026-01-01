@@ -13,6 +13,7 @@ LEGEND_FRAMEALPHA: float = 0.0
 
 PROPOSED_METHOD_KEY: str = "glpe"
 _GLPE_NOGATE_KEY: str = "glpe_nogate"
+_EMPHASIZED_METHOD_KEYS: frozenset[str] = frozenset((PROPOSED_METHOD_KEY, _GLPE_NOGATE_KEY))
 
 # Canonical ordering for multi-panel figures and method legends.
 _METHOD_ORDER: tuple[str, ...] = (
@@ -65,6 +66,10 @@ def is_proposed(method: Any) -> bool:
     return method_key(method) == PROPOSED_METHOD_KEY
 
 
+def is_emphasized(method: Any) -> bool:
+    return method_key(method) in _EMPHASIZED_METHOD_KEYS
+
+
 def is_ablation(method: Any) -> bool:
     k = method_key(method)
     return k.startswith("glpe_") and k != PROPOSED_METHOD_KEY
@@ -72,6 +77,8 @@ def is_ablation(method: Any) -> bool:
 
 def linestyle_for_method(method: Any) -> str | tuple[int, tuple[int, ...]]:
     k = method_key(method)
+    if is_emphasized(k):
+        return "-"
     if is_ablation(k):
         return _ABLATION_DASH.get(k, (0, (4, 2)))
     return "-"
@@ -79,7 +86,7 @@ def linestyle_for_method(method: Any) -> str | tuple[int, tuple[int, ...]]:
 
 def linewidth_for_method(method: Any) -> float:
     k = method_key(method)
-    if k == PROPOSED_METHOD_KEY:
+    if is_emphasized(k):
         return 1.8
     if is_ablation(k):
         return 0.9
@@ -87,15 +94,13 @@ def linewidth_for_method(method: Any) -> float:
 
 
 def alpha_for_method(method: Any) -> float:
-    return 1.0 if is_proposed(method) else 0.88
+    return 1.0 if is_emphasized(method) else 0.88
 
 
 def zorder_for_method(method: Any) -> int:
     k = method_key(method)
-    if k == PROPOSED_METHOD_KEY:
+    if is_emphasized(k):
         return 50
-    if k == _GLPE_NOGATE_KEY:
-        return 49
     r = _METHOD_RANK.get(k)
     if r is None:
         return 2
