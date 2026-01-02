@@ -140,10 +140,8 @@ def plot_glpe_state_gate_map(
                 zorder=2,
             )
 
-        ax.set_xlabel(str(rec["xlab"]) if i == nrows - 1 else "")
+        ax.set_xlabel(str(rec["xlab"]))
         ax.set_ylabel(str(rec["ylab"]))
-        if i != nrows - 1:
-            ax.tick_params(axis="x", which="both", labelbottom=False)
 
         apply_grid(ax)
         add_row_label(ax, env_label(env_id))
