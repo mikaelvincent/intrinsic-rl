@@ -265,7 +265,7 @@ def plot_eval_bars_by_env(
         if thr is not None:
             has_solved_threshold = True
 
-        ax.set_ylabel("Mean return (95% CI)")
+        ax.set_ylabel("Mean return")
         ax.set_xticks(x)
 
         tick_labels = [method_label(mk) for mk in methods_present]
