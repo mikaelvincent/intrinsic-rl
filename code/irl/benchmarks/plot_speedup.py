@@ -7,7 +7,7 @@ import numpy as np
 
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
-from .plot_common import finite_quantiles, finite_std, get_result_by_name, pretty_name, run_meta_footer, save_fig, style
+from .plot_common import finite_quantiles, finite_std, get_result_by_name, pretty_name, save_fig, style
 
 
 def _plot_cache_comparison(
@@ -17,6 +17,7 @@ def _plot_cache_comparison(
     *,
     run_meta: Mapping[str, Any] | None = None,
 ) -> bool:
+    _ = run_meta
     qs_base = finite_quantiles(base.get("values"))
     qs_cached = finite_quantiles(cached.get("values"))
     std_base = finite_std(base.get("values"))
@@ -87,12 +88,7 @@ def _plot_cache_comparison(
     ax.set_ylabel(f"Throughput ({unit})")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
-    footer = run_meta_footer(run_meta)
-    if footer:
-        fig.text(0.01, 0.01, footer, ha="left", va="bottom", fontsize=8, alpha=0.9)
-        fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
-    else:
-        fig.tight_layout()
+    fig.tight_layout()
 
     save_fig(fig, Path(out_path))
     plt.close(fig)
@@ -102,6 +98,7 @@ def _plot_cache_comparison(
 def plot_speedup(
     results: list[Mapping[str, Any]], out_path: Path, *, run_meta: Mapping[str, Any] | None = None
 ) -> bool:
+    _ = run_meta
     base = get_result_by_name(results, "glpe.gate_median_cache.baseline")
     cached = get_result_by_name(results, "glpe.gate_median_cache.cached")
     if base is not None and cached is not None:
@@ -173,12 +170,7 @@ def plot_speedup(
     ax.set_ylabel("Speedup (×)")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
-    footer = run_meta_footer(run_meta)
-    if footer:
-        fig.text(0.01, 0.01, footer, ha="left", va="bottom", fontsize=8, alpha=0.9)
-        fig.tight_layout(rect=[0.0, 0.04, 1.0, 1.0])
-    else:
-        fig.tight_layout()
+    fig.tight_layout()
 
     save_fig(fig, Path(out_path))
     plt.close(fig)
