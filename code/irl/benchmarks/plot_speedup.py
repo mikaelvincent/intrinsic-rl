@@ -170,7 +170,7 @@ def plot_speedup(
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("Speedup (Ã—)")
+    ax.set_ylabel("Speedup (×)")
     ax.grid(True, alpha=float(GRID_ALPHA))
 
     footer = run_meta_footer(run_meta)
