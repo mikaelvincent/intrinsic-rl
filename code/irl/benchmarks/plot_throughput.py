@@ -8,7 +8,7 @@ import numpy as np
 from irl.visualization.palette import color_for_component as _color_for_component
 from irl.visualization.palette import color_for_method as _color_for_method
 from irl.visualization.style import GRID_ALPHA, DPI, FIG_WIDTH
-from .plot_common import finite_quantiles, finite_std, pretty_name, run_meta_footer, save_fig, style
+from .plot_common import finite_quantiles, finite_std, pretty_name, save_fig, style
 
 
 def _bench_color(name: str) -> str:
@@ -34,6 +34,7 @@ def _bench_color(name: str) -> str:
 def plot_throughput(
     results: list[Mapping[str, Any]], out_path: Path, *, run_meta: Mapping[str, Any] | None = None
 ) -> bool:
+    _ = run_meta
     rows_by_unit: dict[str, list[dict[str, Any]]] = {}
     for r in results:
         if not isinstance(r, Mapping):
@@ -119,13 +120,7 @@ def plot_throughput(
             if ratio >= 50.0:
                 ax.set_xscale("log")
 
-    footer = run_meta_footer(run_meta)
-    bottom = 0.0
-    if footer:
-        fig.text(0.01, 0.01, footer, ha="left", va="bottom", fontsize=8, alpha=0.9)
-        bottom = 0.04
-
-    fig.tight_layout(rect=[0.0, bottom, 1.0, 1.0])
+    fig.tight_layout()
 
     save_fig(fig, Path(out_path))
     plt.close(fig)
