@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Sequence
 
@@ -190,34 +191,50 @@ def plot_eval_bars_by_env(
     for i, (env_id, rows_by_method, methods_present) in enumerate(env_recs):
         ax = axes[i, 0]
 
-        means = np.asarray(
-            [float(rows_by_method[m].get("mean_return_mean", float("nan"))) for m in methods_present],
-            dtype=np.float64,
-        )
-        ci_lo = np.asarray(
-            [float(rows_by_method[m].get("mean_return_ci95_lo", float("nan"))) for m in methods_present],
-            dtype=np.float64,
-        )
-        ci_hi = np.asarray(
-            [float(rows_by_method[m].get("mean_return_ci95_hi", float("nan"))) for m in methods_present],
-            dtype=np.float64,
-        )
-        n_seeds = np.asarray(
-            [float(rows_by_method[m].get("n_seeds", float("nan"))) for m in methods_present],
-            dtype=np.float64,
-        )
+        means_l: list[float] = []
+        ci_lo_l: list[float] = []
+        ci_hi_l: list[float] = []
+        methods_plot: list[str] = []
 
-        half = 0.5 * np.abs(ci_hi - ci_lo)
-        se = half / 1.96
-        n_eff = np.where(np.isfinite(n_seeds) & (n_seeds >= 1.0), n_seeds, 1.0)
-        stds = se * np.sqrt(n_eff)
+        for mk in methods_present:
+            r = rows_by_method[mk]
+            mu = float(r.get("mean_return_mean", float("nan")))
+            if not np.isfinite(mu):
+                continue
 
-        std_direct = np.asarray(
-            [float(rows_by_method[m].get("mean_return_std", float("nan"))) for m in methods_present],
-            dtype=np.float64,
-        )
-        stds = np.where(np.isfinite(std_direct), std_direct, stds)
-        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
+            lo = float(r.get("mean_return_ci95_lo", float("nan")))
+            hi = float(r.get("mean_return_ci95_hi", float("nan")))
+
+            if not (np.isfinite(lo) and np.isfinite(hi)):
+                std = float(r.get("mean_return_std", float("nan")))
+                try:
+                    n = int(r.get("n_seeds", 0) or 0)
+                except Exception:
+                    n = 0
+                if np.isfinite(std) and n > 0:
+                    half = 1.96 * float(std) / math.sqrt(float(n))
+                    lo = float(mu) - half
+                    hi = float(mu) + half
+
+            methods_plot.append(mk)
+            means_l.append(float(mu))
+            ci_lo_l.append(float(lo))
+            ci_hi_l.append(float(hi))
+
+        if not methods_plot:
+            ax.axis("off")
+            continue
+
+        methods_present = methods_plot
+        means = np.asarray(means_l, dtype=np.float64)
+        ci_lo = np.asarray(ci_lo_l, dtype=np.float64)
+        ci_hi = np.asarray(ci_hi_l, dtype=np.float64)
+
+        yerr_lo = means - ci_lo
+        yerr_hi = ci_hi - means
+        yerr_lo = np.where(np.isfinite(yerr_lo) & (yerr_lo >= 0.0), yerr_lo, 0.0)
+        yerr_hi = np.where(np.isfinite(yerr_hi) & (yerr_hi >= 0.0), yerr_hi, 0.0)
+        yerr = np.vstack([yerr_lo, yerr_hi])
 
         x = np.arange(len(methods_present), dtype=np.float64)
         for j, mk in enumerate(methods_present):
@@ -234,7 +251,7 @@ def plot_eval_bars_by_env(
         ax.errorbar(
             x,
             means,
-            yerr=stds,
+            yerr=yerr,
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
@@ -248,7 +265,7 @@ def plot_eval_bars_by_env(
         if thr is not None:
             has_solved_threshold = True
 
-        ax.set_ylabel("Mean return")
+        ax.set_ylabel("Mean return (95% CI)")
         ax.set_xticks(x)
 
         tick_labels = [method_label(mk) for mk in methods_present]
