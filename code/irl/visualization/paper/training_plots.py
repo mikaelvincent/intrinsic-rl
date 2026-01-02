@@ -154,8 +154,9 @@ def _build_env_series(
             continue
 
         x = x[finite]
+        total_mean = total_mean[finite]
         ext_mean = ext_mean[finite]
-        intr_mean = (total_mean - ext_mean)[finite]
+        intr_mean = total_mean - ext_mean
 
         series[str(mk)] = {
             "x": x,
