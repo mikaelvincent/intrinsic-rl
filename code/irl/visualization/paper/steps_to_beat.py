@@ -232,7 +232,7 @@ def _threshold_fraction(threshold: float, frac: float) -> float:
 def _reach_label(reached: int, total: int) -> str:
     tot = int(total)
     if tot <= 0:
-        return "â€”"
+        return "—"
     r = int(reached)
     r = int(max(0, min(r, tot)))
     return str(r)
