@@ -447,24 +447,32 @@ def plot_eval_auc_bars_by_env(
                 except Exception:
                     n_seeds = 0
 
-            auc_std = 0.0
+            err_lo = 0.0
+            err_hi = 0.0
             if "mean_return_ci95_lo" in df_m.columns and "mean_return_ci95_hi" in df_m.columns:
                 lo = pd.to_numeric(df_m["mean_return_ci95_lo"], errors="coerce").to_numpy(dtype=np.float64)
                 hi = pd.to_numeric(df_m["mean_return_ci95_hi"], errors="coerce").to_numpy(dtype=np.float64)
                 auc_lo, _ = _auc_from_curve(steps, lo)
                 auc_hi, _ = _auc_from_curve(steps, hi)
-                half = 0.5 * abs(float(auc_hi) - float(auc_lo))
-                n_eff = int(max(1, int(n_seeds)))
-                auc_std = (half / 1.96) * math.sqrt(float(n_eff))
-                if not np.isfinite(float(auc_std)) or float(auc_std) < 0.0:
-                    auc_std = 0.0
+
+                if np.isfinite(float(auc_lo)) and np.isfinite(float(auc_hi)) and np.isfinite(float(auc)):
+                    a_min = float(min(float(auc_lo), float(auc_hi)))
+                    a_max = float(max(float(auc_lo), float(auc_hi)))
+                    err_lo = float(auc) - a_min
+                    err_hi = a_max - float(auc)
+
+            if not np.isfinite(float(err_lo)) or float(err_lo) < 0.0:
+                err_lo = 0.0
+            if not np.isfinite(float(err_hi)) or float(err_hi) < 0.0:
+                err_hi = 0.0
 
             auc_rows.append(
                 {
                     "method_key": mk,
                     "label": method_label(mk),
                     "auc": float(auc),
-                    "auc_std": float(auc_std),
+                    "err_lo": float(err_lo),
+                    "err_hi": float(err_hi),
                     "n_seeds": int(n_seeds),
                 }
             )
@@ -495,8 +503,12 @@ def plot_eval_auc_bars_by_env(
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
-        stds = np.asarray([float(r.get("auc_std", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
-        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
+        err_lo = np.asarray([float(r.get("err_lo", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+        err_hi = np.asarray([float(r.get("err_hi", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+
+        err_lo = np.where(np.isfinite(err_lo) & (err_lo >= 0.0), err_lo, 0.0)
+        err_hi = np.where(np.isfinite(err_hi) & (err_hi >= 0.0), err_hi, 0.0)
+
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
@@ -517,7 +529,7 @@ def plot_eval_auc_bars_by_env(
         ax.errorbar(
             x,
             vals,
-            yerr=stds,
+            yerr=np.vstack([err_lo, err_hi]),
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
@@ -530,7 +542,7 @@ def plot_eval_auc_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_ylabel("AUC (return × steps)")
+        ax.set_ylabel("AUC (return × steps, 95% CI)")
         apply_grid(ax)
 
         if i != nrows - 1:
@@ -748,7 +760,8 @@ def plot_eval_auc_time_bars_by_env(
                 budget_s=budget_s,
             )
 
-            auc_std = 0.0
+            err_lo = 0.0
+            err_hi = 0.0
             lo = c.get("returns_ci95_lo")
             hi = c.get("returns_ci95_hi")
             if isinstance(lo, np.ndarray) and isinstance(hi, np.ndarray):
@@ -762,18 +775,24 @@ def plot_eval_auc_time_bars_by_env(
                     np.asarray(hi, dtype=np.float64),
                     budget_s=budget_s,
                 )
-                half = 0.5 * abs(float(auc_hi) - float(auc_lo))
-                n_eff = int(max(1, int(c.get("n_seeds", 0) or 0)))
-                auc_std = (half / 1.96) * math.sqrt(float(n_eff))
-                if not np.isfinite(float(auc_std)) or float(auc_std) < 0.0:
-                    auc_std = 0.0
+                if np.isfinite(float(auc_lo)) and np.isfinite(float(auc_hi)) and np.isfinite(float(auc)):
+                    a_min = float(min(float(auc_lo), float(auc_hi)))
+                    a_max = float(max(float(auc_lo), float(auc_hi)))
+                    err_lo = float(auc) - a_min
+                    err_hi = a_max - float(auc)
+
+            if not np.isfinite(float(err_lo)) or float(err_lo) < 0.0:
+                err_lo = 0.0
+            if not np.isfinite(float(err_hi)) or float(err_hi) < 0.0:
+                err_hi = 0.0
 
             auc_rows.append(
                 {
                     "method_key": str(c["method_key"]),
                     "label": str(c["label"]),
                     "auc": float(auc),
-                    "auc_std": float(auc_std),
+                    "err_lo": float(err_lo),
+                    "err_hi": float(err_hi),
                     "n_seeds": int(c["n_seeds"]),
                 }
             )
@@ -801,8 +820,12 @@ def plot_eval_auc_time_bars_by_env(
 
         labels = [str(r["label"]) for r in auc_rows]
         vals = np.asarray([float(r["auc"]) for r in auc_rows], dtype=np.float64)
-        stds = np.asarray([float(r.get("auc_std", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
-        stds = np.where(np.isfinite(stds) & (stds >= 0.0), stds, 0.0)
+        err_lo = np.asarray([float(r.get("err_lo", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+        err_hi = np.asarray([float(r.get("err_hi", 0.0) or 0.0) for r in auc_rows], dtype=np.float64)
+
+        err_lo = np.where(np.isfinite(err_lo) & (err_lo >= 0.0), err_lo, 0.0)
+        err_hi = np.where(np.isfinite(err_hi) & (err_hi >= 0.0), err_hi, 0.0)
+
         colors = [_color_for_method(str(r["method_key"])) for r in auc_rows]
 
         x = np.arange(len(auc_rows), dtype=np.float64)
@@ -823,7 +846,7 @@ def plot_eval_auc_time_bars_by_env(
         ax.errorbar(
             x,
             vals,
-            yerr=stds,
+            yerr=np.vstack([err_lo, err_hi]),
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
@@ -836,7 +859,7 @@ def plot_eval_auc_time_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_ylabel("AUC (return × time)")
+        ax.set_ylabel("AUC (return × time, 95% CI)")
         apply_grid(ax)
 
         if i != nrows - 1:
