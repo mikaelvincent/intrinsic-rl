@@ -47,12 +47,6 @@ intrinsic:
   checkpoint_include_points: true
   gate:
     enabled: false
-    tau_lp_mult: 0.01
-    tau_s: 2.0
-    hysteresis_up_mult: 2.0
-    min_consec_to_gate: 5
-    min_regions_for_gating: 32
-    median_cache_interval: 1
 
 evaluation:
   interval_steps: 16384
