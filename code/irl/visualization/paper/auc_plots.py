@@ -542,7 +542,7 @@ def plot_eval_auc_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_ylabel("AUC (return × steps, 95% CI)")
+        ax.set_ylabel("AUC (return × steps)")
         apply_grid(ax)
 
         if i != nrows - 1:
@@ -652,7 +652,7 @@ def plot_eval_auc_time_bars_by_env(
         mean = np.mean(arr, axis=0)
         return mean.astype(np.float64, copy=False)
 
-    env_recs: list[tuple[str, list[dict[str, object]], float]] = []
+    env_recs: list[tuple[str, list[dict[str, object]]]] = []
 
     for env_id in _sort_env_ids(df["env_id"].unique().tolist()):
         df_env = df.loc[df["env_id"] == env_id].copy()
@@ -798,7 +798,7 @@ def plot_eval_auc_time_bars_by_env(
             )
 
         if auc_rows:
-            env_recs.append((str(env_id), auc_rows, float(budget_s)))
+            env_recs.append((str(env_id), auc_rows))
 
     if not env_recs:
         return []
@@ -815,7 +815,7 @@ def plot_eval_auc_time_bars_by_env(
         squeeze=False,
     )
 
-    for i, (env_id, auc_rows, budget_s) in enumerate(env_recs):
+    for i, (env_id, auc_rows) in enumerate(env_recs):
         ax = axes[i, 0]
 
         labels = [str(r["label"]) for r in auc_rows]
@@ -859,14 +859,13 @@ def plot_eval_auc_time_bars_by_env(
         ax.axhline(0.0, linewidth=1.0, alpha=0.6, color="black")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_ylabel("AUC (return × time, 95% CI)")
+        ax.set_ylabel("AUC (return × time)")
         apply_grid(ax)
 
         if i != nrows - 1:
             ax.tick_params(axis="x", which="both", labelbottom=False)
 
-        budget_min = float(budget_s) / 60.0
-        add_row_label(ax, f"{env_label(env_id)} ({budget_min:.1f} min)")
+        add_row_label(ax, env_label(env_id))
 
     axes[-1, 0].set_xlabel("Method")
     fig.tight_layout()
