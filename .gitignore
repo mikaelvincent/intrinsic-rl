@@ -185,9 +185,9 @@ cython_debug/
 #Pylint
 pylint_report.json
 
+# Internal files
 internal_documents
 presentation
-
 code/runs_suite
 code/results_suite
 code/results
