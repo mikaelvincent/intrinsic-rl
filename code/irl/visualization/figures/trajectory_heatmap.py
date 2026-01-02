@@ -113,7 +113,7 @@ def plot_trajectory_heatmap(npz_path: Path, out_path: Path, max_points: int = 20
 
     ax.set_xlabel(xlab)
     ax.set_ylabel(ylab)
-    ax.set_title(" â€” ".join(title_bits))
+    ax.set_title(" — ".join(title_bits))
 
     apply_grid(ax)
 
