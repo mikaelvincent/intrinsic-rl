@@ -161,11 +161,12 @@ def _score_to_beat(
     min_reach_count: int = _SOLVED_MIN_REACH_COUNT,
 ) -> float:
     thr = solved_threshold(str(env_id))
+    thr_known = thr is not None
     if thr is None:
         best = _best_final_threshold(df_env)
         thr = 0.0 if best is None else float(best)
 
-    if df_env_raw is not None:
+    if df_env_raw is not None and not thr_known:
         best_returns = _best_returns_from_summary_raw(df_env_raw)
         thr = _maybe_lower_solved_threshold(
             float(thr),
