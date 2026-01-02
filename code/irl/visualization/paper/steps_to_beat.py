@@ -350,12 +350,6 @@ def plot_steps_to_beat_by_env(
         curve = None if steps.size == 0 else (steps, vals)
         by_env_method.setdefault((str(env_id), str(method_key)), []).append(curve)
 
-    env_total_runs: dict[str, int] = {}
-    for env_id in envs:
-        counts = [int(len(by_env_method.get((str(env_id), str(mk)), []))) for mk in methods]
-        counts = [int(c) for c in counts if int(c) > 0]
-        env_total_runs[str(env_id)] = int(max(counts)) if counts else 0
-
     thresholds_full: dict[str, float] = {}
     for env_id in envs:
         df_env = by_step_df.loc[by_step_df["env_id"].astype(str).str.strip() == str(env_id)].copy()
@@ -387,7 +381,7 @@ def plot_steps_to_beat_by_env(
         squeeze=False,
     )
 
-    def _panel(ax, *, env_id: str, total_runs: int) -> None:
+    def _panel(ax, *, env_id: str) -> None:
         import matplotlib.colors as mcolors
 
         meds = np.full((n_thr, n_methods), np.nan, dtype=np.float64)
@@ -488,12 +482,7 @@ def plot_steps_to_beat_by_env(
 
         apply_grid(ax)
         ax.set_axisbelow(True)
-        run_n = int(max(0, int(total_runs)))
-        label = env_label(env_id)
-        if run_n > 0:
-            run_word = "run" if run_n == 1 else "runs"
-            label = f"{label} (out of {run_n} {run_word})"
-        add_row_label(ax, label)
+        add_row_label(ax, env_label(env_id))
 
         if use_log:
             ax.set_yscale("log")
@@ -550,7 +539,7 @@ def plot_steps_to_beat_by_env(
 
     for i, env_id in enumerate(envs):
         ax = axes[i, 0]
-        _panel(ax, env_id=str(env_id), total_runs=int(env_total_runs.get(str(env_id), 0)))
+        _panel(ax, env_id=str(env_id))
         if i != n_env - 1:
             ax.tick_params(axis="x", which="both", labelbottom=False)
 
