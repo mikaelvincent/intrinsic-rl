@@ -72,7 +72,7 @@ def _generate_component_plot(
 
         ax.set_xlabel("Environment steps")
         ax.set_ylabel("Running RMS")
-        ax.set_title(f"{env_id} â€” Intrinsic component evolution (GLPE) ({meta_title})")
+        ax.set_title(f"{env_id} — Intrinsic component evolution (GLPE) ({meta_title})")
 
         apply_grid(ax)
         ax.legend(loc="lower right", framealpha=float(LEGEND_FRAMEALPHA), fontsize=int(LEGEND_FONTSIZE))
