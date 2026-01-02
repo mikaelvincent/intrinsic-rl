@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -211,9 +212,15 @@ def plot_timing_breakdown(
 
             total_mean = float(np.mean(totals))
             total_std = float(np.std(totals, ddof=0)) if len(totals) > 1 else 0.0
-            method_rows.append(
-                (str(method).strip().lower(), comp_mean, total_mean, total_std, int(len(totals)))
-            )
+
+            n_runs = int(len(totals))
+            total_ci95 = 0.0
+            if n_runs > 0 and np.isfinite(total_std) and total_std >= 0.0:
+                total_ci95 = 1.96 * float(total_std) / math.sqrt(float(n_runs))
+            if not np.isfinite(total_ci95) or total_ci95 < 0.0:
+                total_ci95 = 0.0
+
+            method_rows.append((str(method).strip().lower(), comp_mean, total_mean, float(total_ci95), n_runs))
 
         if not method_rows:
             continue
@@ -221,7 +228,7 @@ def plot_timing_breakdown(
         methods_env = _legend_order([m for m, *_ in method_rows])
         max_methods = max(max_methods, int(len(methods_env)))
 
-        by_name = {m: (cm, tm, te, n) for m, cm, tm, te, n in method_rows}
+        by_name = {m: (cm, tm, ci, n) for m, cm, tm, ci, n in method_rows}
         per_env.append(
             {
                 "env_id": str(env_id),
@@ -284,15 +291,16 @@ def plot_timing_breakdown(
             [float(by_name.get(m, ({}, 0.0, 0.0, 0))[1]) for m in methods_env],
             dtype=np.float64,
         )
-        ses = np.asarray(
+        ci95 = np.asarray(
             [float(by_name.get(m, ({}, 0.0, 0.0, 0))[2]) for m in methods_env],
             dtype=np.float64,
         )
+        ci95 = np.where(np.isfinite(ci95) & (ci95 >= 0.0), ci95, 0.0)
 
         ax.errorbar(
             x,
             totals,
-            yerr=ses,
+            yerr=ci95,
             fmt="none",
             ecolor="black",
             elinewidth=0.9,
@@ -303,7 +311,7 @@ def plot_timing_breakdown(
         )
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
-        ax.set_ylabel("Seconds per update")
+        ax.set_ylabel("Seconds per update (95% CI)")
         ax.set_xticks(x)
         ax.set_xticklabels([method_label(m) for m in methods_env], rotation=25, ha="right")
         if i == len(per_env) - 1:
