@@ -311,7 +311,7 @@ def plot_timing_breakdown(
         )
 
         ax.set_xlim(-0.5, float(n_methods) - 0.5)
-        ax.set_ylabel("Seconds per update (95% CI)")
+        ax.set_ylabel("Seconds per update")
         ax.set_xticks(x)
         ax.set_xticklabels([method_label(m) for m in methods_env], rotation=25, ha="right")
         if i == len(per_env) - 1:
