@@ -13,7 +13,7 @@ where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$
 We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE (no gate)} and \textbf{GLPE}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience.
 
 \subsection{Latent dynamics model}
-Let $\phi_\omega$ be a learned encoder producing a $d$-dimensional feature vector $z_t = \phi_\omega(o_t)$. We train (i) a forward dynamics predictor $f_\psi$ that maps $(z_t,a_t)$ to a prediction of the next feature vector, and (ii) an inverse dynamics predictor $g_\psi$ that maps $(z_t,z_{t+1})$ to an action distribution. The inverse model is instantiated as a classifier for discrete actions and as a Gaussian likelihood model for continuous actions.
+Let $\phi_\omega$ be a learned encoder producing a $d$-dimensional feature vector $z_t = \phi_\omega(o_t)$. We train (i) a forward dynamics predictor $f_\psi$ that maps $(z_t,a_t)$ to a prediction of the next feature vector, and (ii) an inverse dynamics predictor $g_\xi$ that maps $(z_t,z_{t+1})$ to an action distribution. The inverse model is instantiated as a classifier for discrete actions and as a Gaussian likelihood model for continuous actions.
 
 Training uses the combined loss
 \begin{equation}
@@ -32,7 +32,7 @@ The intrinsic rewards below depend on $(z_t,z_{t+1})$ and $e_t$, but do not requ
 \subsection{Online region partitioning in latent space}
 To localize learning progress, we maintain an online partition of the latent space into regions. Each region corresponds to a leaf in a binary space-partitioning tree over the $d$-dimensional feature space.
 
-Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a small buffer of recently assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the split dimension as the coordinate with highest empirical variance among buffered points and split at the median value along that coordinate. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
+Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a small buffer of recently assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the split dimension as the coordinate with highest empirical variance among buffered points and split at the median value along that coordinate. When a leaf splits, one child inherits the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are initialized from its first assigned transition. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
 
 Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$.
 
@@ -42,7 +42,7 @@ For each region $r$ we maintain two exponential moving averages (EMAs) of the fo
     \mu^{\mathrm{long}}_r &\leftarrow \beta_{\mathrm{long}}\,\mu^{\mathrm{long}}_r + (1-\beta_{\mathrm{long}})\,e_t,\\
     \mu^{\mathrm{short}}_r &\leftarrow \beta_{\mathrm{short}}\,\mu^{\mathrm{short}}_r + (1-\beta_{\mathrm{short}})\,e_t,
 \end{align}
-with $0<\beta_{\mathrm{long}}<1$, $0<\beta_{\mathrm{short}}<1$, and typically $\beta_{\mathrm{long}}>\beta_{\mathrm{short}}$ so that $\mu^{\mathrm{long}}_r$ changes more slowly. On the first visit to a region, we initialize $\mu^{\mathrm{long}}_r=\mu^{\mathrm{short}}_r=e_t$.
+with $0<\beta_{\mathrm{long}}<1$, $0<\beta_{\mathrm{short}}<1$, and typically $\beta_{\mathrm{long}}>\beta_{\mathrm{short}}$ so that $\mu^{\mathrm{long}}_r$ changes more slowly. On the first visit to a newly created region identifier, we initialize $\mu^{\mathrm{long}}_r=\mu^{\mathrm{short}}_r=e_t$.
 
 We define region-wise learning progress as the positive part of the discrepancy between the long and short averages,
 \begin{equation}
@@ -94,6 +94,7 @@ We compute robust global reference values using medians across visited regions,
     \qquad
     e_{\mathrm{med}} = \mathrm{median}_{r\in\mathcal{R}}\,\mu^{\mathrm{short}}_r.
 \end{equation}
+For efficiency, these global medians may be cached and refreshed periodically rather than recomputed on every transition.
 We define a learning-progress threshold $\tau_{\mathrm{LP}} = \kappa\,\mathrm{LP}_{\mathrm{med}}$ with multiplier $\kappa>0$, and a scale-free normalized error score
 \begin{equation}
     s_r = \frac{\mu^{\mathrm{short}}_r}{e_{\mathrm{med}} + \varepsilon},
@@ -131,7 +132,7 @@ For GLPE-based methods, we optionally anneal the strength of intrinsic shaping o
 \end{equation}
 and set $\eta_t=\eta\,w(p_t)$ in the augmented reward.
 
-The latent dynamics model parameters $(\omega,\psi)$ are updated using the same on-policy transitions that generate intrinsic rewards, while the region statistics, gates, and RMS normalizers are updated online during intrinsic computation.
+The latent dynamics model parameters $(\omega,\psi,\xi)$ are updated using the same on-policy transitions that generate intrinsic rewards, while the region statistics, gates, and RMS normalizers are updated online during intrinsic computation.
 
 \begin{center}
 \begin{minipage}{0.97\linewidth}
