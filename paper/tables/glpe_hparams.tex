@@ -1,0 +1,25 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lrrrrrrrrrrrr}
+\hline
+Environment & $\eta$ & $r_{\max}$ & $\alpha_{\mathrm{LP}}$ & $p_{\mathrm{start}}$ & $p_{\mathrm{end}}$ & $C$ & $D_{\max}$ & $\beta_{\mathrm{long}}$ & $\beta_{\mathrm{short}}$ & $\kappa$ & $\tau_s$ & $K$ & $R_{\min}$ \\
+\hline
+\textsc{MountainCar-v0}   & 0.05 & 4.0 & 0.5 & 0.05 & 0.80 & 128 & 10 & 0.995 & 0.90 & 0.010 & 2.0 & 5 &  8 \\
+\textsc{BipedalWalker-v3} & 0.08 & 4.0 & 0.5 & 0.12 & 0.75 & 200 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 16 \\
+\textsc{Ant-v5}           & 0.06 & 4.0 & 0.6 & 0.10 & 0.70 & 256 & 12 & 0.997 & 0.92 & 0.012 & 2.5 & 8 & 64 \\
+\textsc{HalfCheetah-v5}   & 0.04 & 5.0 & 0.5 & 0.05 & 0.75 & 256 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 32 \\
+\textsc{Humanoid-v5}      & 0.06 & 5.0 & 0.5 & 0.05 & 0.80 & 256 & 12 & 0.998 & 0.92 & 0.010 & 2.0 & 5 & 32 \\
+\hline
+\end{tabular}
+\caption{
+GLPE hyperparameters by environment.
+We fix $\alpha_{\mathrm{impact}}=1.0$ for all tasks.
+$p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ define the cosine taper schedule for $\eta_t$ as a function of training progress $p$ (Section~\ref{sec:method}); this taper is used for GLPE and GLPE (no gate).
+$C$ and $D_{\max}$ are the region capacity and maximum depth for the online latent-space partition.
+$\kappa$ sets the learning-progress threshold via $\tau_{\mathrm{LP}}=\kappa\,\mathrm{LP}_{\mathrm{med}}$, $\tau_s$ is the normalized-error threshold, $K$ is the number of consecutive unproductive visits required to gate off a region, and $R_{\min}$ is the minimum number of visited regions required before gating is activated (Section~\ref{sec:method}).
+The hysteresis multiplier is fixed to $h=2.0$ for all tasks.
+GLPE (no gate) uses the same settings but does not apply gating.
+}
+\label{tab:glpe_hparams}
+\end{table*}
