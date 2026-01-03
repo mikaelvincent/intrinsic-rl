@@ -1,0 +1,20 @@
+\begin{center}
+\begin{minipage}{0.97\linewidth}
+\textbf{Algorithm 1: Intrinsic reward for GLPE variants}\\
+\begin{tabular}{l}
+\hline
+\textbf{Input:} transition $(o_t,a_t,o_{t+1})$; encoder $\phi_\omega$; forward model $f_\psi$; region map $\rho$; \\
+\quad region EMAs $\{\mu^{\mathrm{long}}_r,\mu^{\mathrm{short}}_r\}$; RMS accumulators for $I_t$ and $\mathrm{LP}_t$; gate states $\{g_r\}$ (GLPE only).\\
+\textbf{1.} Compute $z_t=\phi_\omega(o_t)$ and $z_{t+1}=\phi_\omega(o_{t+1})$.\\
+\textbf{2.} Compute forward error $e_t=\frac{1}{d}\|f_\psi(z_t,a_t)-z_{t+1}\|_2^2$.\\
+\textbf{3.} Assign region $\rho_t\leftarrow\rho(z_t)$ (inserting $z_t$ and splitting leaves when needed).\\
+\textbf{4.} Update $(\mu^{\mathrm{long}}_{\rho_t},\mu^{\mathrm{short}}_{\rho_t})$ using $e_t$ and compute $\mathrm{LP}_t=\max(0,\mu^{\mathrm{long}}_{\rho_t}-\mu^{\mathrm{short}}_{\rho_t})$.\\
+\textbf{5.} Compute impact $I_t=\|z_{t+1}-z_t\|_2$.\\
+\textbf{6.} Update RMS accumulators for $I_t$ and $\mathrm{LP}_t$ and compute $(\widetilde{I}_t,\widetilde{\mathrm{LP}}_t)$.\\
+\textbf{7.} Form $u_t=\alpha_{\mathrm{impact}}\widetilde{I}_t+\alpha_{\mathrm{LP}}\widetilde{\mathrm{LP}}_t$.\\
+\textbf{8.} \emph{GLPE:} update $g_{\rho_t}$ using median-based thresholds and hysteresis, return $r_t^{\mathrm{int}}=g_{\rho_t}u_t$.\\
+\textbf{9.} \emph{GLPE (no gate):} return $r_t^{\mathrm{int}}=u_t$.\\
+\hline
+\end{tabular}
+\end{minipage}
+\end{center}
