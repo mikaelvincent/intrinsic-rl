@@ -1,1 +1,141 @@
 \section{Experimental Setup}
+\label{sec:experimental_setup}
+
+\subsection{Benchmark environments}
+
+We evaluate intrinsic-motivation strategies on five standard control tasks from the Gymnasium
+benchmark suite, spanning sparse-reward classic control and increasingly high-dimensional
+continuous-control locomotion:
+\emph{MountainCar-v0}, \emph{BipedalWalker-v3}, \emph{HalfCheetah-v5}, \emph{Ant-v5}, and
+\emph{Humanoid-v5}. We use each environment's default observations, reward function, and termination
+conditions, and we do not apply domain randomization. All environments are stepped with frame-skip 1.
+For each task, we train for a fixed budget of environment steps and repeat training across multiple
+random seeds (Table~\ref{tab:setup_envs}). To increase data throughput, experience is collected with
+synchronous vectorized environments; each PPO update gathers $N_{\text{env}}\times T$ transitions,
+where $N_{\text{env}}$ is the number of parallel instances and $T$ is the rollout horizon.
+
+\begin{table}[t]
+\centering
+\caption{Training and checkpointing settings by environment. ``Total steps'' counts environment
+interactions aggregated across vectorized instances. Checkpoints are saved at step 0, periodically
+every ``Checkpoint interval,'' and at the end of training.}
+\label{tab:setup_envs}
+\begin{tabular}{lrrrrrr}
+\hline
+Environment & $N_{\text{env}}$ & $T$ & Total steps & Seeds & PPO epochs & Checkpoint interval \\
+\hline
+MountainCar-v0     & 16 & 1024 & 3{,}000{,}000  & 10 & 10 & 300{,}000 \\
+BipedalWalker-v3   &  8 & 2048 & 7{,}000{,}000  &  8 &  5 & 700{,}000 \\
+HalfCheetah-v5     &  8 & 2048 & 15{,}000{,}000 &  8 & 10 & 1{,}500{,}000 \\
+Ant-v5             &  8 & 2048 & 15{,}000{,}000 &  8 & 15 & 1{,}500{,}000 \\
+Humanoid-v5        &  4 & 4096 & 30{,}000{,}000 &  5 &  5 & 3{,}000{,}000 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Compared methods}
+
+We compare two \textbf{proposed} intrinsic-reward methods:
+\textbf{GLPE} and \textbf{GLPE (no gate)} (defined in Section~\ref{sec:glpe}).
+GLPE combines a novelty-like impact term with a region-wise learning-progress term and gates intrinsic
+rewards in regions deemed unproductive. GLPE (no gate) uses the same representation, region
+construction, learning-progress estimation, and component normalization, but assigns $g_i\equiv 1$
+for all regions (Eq.~\eqref{eq:glpe_nogate_reward}), making it a distinct proposed variant that
+removes the discrete gating mechanism while retaining the competence--novelty coupling.
+
+For context, we include the following baselines trained with the same PPO backbone and environment
+budgets:
+(i) \textbf{Vanilla} PPO (no intrinsic reward, $\eta=0$),
+(ii) \textbf{ICM} curiosity,
+(iii) \textbf{RND} novelty via random network distillation,
+(iv) \textbf{RIDE} impact-based intrinsic reward using learned representations, and
+(v) \textbf{RIAC} learning-progress exploration without gating.
+In addition, we include GLPE variants used for design-factor analyses (reported separately), namely
+impact-only, learning-progress-only, and a cached-median variant that updates global statistics less
+frequently.
+
+\subsection{Policy, value, and representation models}
+
+All methods share the same policy and value-function architectures within an environment.
+For vector-state tasks, the policy and value networks are multilayer perceptrons with two hidden
+layers (ReLU activations). For continuous-action tasks, the policy is a diagonal Gaussian with
+action-bounds handled via a squashing transform; for discrete-action tasks, the policy is categorical.
+For intrinsic methods that rely on a learned embedding $\phi(s)$ (Section~\ref{sec:method}), we use a
+shared ICM-style encoder and forward/inverse dynamics models to learn $\phi$ online, and intrinsic
+modules are updated alongside the policy.
+
+\subsection{Training protocol}
+
+\paragraph{Optimization.}
+All agents are trained with PPO as described in Section~\ref{sec:method}. We use generalized
+advantage estimation with time-limit bootstrapping: truncations (time limits) bootstrap from the
+value estimate at the final observation when available, while true terminals do not bootstrap across
+episode boundaries. Advantages are normalized within each PPO update. We apply gradient clipping to
+both policy and value updates and optionally stop PPO epochs early when an approximate KL divergence
+exceeds a configured threshold. PPO hyperparameters (learning rate, number of epochs, minibatches,
+clip ranges, and entropy/value coefficients) are held fixed per environment and shared across all
+methods on that environment; full hyperparameters are listed in Appendix~B.
+
+\paragraph{Intrinsic reward scaling and clipping.}
+For intrinsic methods, the learning signal is the combined reward
+$r_t = r^{\text{ext}}_t + \eta\, w_t\, \mathrm{clip}(r^{\text{int}}_t, -r_{\text{clip}}, r_{\text{clip}})$
+(Eq.~\eqref{eq:reward_total}). The intrinsic scale $\eta$ and clip value $r_{\text{clip}}$ are set
+per environment and kept identical across intrinsic methods to standardize the magnitude of intrinsic
+influence. Methods that output internally normalized intrinsic rewards (GLPE, GLPE (no gate), and
+RIAC) are clipped and scaled directly; methods whose raw intrinsic signals can drift in scale (e.g.,
+prediction-error-based curiosity or impact-only rewards) additionally use an online running RMS
+normalization before clipping to stabilize optimization.
+
+\paragraph{Intrinsic taper.}
+For GLPE and GLPE (no gate), we optionally anneal intrinsic influence using a cosine taper $w_t$ that
+decreases from 1 to 0 over a task-specific portion of training (Section~\ref{sec:method}).
+Other baselines use a constant intrinsic weight ($w_t\equiv 1$ when $\eta>0$). Table~\ref{tab:setup_intrinsic}
+summarizes the intrinsic scaling used across environments.
+
+\begin{table}[t]
+\centering
+\caption{Intrinsic-reward scaling used in our experiments. The taper schedule applies to GLPE and
+GLPE (no gate) (and GLPE-derived variants); other intrinsic baselines use $w_t \equiv 1$.}
+\label{tab:setup_intrinsic}
+\begin{tabular}{lrrrr}
+\hline
+Environment & $\eta$ & $r_{\text{clip}}$ & Taper start (frac.) & Taper end (frac.) \\
+\hline
+MountainCar-v0     & 0.05 & 4.0 & 0.05 & 0.80 \\
+BipedalWalker-v3   & 0.08 & 4.0 & 0.12 & 0.75 \\
+HalfCheetah-v5     & 0.04 & 5.0 & 0.05 & 0.75 \\
+Ant-v5             & 0.06 & 4.0 & 0.10 & 0.70 \\
+Humanoid-v5        & 0.06 & 5.0 & 0.05 & 0.80 \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Reproducibility.}
+Each run is initialized with a distinct random seed; we seed environment resets and all relevant
+random-number generators and enable deterministic execution settings where supported. Unless stated
+otherwise, experiments are run on CPU.
+
+\subsection{Evaluation methodology}
+
+\paragraph{Checkpoint-based evaluation.}
+Training produces checkpoints at step 0, periodically throughout training, and at the final step
+(Table~\ref{tab:setup_envs}). We evaluate each saved checkpoint offline using a fixed number of
+episodes (20 per checkpoint). Evaluation uses a deterministic policy by default (the mode of the
+action distribution), and episode seeds are deterministically derived from the run seed to make
+comparisons across methods consistent.
+
+\paragraph{Metrics.}
+For each evaluated checkpoint, we record the mean episode return and mean episode length across the
+evaluation episodes. For analyses that require trajectories (e.g., visualizations of gating behavior),
+we additionally save state trajectories and the corresponding intrinsic quantities produced by the
+method, without updating the intrinsic model during evaluation.
+
+\subsection{Reporting and aggregation}
+
+We report results as averages across independent training seeds. For single-number summaries (e.g.,
+final performance), each seed contributes its most recent evaluated checkpoint. We aggregate across
+seeds by reporting the mean and a nonparametric $95\%$ confidence interval estimated by bootstrap
+resampling over seeds. For learning-curve analyses, we aggregate checkpoint evaluations at matched
+training steps and apply the same aggregation procedure across seeds. This protocol yields
+method-by-environment comparisons under identical training budgets, evaluation episode counts, and
+random-seed coverage, avoiding confounds from unequal checkpoint availability or incomplete runs.
