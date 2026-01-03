@@ -2,45 +2,137 @@
 \label{sec:experimental_setup}
 
 \subsection{Tasks and environments}
-We evaluate exploration and sample efficiency on a suite of standard episodic control benchmarks spanning classic control and continuous locomotion. Specifically, we consider \emph{MountainCar}, \emph{BipedalWalker}, and the MuJoCo locomotion tasks \emph{Ant}, \emph{HalfCheetah}, and \emph{Humanoid}. All tasks use low-dimensional vector observations and the default reward functions and termination conditions provided by the benchmark implementations. \emph{MountainCar} uses a discrete action space, whereas the remaining tasks use bounded continuous controls.
+We evaluate exploration and control on five standard Gymnasium benchmarks spanning discrete and continuous control:
+\textsc{MountainCar-v0}, \textsc{BipedalWalker-v3}, and the MuJoCo locomotion tasks \textsc{Ant-v5}, \textsc{HalfCheetah-v5}, and \textsc{Humanoid-v5}.
+Across all experiments we use the default environment reward functions and termination conditions, with no domain randomization and no additional frame skipping.
+Training uses vectorized environments with $B$ parallel instances and rollouts of length $T$ per instance.
+We keep the on-policy batch size per PPO iteration fixed to
+\begin{equation}
+    N = B \times T = 16{,}384
+\end{equation}
+transitions for every task, varying $(B,T)$ only to accommodate environment throughput and episode structure.
+Table~\ref{tab:env_suite} summarizes the suite, interaction budgets, and parallelization settings.
+For each environment we evaluate every method using the same set of training seeds (Table~\ref{tab:env_suite}) and enable deterministic execution where supported.
 
-To ensure fair comparisons, we do not modify environment rewards beyond the intrinsic shaping term of Section~\ref{sec:method}, and we do not apply domain randomization. Episodes follow the standard truncation rules of each benchmark. When a time-limit truncation provides the final observation, value targets bootstrap from the value function at the truncation boundary; otherwise, we conservatively disable bootstrapping for that transition.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\hline
+Environment & $B$ & $T$ & $N$ & Total steps & Seeds \\
+\hline
+\textsc{MountainCar-v0}   & 16 & 1{,}024 & 16{,}384 & 3{,}000{,}000  & 10 \\
+\textsc{BipedalWalker-v3} &  8 & 2{,}048 & 16{,}384 & 7{,}000{,}000  &  8 \\
+\textsc{Ant-v5}           &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
+\textsc{HalfCheetah-v5}   &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
+\textsc{Humanoid-v5}      &  4 & 4{,}096 & 16{,}384 & 30{,}000{,}000 &  5 \\
+\hline
+\end{tabular}
+\caption{
+Benchmark suite and training budgets. $B$ is the number of parallel environment instances, $T$ is the rollout horizon per instance, and $N=B\times T$ is the number of transitions used in each PPO update.
+For every run we evaluate every $16{,}384$ environment steps using 20 episodes (Section~\ref{sec:experimental_setup:evaluation}).
+}
+\label{tab:env_suite}
+\end{table}
 
 \subsection{Methods compared}
-We compare intrinsic exploration methods that can be paired with a common on-policy actor--critic backbone:
-\begin{itemize}
-    \item \textbf{Vanilla}: PPO trained only on extrinsic reward.
-    \item \textbf{ICM}: curiosity based on forward prediction error in a learned feature space, with an inverse-model auxiliary loss.
-    \item \textbf{RND}: exploration bonus given by the prediction error of a learned predictor against a fixed randomly initialized target network.
-    \item \textbf{RIDE}: episodic novelty based on feature-space state change, down-weighted by an episodic visitation statistic.
-    \item \textbf{RIAC}: region-based intrinsic motivation driven by local learning progress of a forward dynamics model.
-    \item \textbf{GLPE (no gate)} and \textbf{GLPE}: the proposed methods from Section~\ref{sec:method}, combining feature-space impact with region-local learning progress; GLPE additionally applies a region-specific gate that suppresses unproductive exploration.
-\end{itemize}
+\label{sec:experimental_setup:methods}
+We compare two proposed intrinsic-reward methods, \textbf{GLPE} and \textbf{GLPE (no gate)} (Section~\ref{sec:method}), against a set of commonly used exploration baselines:
+\textbf{Vanilla (extrinsic-only PPO)}, \textbf{ICM}, \textbf{RND}, \textbf{RIDE}, and \textbf{RIAC}.
+Vanilla (extrinsic-only PPO) optimizes only the environment reward.
+ICM uses forward-model prediction error in a learned feature space as an intrinsic signal, while RND uses the prediction error of a trainable predictor against a fixed random target network.
+RIDE rewards feature-space impact, down-weighted by episodic visitation counts obtained by discretizing features, and RIAC uses region-local learning progress computed from changes in forward-model error within an adaptive partition of feature space.
+All methods use the same PPO backbone and network architectures; within each environment we keep PPO hyperparameters fixed across methods to isolate the effect of the intrinsic objective.
 
-For diagnostic analyses, we also consider component variants that isolate the learning-progress term or the impact term within the same region-partition framework. For GLPE, we additionally consider an efficiency-oriented variant that refreshes the global robust thresholds periodically rather than recomputing them at every intrinsic computation; this variant implements the same gating criterion but reduces overhead by trading exactness for controlled staleness.
+For intrinsic-reward methods, the policy is trained with the augmented reward defined in Section~\ref{sec:method}, combining the environment reward with a scaled and clipped intrinsic term.
+We use the same intrinsic scaling coefficient $\eta$ and clipping range $r_{\max}$ for all intrinsic baselines within a given environment (Table~\ref{tab:glpe_hparams}), so differences arise from the intrinsic signal itself rather than from reward-scale tuning.
+GLPE (no gate) is treated as a first-class proposed variant: it uses the same region partitioning, impact term, and regional learning-progress signal as GLPE, but applies no suppression mechanism (i.e., the gate is always active).
 
-\subsection{Reinforcement learning backbone}
-All methods use the same Proximal Policy Optimization (PPO) training procedure with generalized advantage estimation. Training alternates between collecting on-policy rollouts from a vectorized set of environment instances and optimizing the policy and value function on the resulting batch. Policy updates use the clipped surrogate objective, optional KL-based early stopping to prevent overly large updates, and value function clipping. Advantages are standardized within each update to improve optimization stability.
+\subsection{RL backbone and training protocol}
+\label{sec:experimental_setup:training}
+All agents are trained with Proximal Policy Optimization (PPO) with generalized advantage estimation (GAE).
+The policy and value function are parameterized by separate multilayer perceptrons with two hidden layers of width 256 and ReLU activations.
+For continuous-control tasks, the policy outputs a diagonal Gaussian distribution; actions are squashed to the environment bounds when those bounds are finite.
 
-The policy and value function are parameterized by separate feedforward networks operating on normalized observations. For discrete action spaces, the policy outputs a categorical distribution; for continuous action spaces, it outputs a diagonal Gaussian distribution that is squashed to respect action bounds when the benchmark provides finite limits. The value function outputs a scalar state-value estimate.
+Each training iteration proceeds as follows:
+(i) collect $N=16{,}384$ on-policy transitions by running the current policy in $B$ vectorized environments for $T$ steps;
+(ii) compute the intrinsic reward for each transition (when applicable), set intrinsic rewards to zero on terminal transitions, and form the total reward used for advantage estimation;
+(iii) compute advantages and value targets with GAE, bootstrapping across time-limit truncations when a valid final observation is available and treating truncations without a final observation as terminal for bootstrapping purposes; and
+(iv) perform multiple epochs of PPO updates over shuffled minibatches of the collected batch.
+We use Adam optimizers for both the policy and value networks, normalize advantages within each update batch, and clip gradient norms to 1.0.
 
-\subsection{Joint training of intrinsic modules}
-Intrinsic modules are trained online using the same transitions collected for PPO. Methods based on learned feature representations and dynamics models (ICM, RIDE, RIAC, GLPE (no gate), and GLPE) update their encoder and auxiliary predictors once per PPO update using the transitions from the current rollout. RND updates only its predictor network while keeping the target network fixed. All intrinsic-module optimization is performed on the same device as the PPO update, and intrinsic parameters are checkpointed alongside the policy and value networks to enable consistent evaluation at intermediate training snapshots.
+We normalize vector observations using a running mean and variance estimated online from collected rollouts, and apply the same normalization to the inputs of the policy, value, and intrinsic modules.
 
-\subsection{Reward construction and intrinsic scaling}
-Following Section~\ref{sec:method}, we train on the sum of extrinsic reward and a clipped intrinsic term weighted by a coefficient $\eta_t$. Intrinsic rewards are set to zero on terminal transitions so that shaping does not depend on episode termination.
+\paragraph{Intrinsic reward computation and updates.}
+Intrinsic modules are updated online using the same transitions used for PPO.
+For methods whose intrinsic output is not internally normalized (e.g., ICM, RND, and RIDE), we apply a running RMS normalization to the raw intrinsic signal before scaling and clipping.
+For methods that produce a normalized intrinsic output by construction (RIAC and the GLPE family), we directly apply scaling and clipping.
+For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\eta_t$ using the cosine taper described in Section~\ref{sec:method}, with task-specific start and end fractions listed in Table~\ref{tab:glpe_hparams}.
 
-To stabilize intrinsic magnitudes across tasks and throughout training, we apply running root-mean-square (RMS) normalization to intrinsic rewards when the method does not already output a normalized signal. GLPE and RIAC normalize their internal components by design, whereas ICM, RND, and RIDE use an external normalizer before weighting and clipping. For GLPE methods, we additionally apply a late-training taper of $\eta_t$, implemented as a smooth cosine schedule over a task-dependent portion of training, to transition from exploration to exploitation while retaining the early-training benefits of intrinsic motivation.
+\subsection{Evaluation protocol}
+\label{sec:experimental_setup:evaluation}
+We evaluate performance using undiscounted episodic return from the environment (extrinsic reward only).
+Evaluation is performed periodically every $16{,}384$ environment steps, aligning evaluation checkpoints with PPO update boundaries.
+Each evaluation consists of 20 episodes executed in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
+For each environment and method, we run multiple independent training seeds (Table~\ref{tab:env_suite}) and aggregate results across seeds.
 
-\subsection{Evaluation protocol and metrics}
-We evaluate policies at regular training checkpoints defined in terms of environment interaction steps. Evaluation is performed in the same environment as training but with learning disabled: the policy and observation normalizer are loaded from the checkpoint and held fixed, and intrinsic modules are not updated. Unless stated otherwise, we use deterministic action selection by taking the mode of the policy distribution.
+\subsection{Efficiency measurements}
+\label{sec:experimental_setup:efficiency}
+In addition to sample efficiency (learning as a function of environment interaction), we track computational efficiency using wall-clock time.
+All timings are measured in the same execution setting used for training (CPU in our experiments) and therefore reflect end-to-end optimization overhead.
+For each PPO iteration we log per-component wall-clock time spent in environment interaction, policy inference, intrinsic computation, intrinsic-module updates, advantage computation, and PPO optimization, and we use these logs to form cumulative training time.
 
-The primary performance metric is mean episodic return computed from extrinsic rewards. We also record episode lengths and, when available from the environment, success indicators. Each reported curve point averages over multiple evaluation episodes generated from fixed episode seeds derived from the training seed, ensuring that comparisons across methods and checkpoints are not confounded by evaluation stochasticity. We aggregate across independent training seeds by reporting means and uncertainty estimates obtained via bootstrap resampling over seeds.
+When reporting scalar summaries of learning curves, we compute area-under-the-curve (AUC) metrics via trapezoidal integration of mean return as a function of either environment steps or wall-clock time.
+For time-based summaries, we use a \emph{common time budget} per environment defined as the minimum final wall-clock time attained among the compared methods, ensuring that summaries do not rely on extrapolation beyond the measured runtime of any method.
 
-\subsection{Sample-efficiency and compute-efficiency summaries}
-Beyond reporting full learning curves, we compute scalar summaries that capture learning dynamics over the course of training. For sample efficiency, we report area-under-the-curve measures computed over mean return as a function of environment interaction steps. For compute efficiency, we compute analogous areas under mean return as a function of wall-clock time. When a benchmark specifies a reward threshold for solving the task, we additionally report the training progress required to first reach that threshold under deterministic evaluation.
+\subsection{Implementation details and hyperparameters}
+\label{sec:experimental_setup:impl_details}
+Tables~\ref{tab:ppo_hparams} and~\ref{tab:glpe_hparams} list the PPO and GLPE hyperparameters used in all experiments.
+Unless specified in the tables, we use $\gamma=0.99$ and value-loss coefficient 0.5 for PPO.
 
-\subsection{Runtime profiling and microbenchmarks}
-To quantify the computational overhead introduced by intrinsic motivation, we record a breakdown of wall-clock time per PPO update, including environment stepping, policy inference during data collection, intrinsic reward computation, intrinsic module updates, advantage computation, and PPO optimization. From these logs we derive end-to-end throughput measures such as environment transitions per second, and we construct time-normalized learning curves used for compute-efficiency analysis.
+For methods that learn a latent dynamics model (ICM, RIDE, RIAC, and the GLPE family), the shared encoder produces 128-dimensional features and is implemented as a two-layer MLP (256 units per layer, ReLU) for these vector-observation tasks.
+Forward and inverse model losses are weighted equally, the model is trained with Adam at learning rate $3\times 10^{-4}$, and intrinsic-model gradient norms are clipped to 5.0.
 
-To isolate algorithmic costs from environment dynamics, we also run targeted microbenchmarks of key computational kernels, including region-partition maintenance operations and intrinsic compute and update passes for RIAC and GLPE, alongside reference measurements for advantage computation and PPO optimization. These benchmarks use controlled synthetic inputs consistent with the network input dimensionalities, enabling reproducible comparisons of computational scaling and the impact of periodic threshold refresh in GLPE.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrrrrr}
+\hline
+Environment & LR & Epochs & Minib. & Clip & $\lambda$ & Ent. & $v$-clip & KL stop \\
+\hline
+\textsc{MountainCar-v0}   & $3.0{\times}10^{-4}$ & 10 & 16 & 0.20 & 0.95 & 0.00 & 0.00 & 0.06 \\
+\textsc{BipedalWalker-v3} & $5.0{\times}10^{-4}$ &  5 & 16 & 0.25 & 0.95 & 0.00 & 0.00 & 0.06 \\
+\textsc{Ant-v5}           & $1.5{\times}10^{-4}$ & 15 & 64 & 0.20 & 0.95 & 0.00 & 0.20 & 0.04 \\
+\textsc{HalfCheetah-v5}   & $3.0{\times}10^{-4}$ & 10 & 32 & 0.20 & 0.95 & 0.01 & 0.20 & 0.03 \\
+\textsc{Humanoid-v5}      & $2.0{\times}10^{-4}$ &  5 & 32 & 0.20 & 0.97 & 0.01 & 0.20 & 0.03 \\
+\hline
+\end{tabular}
+\caption{PPO hyperparameters by environment. ``Minib.'' is the number of minibatches per update (each epoch iterates once over all $N$ samples). ``Ent.'' is the entropy regularization coefficient. ``$v$-clip'' is the value-function clipping range (0 disables value clipping). ``KL stop'' is the approximate KL threshold for early stopping within an update.}
+\label{tab:ppo_hparams}
+\end{table}
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lrrrrrrrrrrrr}
+\hline
+Environment & $\eta$ & $r_{\max}$ & $\alpha_{\mathrm{LP}}$ & $p_{\mathrm{start}}$ & $p_{\mathrm{end}}$ & $C$ & $D_{\max}$ & $\beta_{\mathrm{long}}$ & $\beta_{\mathrm{short}}$ & $\kappa$ & $\tau_s$ & $K$ & $R_{\min}$ \\
+\hline
+\textsc{MountainCar-v0}   & 0.05 & 4.0 & 0.5 & 0.05 & 0.80 & 128 & 10 & 0.995 & 0.90 & 0.010 & 2.0 & 5 &  8 \\
+\textsc{BipedalWalker-v3} & 0.08 & 4.0 & 0.5 & 0.12 & 0.75 & 200 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 16 \\
+\textsc{Ant-v5}           & 0.06 & 4.0 & 0.6 & 0.10 & 0.70 & 256 & 12 & 0.997 & 0.92 & 0.012 & 2.5 & 8 & 64 \\
+\textsc{HalfCheetah-v5}   & 0.04 & 5.0 & 0.5 & 0.05 & 0.75 & 256 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 32 \\
+\textsc{Humanoid-v5}      & 0.06 & 5.0 & 0.5 & 0.05 & 0.80 & 256 & 12 & 0.998 & 0.92 & 0.010 & 2.0 & 5 & 32 \\
+\hline
+\end{tabular}
+\caption{
+GLPE hyperparameters by environment.
+We fix $\alpha_{\mathrm{impact}}=1.0$ for all tasks.
+$p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ define the cosine taper schedule for $\eta_t$ as a function of training progress $p$ (Section~\ref{sec:method}); this taper is used for GLPE and GLPE (no gate).
+$C$ and $D_{\max}$ are the region capacity and maximum depth for the online latent-space partition.
+$\kappa$ sets the learning-progress threshold via $\tau_{\mathrm{LP}}=\kappa\,\mathrm{LP}_{\mathrm{med}}$, $\tau_s$ is the normalized-error threshold, $K$ is the number of consecutive unproductive visits required to gate off a region, and $R_{\min}$ is the minimum number of visited regions required before gating is activated (Section~\ref{sec:method}).
+The hysteresis multiplier is fixed to $h=2.0$ for all tasks.
+GLPE (no gate) uses the same settings but does not apply gating.
+}
+\label{tab:glpe_hparams}
+\end{table*}
