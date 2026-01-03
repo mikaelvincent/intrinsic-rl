@@ -1,1 +1,46 @@
 \section{Experimental Setup}
+\label{sec:experimental_setup}
+
+\subsection{Tasks and environments}
+We evaluate exploration and sample efficiency on a suite of standard episodic control benchmarks spanning classic control and continuous locomotion. Specifically, we consider \emph{MountainCar}, \emph{BipedalWalker}, and the MuJoCo locomotion tasks \emph{Ant}, \emph{HalfCheetah}, and \emph{Humanoid}. All tasks use low-dimensional vector observations and the default reward functions and termination conditions provided by the benchmark implementations. \emph{MountainCar} uses a discrete action space, whereas the remaining tasks use bounded continuous controls.
+
+To ensure fair comparisons, we do not modify environment rewards beyond the intrinsic shaping term of Section~\ref{sec:method}, and we do not apply domain randomization. Episodes follow the standard truncation rules of each benchmark. When a time-limit truncation provides the final observation, value targets bootstrap from the value function at the truncation boundary; otherwise, we conservatively disable bootstrapping for that transition.
+
+\subsection{Methods compared}
+We compare intrinsic exploration methods that can be paired with a common on-policy actor--critic backbone:
+\begin{itemize}
+    \item \textbf{Vanilla}: PPO trained only on extrinsic reward.
+    \item \textbf{ICM}: curiosity based on forward prediction error in a learned feature space, with an inverse-model auxiliary loss.
+    \item \textbf{RND}: exploration bonus given by the prediction error of a learned predictor against a fixed randomly initialized target network.
+    \item \textbf{RIDE}: episodic novelty based on feature-space state change, down-weighted by an episodic visitation statistic.
+    \item \textbf{RIAC}: region-based intrinsic motivation driven by local learning progress of a forward dynamics model.
+    \item \textbf{GLPE (no gate)} and \textbf{GLPE}: the proposed methods from Section~\ref{sec:method}, combining feature-space impact with region-local learning progress; GLPE additionally applies a region-specific gate that suppresses unproductive exploration.
+\end{itemize}
+
+For diagnostic analyses, we also consider component variants that isolate the learning-progress term or the impact term within the same region-partition framework. For GLPE, we additionally consider an efficiency-oriented variant that refreshes the global robust thresholds periodically rather than recomputing them at every intrinsic computation; this variant implements the same gating criterion but reduces overhead by trading exactness for controlled staleness.
+
+\subsection{Reinforcement learning backbone}
+All methods use the same Proximal Policy Optimization (PPO) training procedure with generalized advantage estimation. Training alternates between collecting on-policy rollouts from a vectorized set of environment instances and optimizing the policy and value function on the resulting batch. Policy updates use the clipped surrogate objective, optional KL-based early stopping to prevent overly large updates, and value function clipping. Advantages are standardized within each update to improve optimization stability.
+
+The policy and value function are parameterized by separate feedforward networks operating on normalized observations. For discrete action spaces, the policy outputs a categorical distribution; for continuous action spaces, it outputs a diagonal Gaussian distribution that is squashed to respect action bounds when the benchmark provides finite limits. The value function outputs a scalar state-value estimate.
+
+\subsection{Joint training of intrinsic modules}
+Intrinsic modules are trained online using the same transitions collected for PPO. Methods based on learned feature representations and dynamics models (ICM, RIDE, RIAC, GLPE (no gate), and GLPE) update their encoder and auxiliary predictors once per PPO update using the transitions from the current rollout. RND updates only its predictor network while keeping the target network fixed. All intrinsic-module optimization is performed on the same device as the PPO update, and intrinsic parameters are checkpointed alongside the policy and value networks to enable consistent evaluation at intermediate training snapshots.
+
+\subsection{Reward construction and intrinsic scaling}
+Following Section~\ref{sec:method}, we train on the sum of extrinsic reward and a clipped intrinsic term weighted by a coefficient $\eta_t$. Intrinsic rewards are set to zero on terminal transitions so that shaping does not depend on episode termination.
+
+To stabilize intrinsic magnitudes across tasks and throughout training, we apply running root-mean-square (RMS) normalization to intrinsic rewards when the method does not already output a normalized signal. GLPE and RIAC normalize their internal components by design, whereas ICM, RND, and RIDE use an external normalizer before weighting and clipping. For GLPE methods, we additionally apply a late-training taper of $\eta_t$, implemented as a smooth cosine schedule over a task-dependent portion of training, to transition from exploration to exploitation while retaining the early-training benefits of intrinsic motivation.
+
+\subsection{Evaluation protocol and metrics}
+We evaluate policies at regular training checkpoints defined in terms of environment interaction steps. Evaluation is performed in the same environment as training but with learning disabled: the policy and observation normalizer are loaded from the checkpoint and held fixed, and intrinsic modules are not updated. Unless stated otherwise, we use deterministic action selection by taking the mode of the policy distribution.
+
+The primary performance metric is mean episodic return computed from extrinsic rewards. We also record episode lengths and, when available from the environment, success indicators. Each reported curve point averages over multiple evaluation episodes generated from fixed episode seeds derived from the training seed, ensuring that comparisons across methods and checkpoints are not confounded by evaluation stochasticity. We aggregate across independent training seeds by reporting means and uncertainty estimates obtained via bootstrap resampling over seeds.
+
+\subsection{Sample-efficiency and compute-efficiency summaries}
+Beyond reporting full learning curves, we compute scalar summaries that capture learning dynamics over the course of training. For sample efficiency, we report area-under-the-curve measures computed over mean return as a function of environment interaction steps. For compute efficiency, we compute analogous areas under mean return as a function of wall-clock time. When a benchmark specifies a reward threshold for solving the task, we additionally report the training progress required to first reach that threshold under deterministic evaluation.
+
+\subsection{Runtime profiling and microbenchmarks}
+To quantify the computational overhead introduced by intrinsic motivation, we record a breakdown of wall-clock time per PPO update, including environment stepping, policy inference during data collection, intrinsic reward computation, intrinsic module updates, advantage computation, and PPO optimization. From these logs we derive end-to-end throughput measures such as environment transitions per second, and we construct time-normalized learning curves used for compute-efficiency analysis.
+
+To isolate algorithmic costs from environment dynamics, we also run targeted microbenchmarks of key computational kernels, including region-partition maintenance operations and intrinsic compute and update passes for RIAC and GLPE, alongside reference measurements for advantage computation and PPO optimization. These benchmarks use controlled synthetic inputs consistent with the network input dimensionalities, enabling reproducible comparisons of computational scaling and the impact of periodic threshold refresh in GLPE.
