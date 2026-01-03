@@ -14,26 +14,11 @@ transitions for every task, varying $(B,T)$ only to accommodate environment thro
 Table~\ref{tab:env_suite} summarizes the suite, interaction budgets, and parallelization settings.
 For each environment we evaluate every method using the same set of training seeds (Table~\ref{tab:env_suite}) and enable deterministic execution where supported.
 
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{lrrrrr}
-\hline
-Environment & $B$ & $T$ & $N$ & Total steps & Seeds \\
-\hline
-\textsc{MountainCar-v0}   & 16 & 1{,}024 & 16{,}384 & 3{,}000{,}000  & 10 \\
-\textsc{BipedalWalker-v3} &  8 & 2{,}048 & 16{,}384 & 7{,}000{,}000  &  8 \\
-\textsc{Ant-v5}           &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
-\textsc{HalfCheetah-v5}   &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
-\textsc{Humanoid-v5}      &  4 & 4{,}096 & 16{,}384 & 30{,}000{,}000 &  5 \\
-\hline
-\end{tabular}
-\caption{
-Benchmark suite and training budgets. $B$ is the number of parallel environment instances, $T$ is the rollout horizon per instance, and $N=B\times T$ is the number of transitions used in each PPO update.
-For every run we evaluate every $16{,}384$ environment steps using 20 episodes (Section~\ref{sec:experimental_setup:evaluation}).
-}
-\label{tab:env_suite}
-\end{table}
+\input{tables/env_suite}
+
+\paragraph{Training budgets beyond nominal convergence.}
+The total environment-step budgets in Table~\ref{tab:env_suite} are intentionally over-allocated relative to the point of nominal convergence (i.e., when learning curves first plateau).
+This deliberate slack allows us to analyze long-term stability of exploration behavior and intrinsic shaping---including late-training drift, regressions, or oscillations that may only emerge well after initial convergence.
 
 \subsection{Methods compared}
 \label{sec:experimental_setup:methods}
@@ -76,6 +61,12 @@ Evaluation is performed periodically every $16{,}384$ environment steps, alignin
 Each evaluation consists of 20 episodes executed in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
 For each environment and method, we run multiple independent training seeds (Table~\ref{tab:env_suite}) and aggregate results across seeds.
 
+\paragraph{Checkpointing for early-learning analysis.}
+In addition to periodic online evaluation, we persist model checkpoints to disk for offline analysis and reproducibility.
+Each run saves a baseline checkpoint at step 0 and then saves nine additional warmup checkpoints before the first regular checkpoint (ten checkpoints total before the regular cadence begins).
+These warmup checkpoints are spaced approximately evenly within the first checkpoint interval and provide fine temporal resolution for evaluating early learning dynamics and performance.
+After warmup, checkpoints are saved at a fixed environment-step interval throughout training.
+
 \subsection{Efficiency measurements}
 \label{sec:experimental_setup:efficiency}
 In addition to sample efficiency (learning as a function of environment interaction), we track computational efficiency using wall-clock time.
@@ -93,46 +84,6 @@ Unless specified in the tables, we use $\gamma=0.99$ and value-loss coefficient 
 For methods that learn a latent dynamics model (ICM, RIDE, RIAC, and the GLPE family), the shared encoder produces 128-dimensional features and is implemented as a two-layer MLP (256 units per layer, ReLU) for these vector-observation tasks.
 Forward and inverse model losses are weighted equally, the model is trained with Adam at learning rate $3\times 10^{-4}$, and intrinsic-model gradient norms are clipped to 5.0.
 
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{lrrrrrrrr}
-\hline
-Environment & LR & Epochs & Minib. & Clip & $\lambda$ & Ent. & $v$-clip & KL stop \\
-\hline
-\textsc{MountainCar-v0}   & $3.0{\times}10^{-4}$ & 10 & 16 & 0.20 & 0.95 & 0.00 & 0.00 & 0.06 \\
-\textsc{BipedalWalker-v3} & $5.0{\times}10^{-4}$ &  5 & 16 & 0.25 & 0.95 & 0.00 & 0.00 & 0.06 \\
-\textsc{Ant-v5}           & $1.5{\times}10^{-4}$ & 15 & 64 & 0.20 & 0.95 & 0.00 & 0.20 & 0.04 \\
-\textsc{HalfCheetah-v5}   & $3.0{\times}10^{-4}$ & 10 & 32 & 0.20 & 0.95 & 0.01 & 0.20 & 0.03 \\
-\textsc{Humanoid-v5}      & $2.0{\times}10^{-4}$ &  5 & 32 & 0.20 & 0.97 & 0.01 & 0.20 & 0.03 \\
-\hline
-\end{tabular}
-\caption{PPO hyperparameters by environment. ``Minib.'' is the number of minibatches per update (each epoch iterates once over all $N$ samples). ``Ent.'' is the entropy regularization coefficient. ``$v$-clip'' is the value-function clipping range (0 disables value clipping). ``KL stop'' is the approximate KL threshold for early stopping within an update.}
-\label{tab:ppo_hparams}
-\end{table}
+\input{tables/ppo_hparams}
 
-\begin{table*}[t]
-\centering
-\small
-\begin{tabular}{lrrrrrrrrrrrr}
-\hline
-Environment & $\eta$ & $r_{\max}$ & $\alpha_{\mathrm{LP}}$ & $p_{\mathrm{start}}$ & $p_{\mathrm{end}}$ & $C$ & $D_{\max}$ & $\beta_{\mathrm{long}}$ & $\beta_{\mathrm{short}}$ & $\kappa$ & $\tau_s$ & $K$ & $R_{\min}$ \\
-\hline
-\textsc{MountainCar-v0}   & 0.05 & 4.0 & 0.5 & 0.05 & 0.80 & 128 & 10 & 0.995 & 0.90 & 0.010 & 2.0 & 5 &  8 \\
-\textsc{BipedalWalker-v3} & 0.08 & 4.0 & 0.5 & 0.12 & 0.75 & 200 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 16 \\
-\textsc{Ant-v5}           & 0.06 & 4.0 & 0.6 & 0.10 & 0.70 & 256 & 12 & 0.997 & 0.92 & 0.012 & 2.5 & 8 & 64 \\
-\textsc{HalfCheetah-v5}   & 0.04 & 5.0 & 0.5 & 0.05 & 0.75 & 256 & 12 & 0.995 & 0.90 & 0.010 & 2.0 & 5 & 32 \\
-\textsc{Humanoid-v5}      & 0.06 & 5.0 & 0.5 & 0.05 & 0.80 & 256 & 12 & 0.998 & 0.92 & 0.010 & 2.0 & 5 & 32 \\
-\hline
-\end{tabular}
-\caption{
-GLPE hyperparameters by environment.
-We fix $\alpha_{\mathrm{impact}}=1.0$ for all tasks.
-$p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ define the cosine taper schedule for $\eta_t$ as a function of training progress $p$ (Section~\ref{sec:method}); this taper is used for GLPE and GLPE (no gate).
-$C$ and $D_{\max}$ are the region capacity and maximum depth for the online latent-space partition.
-$\kappa$ sets the learning-progress threshold via $\tau_{\mathrm{LP}}=\kappa\,\mathrm{LP}_{\mathrm{med}}$, $\tau_s$ is the normalized-error threshold, $K$ is the number of consecutive unproductive visits required to gate off a region, and $R_{\min}$ is the minimum number of visited regions required before gating is activated (Section~\ref{sec:method}).
-The hysteresis multiplier is fixed to $h=2.0$ for all tasks.
-GLPE (no gate) uses the same settings but does not apply gating.
-}
-\label{tab:glpe_hparams}
-\end{table*}
+\input{tables/glpe_hparams}
