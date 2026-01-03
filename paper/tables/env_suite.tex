@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\hline
+Environment & $B$ & $T$ & $N$ & Total steps & Seeds \\
+\hline
+\textsc{MountainCar-v0}   & 16 & 1{,}024 & 16{,}384 & 3{,}000{,}000  & 10 \\
+\textsc{BipedalWalker-v3} &  8 & 2{,}048 & 16{,}384 & 7{,}000{,}000  &  8 \\
+\textsc{Ant-v5}           &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
+\textsc{HalfCheetah-v5}   &  8 & 2{,}048 & 16{,}384 & 15{,}000{,}000 &  8 \\
+\textsc{Humanoid-v5}      &  4 & 4{,}096 & 16{,}384 & 30{,}000{,}000 &  5 \\
+\hline
+\end{tabular}
+\caption{
+Benchmark suite and training budgets. $B$ is the number of parallel environment instances, $T$ is the rollout horizon per instance, and $N=B\times T$ is the number of transitions used in each PPO update.
+For every run we evaluate every $16{,}384$ environment steps using 20 episodes (Section~\ref{sec:experimental_setup:evaluation}).
+}
+\label{tab:env_suite}
+\end{table}
