@@ -10,7 +10,7 @@ We augment the extrinsic reward with an intrinsic term computed from single-step
 \end{equation}
 where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$ bounds the magnitude of intrinsic shaping. For terminal transitions we set $r_t^{\mathrm{int}}=0$ so that intrinsic shaping does not depend on episode termination.
 
-We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE (no gate)} and \textbf{GLPE}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience.
+We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE (no gate)} and \textbf{GLPE}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience. We refer to these two variants collectively as the \emph{GLPE family}.
 
 \subsection{Latent dynamics model}
 Let $\phi_\omega$ be a learned encoder producing a $d$-dimensional feature vector $z_t = \phi_\omega(o_t)$. We train (i) a forward dynamics predictor $f_\psi$ that maps $(z_t,a_t)$ to a prediction of the next feature vector, and (ii) an inverse dynamics predictor $g_\xi$ that maps $(z_t,z_{t+1})$ to an action distribution. The inverse model is instantiated as a classifier for discrete actions and as a Gaussian likelihood model for continuous actions.
@@ -34,7 +34,7 @@ To localize learning progress, we maintain an online partition of the latent spa
 
 Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a small buffer of recently assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the split dimension as the coordinate with highest empirical variance among buffered points and split at the median value along that coordinate. When a leaf splits, one child inherits the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are initialized from its first assigned transition. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
 
-Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$.
+Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$. In experiments, $C$ and $D_{\max}$ are set per environment (Table~\ref{tab:glpe_hparams}).
 
 \subsection{Regional learning progress}
 For each region $r$ we maintain two exponential moving averages (EMAs) of the forward prediction error: a long-horizon average $\mu^{\mathrm{long}}_r$ and a short-horizon average $\mu^{\mathrm{short}}_r$. When a transition at time $t$ is assigned to region $\rho_t=r$, we update
@@ -112,6 +112,7 @@ When gating is active, the update uses persistence and hysteresis:
 (i) if $g_r=1$ and the region is unproductive for $K$ consecutive visits, set $g_r\leftarrow 0$;
 (ii) if $g_r=0$, re-enable the region when $\mathrm{LP}(r) > h\,\tau_{\mathrm{LP}}$ for two consecutive visits, where $h>1$ is a hysteresis multiplier.
 If gating is inactive (fewer than $R_{\min}$ visited regions), we set $g_r\leftarrow 1$ and reset the counters.
+In experiments we fix $h=2.0$ (Table~\ref{tab:glpe_hparams}).
 
 The intrinsic reward for GLPE is then
 \begin{equation}
@@ -119,7 +120,7 @@ The intrinsic reward for GLPE is then
 \end{equation}
 
 \subsection{On-policy optimization and intrinsic scheduling}
-We optimize the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation. At each iteration we collect rollouts under the current policy, compute intrinsic rewards for each transition, and form the total rewards $r_t$ used for advantage estimation and policy/value updates.
+We optimize the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation (PPO with GAE; details in Section~\ref{sec:experimental_setup}). At each iteration we collect rollouts under the current policy, compute intrinsic rewards for each transition, and form the total rewards $r_t$ used for advantage estimation and policy/value updates.
 
 For GLPE-based methods, we optionally anneal the strength of intrinsic shaping over the course of training using a cosine taper. Let $p\in[0,1]$ denote training progress as a fraction of total environment steps. Given a start fraction $p_{\mathrm{start}}$ and end fraction $p_{\mathrm{end}}$ with $p_{\mathrm{start}}<p_{\mathrm{end}}$, we define
 \begin{equation}
@@ -133,24 +134,6 @@ For GLPE-based methods, we optionally anneal the strength of intrinsic shaping o
 and set $\eta_t=\eta\,w(p_t)$ in the augmented reward.
 
 The latent dynamics model parameters $(\omega,\psi,\xi)$ are updated using the same on-policy transitions that generate intrinsic rewards, while the region statistics, gates, and RMS normalizers are updated online during intrinsic computation.
+Algorithm~1 summarizes the intrinsic computation and online updates for the GLPE family.
 
-\begin{center}
-\begin{minipage}{0.97\linewidth}
-\textbf{Algorithm 1: Intrinsic reward for GLPE variants}\\
-\begin{tabular}{l}
-\hline
-\textbf{Input:} transition $(o_t,a_t,o_{t+1})$; encoder $\phi_\omega$; forward model $f_\psi$; region map $\rho$; \\
-\quad region EMAs $\{\mu^{\mathrm{long}}_r,\mu^{\mathrm{short}}_r\}$; RMS accumulators for $I_t$ and $\mathrm{LP}_t$; gate states $\{g_r\}$ (GLPE only).\\
-\textbf{1.} Compute $z_t=\phi_\omega(o_t)$ and $z_{t+1}=\phi_\omega(o_{t+1})$.\\
-\textbf{2.} Compute forward error $e_t=\frac{1}{d}\|f_\psi(z_t,a_t)-z_{t+1}\|_2^2$.\\
-\textbf{3.} Assign region $\rho_t\leftarrow\rho(z_t)$ (inserting $z_t$ and splitting leaves when needed).\\
-\textbf{4.} Update $(\mu^{\mathrm{long}}_{\rho_t},\mu^{\mathrm{short}}_{\rho_t})$ using $e_t$ and compute $\mathrm{LP}_t=\max(0,\mu^{\mathrm{long}}_{\rho_t}-\mu^{\mathrm{short}}_{\rho_t})$.\\
-\textbf{5.} Compute impact $I_t=\|z_{t+1}-z_t\|_2$.\\
-\textbf{6.} Update RMS accumulators for $I_t$ and $\mathrm{LP}_t$ and compute $(\widetilde{I}_t,\widetilde{\mathrm{LP}}_t)$.\\
-\textbf{7.} Form $u_t=\alpha_{\mathrm{impact}}\widetilde{I}_t+\alpha_{\mathrm{LP}}\widetilde{\mathrm{LP}}_t$.\\
-\textbf{8.} \emph{GLPE:} update $g_{\rho_t}$ using median-based thresholds and hysteresis, return $r_t^{\mathrm{int}}=g_{\rho_t}u_t$.\\
-\textbf{9.} \emph{GLPE (no gate):} return $r_t^{\mathrm{int}}=u_t$.\\
-\hline
-\end{tabular}
-\end{minipage}
-\end{center}
+\input{figures/algorithm_glpe}
