@@ -50,7 +50,7 @@ We use Adam optimizers for both the policy and value networks, normalize advanta
 We normalize vector observations using a running mean and variance estimated online from collected rollouts, and apply the same normalization to the inputs of the policy, value, and intrinsic modules.
 
 \paragraph{Intrinsic reward computation and updates.}
-Intrinsic modules are updated online using the same transitions used for PPO.
+Intrinsic modules are updated once per PPO iteration using the same on-policy batch used for PPO.
 For methods whose intrinsic output is not internally normalized (e.g., ICM, RND, and RIDE), we apply a running RMS normalization to the raw intrinsic signal before scaling and clipping.
 For methods that produce a normalized intrinsic output by construction (RIAC and the GLPE family), we directly apply scaling and clipping.
 For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\eta_t$ using the cosine taper described in Section~\ref{sec:method}, with task-specific start and end fractions listed in Table~\ref{tab:glpe_hparams}.
