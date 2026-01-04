@@ -10,7 +10,7 @@ We augment the extrinsic reward with an intrinsic term computed from single-step
 \end{equation}
 where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$ bounds the magnitude of intrinsic shaping. For environment-terminal transitions we set $r_t^{\mathrm{int}}=0$ so that intrinsic shaping does not depend on episode termination.
 
-We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE (no gate)} and \textbf{GLPE}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience. We refer to these two variants collectively as the \emph{GLPE family}.
+We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE} and \textbf{GLPE (no gate)}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience. We refer to these two variants collectively as the \emph{GLPE family}.
 
 \subsection{Latent dynamics model}
 Let $\phi_\omega$ be a learned encoder producing a $d$-dimensional feature vector $z_t = \phi_\omega(o_t)$. We train (i) a forward dynamics predictor $f_\psi$ that maps $(z_t,a_t)$ to a prediction of the next feature vector, and (ii) an inverse dynamics predictor $g_\xi$ that maps $(z_t,z_{t+1})$ to an action distribution. The inverse model is instantiated as a classifier for discrete actions and as a Gaussian likelihood model for continuous actions.
