@@ -8,7 +8,7 @@ We augment the extrinsic reward with an intrinsic term computed from single-step
 \begin{equation}
     r_t = r^{\mathrm{ext}}_t + \eta_t\,\mathrm{clip}\big(r^{\mathrm{int}}_t, -r_{\max}, r_{\max}\big),
 \end{equation}
-where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$ bounds the magnitude of intrinsic shaping. For terminal transitions we set $r_t^{\mathrm{int}}=0$ so that intrinsic shaping does not depend on episode termination.
+where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$ bounds the magnitude of intrinsic shaping. For environment-terminal transitions we set $r_t^{\mathrm{int}}=0$ so that intrinsic shaping does not depend on episode termination.
 
 We propose two intrinsic reward formulations within a shared framework: \textbf{GLPE (no gate)} and \textbf{GLPE}. Both combine feature-space impact with region-local learning progress; GLPE additionally introduces a region-specific gate that suppresses intrinsically rewarding but unproductive experience. We refer to these two variants collectively as the \emph{GLPE family}.
 
@@ -32,9 +32,9 @@ The intrinsic rewards below depend on $(z_t,z_{t+1})$ and $e_t$, but do not requ
 \subsection{Online region partitioning in latent space}
 To localize learning progress, we maintain an online partition of the latent space into regions. Each region corresponds to a leaf in a binary space-partitioning tree over the $d$-dimensional feature space.
 
-Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a small buffer of recently assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the split dimension as the coordinate with highest empirical variance among buffered points and split at the median value along that coordinate. When a leaf splits, one child inherits the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are initialized from its first assigned transition. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
+Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a buffer of assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the highest-variance coordinate that yields a non-degenerate split and split at the median value along that coordinate. When a leaf splits, one child inherits the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are initialized from its first assigned transition. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
 
-Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$. In experiments, $C$ and $D_{\max}$ are set per environment (Table~\ref{tab:glpe_hparams}).
+Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$. The capacity $C$ and maximum depth $D_{\max}$ control the granularity of the partition.
 
 \subsection{Regional learning progress}
 For each region $r$ we maintain two exponential moving averages (EMAs) of the forward prediction error: a long-horizon average $\mu^{\mathrm{long}}_r$ and a short-horizon average $\mu^{\mathrm{short}}_r$. When a transition at time $t$ is assigned to region $\rho_t=r$, we update
@@ -94,7 +94,6 @@ We compute robust global reference values using medians across visited regions,
     \qquad
     e_{\mathrm{med}} = \mathrm{median}_{r\in\mathcal{R}}\,\mu^{\mathrm{short}}_r.
 \end{equation}
-For efficiency, these global medians may be cached and refreshed periodically rather than recomputed on every transition.
 We define a learning-progress threshold $\tau_{\mathrm{LP}} = \kappa\,\mathrm{LP}_{\mathrm{med}}$ with multiplier $\kappa>0$, and a scale-free normalized error score
 \begin{equation}
     s_r = \frac{\mu^{\mathrm{short}}_r}{e_{\mathrm{med}} + \varepsilon},
@@ -112,7 +111,6 @@ When gating is active, the update uses persistence and hysteresis:
 (i) if $g_r=1$ and the region is unproductive for $K$ consecutive visits, set $g_r\leftarrow 0$;
 (ii) if $g_r=0$, re-enable the region when $\mathrm{LP}(r) > h\,\tau_{\mathrm{LP}}$ for two consecutive visits, where $h>1$ is a hysteresis multiplier.
 If gating is inactive (fewer than $R_{\min}$ visited regions), we set $g_r\leftarrow 1$ and reset the counters.
-In experiments we fix $h=2.0$ (Table~\ref{tab:glpe_hparams}).
 
 The intrinsic reward for GLPE is then
 \begin{equation}
@@ -122,7 +120,7 @@ The intrinsic reward for GLPE is then
 \subsection{On-policy optimization and intrinsic scheduling}
 We optimize the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation (PPO with GAE; details in Section~\ref{sec:experimental_setup}). At each iteration we collect rollouts under the current policy, compute intrinsic rewards for each transition, and form the total rewards $r_t$ used for advantage estimation and policy/value updates.
 
-For GLPE-based methods, we optionally anneal the strength of intrinsic shaping over the course of training using a cosine taper. Let $p\in[0,1]$ denote training progress as a fraction of total environment steps. Given a start fraction $p_{\mathrm{start}}$ and end fraction $p_{\mathrm{end}}$ with $p_{\mathrm{start}}<p_{\mathrm{end}}$, we define
+For the GLPE family, we anneal the strength of intrinsic shaping over the course of training using a cosine taper. Let $p\in[0,1]$ denote training progress as a fraction of total environment steps. Given a start fraction $p_{\mathrm{start}}$ and end fraction $p_{\mathrm{end}}$ with $p_{\mathrm{start}}<p_{\mathrm{end}}$, we define
 \begin{equation}
     w(p) =
     \begin{cases}
@@ -131,7 +129,7 @@ For GLPE-based methods, we optionally anneal the strength of intrinsic shaping o
         0, & p \ge p_{\mathrm{end}},
     \end{cases}
 \end{equation}
-and set $\eta_t=\eta\,w(p_t)$ in the augmented reward.
+and set $\eta_t=\eta\,w(p_t)$ in the augmented reward. When $p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ are omitted, we hold $\eta_t=\eta$ fixed throughout training; all GLPE-family experiments reported in this paper use tapering.
 
 The latent dynamics model parameters $(\omega,\psi,\xi)$ are updated using the same on-policy transitions that generate intrinsic rewards, while the region statistics, gates, and RMS normalizers are updated online during intrinsic computation.
 Algorithm~1 summarizes the intrinsic computation and online updates for the GLPE family.
