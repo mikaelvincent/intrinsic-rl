@@ -189,7 +189,7 @@ pylint_report.json
 internal_documents
 presentation
 code/runs_suite
-code/results_suite
-code/results
+code/results_suite/plots/trajectories
+code/results_suite/videos
 code/temp
 PAPER_CONTENT_PLAN.md
