@@ -6,11 +6,12 @@ We evaluate exploration and control on five standard Gymnasium benchmarks spanni
 \textsc{MountainCar-v0}, \textsc{BipedalWalker-v3}, and the MuJoCo locomotion tasks \textsc{Ant-v5}, \textsc{HalfCheetah-v5}, and \textsc{Humanoid-v5}.
 Across all experiments we use the default environment reward functions and termination conditions, with no domain randomization and no additional frame skipping.
 Training uses vectorized environments with $B$ parallel instances and rollouts of length $T$ per instance.
-We keep the on-policy batch size per PPO iteration fixed to
+We set $(B,T)$ so that the nominal on-policy batch size per PPO update is
 \begin{equation}
     N = B \times T = 16{,}384
 \end{equation}
-transitions for every task, varying $(B,T)$ only to accommodate environment throughput and episode structure.
+transitions, varying $(B,T)$ only to accommodate environment throughput and episode structure.
+To match the total step budget exactly, the final update may use a smaller batch when fewer than $N$ steps remain.
 Table~\ref{tab:env_suite} summarizes the suite, interaction budgets, and parallelization settings.
 For each environment we evaluate every method using the same set of training seeds (Table~\ref{tab:env_suite}) and enable deterministic execution where supported.
 
@@ -40,7 +41,7 @@ The policy and value function are parameterized by separate multilayer perceptro
 For continuous-control tasks, the policy outputs a diagonal Gaussian distribution; actions are squashed to the environment bounds when those bounds are finite.
 
 Each training iteration proceeds as follows:
-(i) collect $N=16{,}384$ on-policy transitions by running the current policy in $B$ vectorized environments for $T$ steps;
+(i) collect up to $N=16{,}384$ on-policy transitions by running the current policy in $B$ vectorized environments for $T$ steps;
 (ii) compute the intrinsic reward for each transition (when applicable), set intrinsic rewards to zero on terminal transitions, and form the total reward used for advantage estimation;
 (iii) compute advantages and value targets with GAE, bootstrapping across time-limit truncations when a valid final observation is available and treating truncations without a final observation as terminal for bootstrapping purposes; and
 (iv) perform multiple epochs of PPO updates over shuffled minibatches of the collected batch.
@@ -59,6 +60,7 @@ For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\
 We evaluate performance using undiscounted episodic return from the environment (extrinsic reward only).
 We do not run evaluation rollouts online during training; instead, we evaluate saved checkpoints offline.
 Each evaluated checkpoint is run for 20 episodes in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
+Episodes are reset with fixed per-episode seeds derived from the training seed.
 For each environment and method, we run multiple independent training seeds (Table~\ref{tab:env_suite}) and aggregate results across seeds.
 
 \paragraph{Checkpointing and logging.}
