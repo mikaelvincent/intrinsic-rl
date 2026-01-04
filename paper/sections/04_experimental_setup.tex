@@ -63,7 +63,7 @@ For each environment and method, we run multiple independent training seeds (Tab
 
 \paragraph{Checkpointing and logging.}
 During training we checkpoint the full agent state at step 0, at nine additional warmup points approximately evenly spaced within the first checkpoint interval, and then at a fixed \texttt{checkpoint\_interval} thereafter (set to 10\% of the total step budget per environment), with a final checkpoint at the end of training.
-We additionally append scalar metrics to \texttt{logs/scalars.csv} every \texttt{csv\_interval} environment steps (set to 2\% of the total step budget).
+We additionally log scalar metrics every fixed number of environment steps (set to 2\% of the total step budget).
 
 \subsection{Efficiency measurements}
 \label{sec:experimental_setup:efficiency}
