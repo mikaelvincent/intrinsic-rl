@@ -32,7 +32,7 @@ The intrinsic rewards below depend on $(z_t,z_{t+1})$ and $e_t$, but do not requ
 \subsection{Online region partitioning in latent space}
 To localize learning progress, we maintain an online partition of the latent space into regions. Each region corresponds to a leaf in a binary space-partitioning tree over the $d$-dimensional feature space.
 
-Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and a buffer of assigned points. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the highest-variance coordinate that yields a non-degenerate split and split at the median value along that coordinate. When a leaf splits, one child inherits the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are initialized from its first assigned transition. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
+Given an embedding $z_t$, we assign it to a leaf region $\rho_t$ by routing it through the tree. Each leaf maintains a visit counter and, when it can still be split, a buffer of stored points used to choose a split dimension and threshold. When the number of assigned points to a leaf reaches a capacity $C$ and the leaf depth is below a maximum depth $D_{\max}$, the leaf is split: we choose the highest-variance coordinate that yields a non-degenerate split and split at the median value along that coordinate. When a leaf splits, one child retains the parent region identifier (and its accumulated statistics), while the other child is assigned a new identifier whose statistics are created on its first visit. This procedure yields a growing set of regions that adaptively refines frequently visited parts of feature space.
 
 Region statistics (defined next) are updated using the region assignment based on the current embedding $z_t$. The capacity $C$ and maximum depth $D_{\max}$ control the granularity of the partition.
 
@@ -118,7 +118,7 @@ The intrinsic reward for GLPE is then
 \end{equation}
 
 \subsection{On-policy optimization and intrinsic scheduling}
-We optimize the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation (PPO with GAE; details in Section~\ref{sec:experimental_setup}). At each iteration we collect rollouts under the current policy, compute intrinsic rewards for each transition, and form the total rewards $r_t$ used for advantage estimation and policy/value updates.
+We train the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation (PPO with GAE; details in Section~\ref{sec:experimental_setup}), using the augmented reward $r_t$ for advantage estimation and policy/value updates.
 
 For the GLPE family, we anneal the strength of intrinsic shaping over the course of training using a cosine taper. Let $p\in[0,1]$ denote training progress as a fraction of total environment steps. Given a start fraction $p_{\mathrm{start}}$ and end fraction $p_{\mathrm{end}}$ with $p_{\mathrm{start}}<p_{\mathrm{end}}$, we define
 \begin{equation}
@@ -129,7 +129,7 @@ For the GLPE family, we anneal the strength of intrinsic shaping over the course
         0, & p \ge p_{\mathrm{end}},
     \end{cases}
 \end{equation}
-and set $\eta_t=\eta\,w(p_t)$ in the augmented reward. When $p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ are omitted, we hold $\eta_t=\eta$ fixed throughout training; all GLPE-family experiments reported in this paper use tapering.
+and set $\eta_t=\eta\,w(p_t)$ in the augmented reward. When $p_{\mathrm{start}}$ and $p_{\mathrm{end}}$ are omitted, we hold $\eta_t=\eta$ fixed throughout training.
 
 The latent dynamics model parameters $(\omega,\psi,\xi)$ are updated using the same on-policy transitions that generate intrinsic rewards, while the region statistics, gates, and RMS normalizers are updated online during intrinsic computation.
 Algorithm~1 summarizes the intrinsic computation and online updates for the GLPE family.
