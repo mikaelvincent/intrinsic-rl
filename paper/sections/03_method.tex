@@ -44,11 +44,11 @@ For each region $r$ we maintain two exponential moving averages (EMAs) of the fo
 \end{align}
 with $0<\beta_{\mathrm{long}}<1$, $0<\beta_{\mathrm{short}}<1$, and typically $\beta_{\mathrm{long}}>\beta_{\mathrm{short}}$ so that $\mu^{\mathrm{long}}_r$ changes more slowly. On the first visit to a newly created region identifier, we initialize $\mu^{\mathrm{long}}_r=\mu^{\mathrm{short}}_r=e_t$.
 
-We define region-wise learning progress as the positive part of the discrepancy between the long and short averages,
+We define the current learning progress of a region $r$ as the positive part of the discrepancy between the long and short averages,
 \begin{equation}
-    \mathrm{LP}_t = \max\big(0,\,\mu^{\mathrm{long}}_{\rho_t}-\mu^{\mathrm{short}}_{\rho_t}\big).
+    \mathrm{LP}(r) = \max\big(0,\,\mu^{\mathrm{long}}_{r}-\mu^{\mathrm{short}}_{r}\big).
 \end{equation}
-This quantity is large when the short-term error has recently dropped below the longer-term baseline, indicating active model improvement in that region.
+For each transition we use the region assignment $\rho_t$ and set $\mathrm{LP}_t=\mathrm{LP}(\rho_t)$. This quantity is large when the short-term error has recently dropped below the longer-term baseline, indicating active model improvement in that region.
 
 \subsection{Impact in feature space}
 We also compute a feature-space impact term that encourages transitions that change the learned representation,
@@ -86,9 +86,7 @@ This variant preserves the locality and nonstationarity tracking provided by the
 \textbf{GLPE} augments the same base score $u_t$ with a binary, region-specific gate that suppresses intrinsic rewards in regions that appear difficult to predict yet show little or no learning progress.
 
 \paragraph{Global robust thresholds.}
-At any time, let $\mathcal{R}$ denote the set of regions that have been visited at least once. For each $r\in\mathcal{R}$ define the current regional learning progress
-$\mathrm{LP}(r)=\max\big(0,\mu^{\mathrm{long}}_r-\mu^{\mathrm{short}}_r\big)$.
-We compute robust global reference values using medians across visited regions,
+At any time, let $\mathcal{R}$ denote the set of regions that have been visited at least once, and let $\mathrm{LP}(r)$ denote the current learning progress in region $r$. We compute robust global reference values using medians across visited regions,
 \begin{equation}
     \mathrm{LP}_{\mathrm{med}} = \mathrm{median}_{r\in\mathcal{R}}\,\mathrm{LP}(r),
     \qquad
