@@ -31,8 +31,8 @@ RIDE rewards feature-space impact, down-weighted by episodic visitation counts o
 All methods use the same PPO backbone and network architectures; within each environment we keep PPO hyperparameters fixed across methods to isolate the effect of the intrinsic objective.
 
 For intrinsic-reward methods, the policy is trained with the augmented reward defined in Section~\ref{sec:method}, combining the environment reward with a scaled and clipped intrinsic term.
-We use the same intrinsic scaling coefficient $\eta$ and clipping range $r_{\max}$ for all intrinsic baselines within a given environment (Table~\ref{tab:glpe_hparams}), so differences arise from the intrinsic signal itself rather than from reward-scale tuning.
-GLPE (no gate) uses the same base intrinsic score as GLPE but without any gating (i.e., the gate is always active).
+We use the same intrinsic scaling coefficient $\eta$ and clipping range $r_{\max}$ for all intrinsic methods within a given environment (Table~\ref{tab:glpe_hparams}), so differences arise from the intrinsic signal itself rather than from reward-scale tuning.
+GLPE (no gate) uses the same base intrinsic score as GLPE but disables the gating mechanism.
 
 \subsection{RL backbone and training protocol}
 \label{sec:experimental_setup:training}
@@ -59,7 +59,7 @@ For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\
 \label{sec:experimental_setup:evaluation}
 We evaluate performance using undiscounted episodic return from the environment (extrinsic reward only).
 We do not run evaluation rollouts online during training; instead, we evaluate saved checkpoints offline.
-Each evaluated checkpoint is run for 20 episodes in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
+Each evaluated checkpoint is run for 20 episodes in a separate environment instance using deterministic action selection (distribution mode).
 Episodes are reset with fixed per-episode seeds derived from the training seed.
 For each environment and method, we run multiple independent training seeds (Table~\ref{tab:env_suite}) and aggregate results across seeds.
 
