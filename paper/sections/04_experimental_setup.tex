@@ -16,9 +16,9 @@ For each environment we evaluate every method using the same set of training see
 
 \input{tables/env_suite}
 
-\paragraph{Training budgets beyond nominal convergence.}
-The total environment-step budgets in Table~\ref{tab:env_suite} are intentionally over-allocated relative to the point of nominal convergence (i.e., when learning curves first plateau).
-This deliberate slack allows us to analyze long-term stability of exploration behavior and intrinsic shaping---including late-training drift, regressions, or oscillations that may only emerge well after initial convergence.
+\paragraph{Training budgets beyond the early-learning regime.}
+The total environment-step budgets in Table~\ref{tab:env_suite} are intentionally generous so that runs extend beyond the initial improvement phase.
+This provides headroom to assess long-horizon stability of exploration behavior and intrinsic shaping, including late-training drift, regressions, or oscillations.
 
 \subsection{Methods compared}
 \label{sec:experimental_setup:methods}
@@ -57,15 +57,13 @@ For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\
 \subsection{Evaluation protocol}
 \label{sec:experimental_setup:evaluation}
 We evaluate performance using undiscounted episodic return from the environment (extrinsic reward only).
-Evaluation is performed periodically every $16{,}384$ environment steps, aligning evaluation checkpoints with PPO update boundaries.
-Each evaluation consists of 20 episodes executed in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
+We do not run evaluation rollouts online during training; instead, we evaluate saved checkpoints offline.
+Each evaluated checkpoint is run for 20 episodes in a separate environment instance using a deterministic action mode (mode/mean action for stochastic policies).
 For each environment and method, we run multiple independent training seeds (Table~\ref{tab:env_suite}) and aggregate results across seeds.
 
-\paragraph{Checkpointing for early-learning analysis.}
-In addition to periodic online evaluation, we persist model checkpoints to disk for offline analysis and reproducibility.
-Each run saves a baseline checkpoint at step 0 and then saves nine additional warmup checkpoints before the first regular checkpoint (ten checkpoints total before the regular cadence begins).
-These warmup checkpoints are spaced approximately evenly within the first checkpoint interval and provide fine temporal resolution for evaluating early learning dynamics and performance.
-After warmup, checkpoints are saved at a fixed environment-step interval throughout training.
+\paragraph{Checkpointing and logging.}
+During training we checkpoint the full agent state at step 0, at nine additional warmup points approximately evenly spaced within the first checkpoint interval, and then at a fixed \texttt{checkpoint\_interval} thereafter (set to 10\% of the total step budget per environment), with a final checkpoint at the end of training.
+We additionally append scalar metrics to \texttt{logs/scalars.csv} every \texttt{csv\_interval} environment steps (set to 2\% of the total step budget).
 
 \subsection{Efficiency measurements}
 \label{sec:experimental_setup:efficiency}
