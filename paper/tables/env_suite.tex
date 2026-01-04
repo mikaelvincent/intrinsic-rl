@@ -14,7 +14,7 @@ Environment & $B$ & $T$ & $N$ & Total steps & Seeds \\
 \end{tabular}
 \caption{
 Benchmark suite and training budgets. $B$ is the number of parallel environment instances, $T$ is the rollout horizon per instance, and $N=B\times T$ is the number of transitions used in each PPO update.
-For every run we evaluate every $16{,}384$ environment steps using 20 episodes (Section~\ref{sec:experimental_setup:evaluation}).
+For every run we evaluate saved checkpoints offline using 20 episodes (Section~\ref{sec:experimental_setup:evaluation}).
 }
 \label{tab:env_suite}
 \end{table}
