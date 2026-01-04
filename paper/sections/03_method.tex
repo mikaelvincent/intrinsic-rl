@@ -2,11 +2,11 @@
 \label{sec:method}
 
 \subsection{Problem setup}
-We consider an episodic Markov decision process with observations $o_t \in \mathcal{O}$, actions $a_t \in \mathcal{A}$, and extrinsic rewards $r^{\mathrm{ext}}_t$. A stochastic policy $\pi_\theta(a\mid o)$ is trained to maximize the expected discounted return.
+We consider an episodic Markov decision process with observations $o_t \in \mathcal{O}$, actions $a_t \in \mathcal{A}$, and extrinsic rewards $r_t^{\mathrm{ext}}$. A stochastic policy $\pi_\theta(a\mid o)$ is trained to maximize the expected discounted return.
 
 We augment the extrinsic reward with an intrinsic term computed from single-step transitions,
 \begin{equation}
-    r_t = r^{\mathrm{ext}}_t + \eta_t\,\mathrm{clip}\big(r^{\mathrm{int}}_t, -r_{\max}, r_{\max}\big),
+    r_t = r_t^{\mathrm{ext}} + \eta_t\,\mathrm{clip}\big(r_t^{\mathrm{int}}, -r_{\max}, r_{\max}\big),
 \end{equation}
 where $\eta_t\ge 0$ controls the intrinsic--extrinsic trade-off and $r_{\max}>0$ bounds the magnitude of intrinsic shaping. For environment-terminal transitions we set $r_t^{\mathrm{int}}=0$ so that intrinsic shaping does not depend on episode termination.
 
@@ -118,7 +118,7 @@ The intrinsic reward for GLPE is then
 \end{equation}
 
 \subsection{On-policy optimization and intrinsic scheduling}
-We train the policy using an on-policy actor--critic method with clipped policy updates and generalized advantage estimation (PPO with GAE; details in Section~\ref{sec:experimental_setup}), using the augmented reward $r_t$ for advantage estimation and policy/value updates.
+We optimize the policy with PPO using the augmented reward $r_t$; training details are given in Section~\ref{sec:experimental_setup}.
 
 For the GLPE family, we anneal the strength of intrinsic shaping over the course of training using a cosine taper. Let $p\in[0,1]$ denote training progress as a fraction of total environment steps. Given a start fraction $p_{\mathrm{start}}$ and end fraction $p_{\mathrm{end}}$ with $p_{\mathrm{start}}<p_{\mathrm{end}}$, we define
 \begin{equation}
