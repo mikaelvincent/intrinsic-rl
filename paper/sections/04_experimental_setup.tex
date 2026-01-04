@@ -32,17 +32,17 @@ All methods use the same PPO backbone and network architectures; within each env
 
 For intrinsic-reward methods, the policy is trained with the augmented reward defined in Section~\ref{sec:method}, combining the environment reward with a scaled and clipped intrinsic term.
 We use the same intrinsic scaling coefficient $\eta$ and clipping range $r_{\max}$ for all intrinsic baselines within a given environment (Table~\ref{tab:glpe_hparams}), so differences arise from the intrinsic signal itself rather than from reward-scale tuning.
-GLPE (no gate) is treated as a first-class proposed variant: it uses the same region partitioning, impact term, and regional learning-progress signal as GLPE, but applies no suppression mechanism (i.e., the gate is always active).
+GLPE (no gate) uses the same base intrinsic score as GLPE but without any gating (i.e., the gate is always active).
 
 \subsection{RL backbone and training protocol}
 \label{sec:experimental_setup:training}
-All agents are trained with Proximal Policy Optimization (PPO) with generalized advantage estimation (GAE).
+All agents are trained with Proximal Policy Optimization (PPO; \cite{schulman-2017}) with generalized advantage estimation (GAE; \cite{schulman-2015}).
 The policy and value function are parameterized by separate multilayer perceptrons with two hidden layers of width 256 and ReLU activations.
 For continuous-control tasks, the policy outputs a diagonal Gaussian distribution; actions are squashed to the environment bounds when those bounds are finite.
 
 Each training iteration proceeds as follows:
 (i) collect up to $N=16{,}384$ on-policy transitions by running the current policy in $B$ vectorized environments for $T$ steps;
-(ii) compute the intrinsic reward for each transition (when applicable), set intrinsic rewards to zero on terminal transitions, and form the total reward used for advantage estimation;
+(ii) compute the intrinsic reward for each transition (when applicable), set intrinsic rewards to zero on environment-terminal transitions and on time-limit truncations without a final observation, and form the total reward used for advantage estimation;
 (iii) compute advantages and value targets with GAE, bootstrapping across time-limit truncations when a valid final observation is available and treating truncations without a final observation as terminal for bootstrapping purposes; and
 (iv) perform multiple epochs of PPO updates over shuffled minibatches of the collected batch.
 We use Adam optimizers for both the policy and value networks, normalize advantages within each update batch, and clip gradient norms to 1.0.
@@ -50,7 +50,7 @@ We use Adam optimizers for both the policy and value networks, normalize advanta
 We normalize vector observations using a running mean and variance estimated online from collected rollouts, and apply the same normalization to the inputs of the policy, value, and intrinsic modules.
 
 \paragraph{Intrinsic reward computation and updates.}
-Intrinsic modules are updated once per PPO iteration using the same on-policy batch used for PPO.
+Trainable intrinsic models are updated once per PPO iteration using the same on-policy batch used for PPO.
 For methods whose intrinsic output is not internally normalized (e.g., ICM, RND, and RIDE), we apply a running RMS normalization to the raw intrinsic signal before scaling and clipping.
 For methods that produce a normalized intrinsic output by construction (RIAC and the GLPE family), we directly apply scaling and clipping.
 For GLPE and GLPE (no gate), we additionally anneal the intrinsic coefficient $\eta_t$ using the cosine taper described in Section~\ref{sec:method}, with task-specific start and end fractions listed in Table~\ref{tab:glpe_hparams}.
